@@ -24,6 +24,9 @@ check and fresh host verification; discovery, installation and version output ar
 The check also rejects retained compatibility declarations. Remove obsolete bindings and migrate actual
 callers in the same cutover. Employer projects are outside this profile; personal scope requires explicit adoption.
 
+Adoption installs a dedicated CI check against the current published policy on Windows and Linux. Other
+workflows remain unchanged. This repository runs that same check against its candidate source before merge.
+
 ## Authoring and verification
 
 ```powershell
