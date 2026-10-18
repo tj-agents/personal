@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "plugin": "personal-agents/personal",
+  "source_roots": [".agents/personal/policy/current-solution", ".agents/personal/utility/adopt"],
+  "requires": {"marketplaces": [{"id": "personal-agents", "repository": "tj-agents/personal"}], "plugins": ["personal-agents/personal"], "hooks": [], "permissions": {"claude_allow": [], "codex_prefix_rules": []}}
+}
