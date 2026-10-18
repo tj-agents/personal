@@ -3,7 +3,8 @@
   "plugin": "personal-agents/personal",
   "source_roots": [
     ".agents/personal/policy/current-solution",
-    ".agents/personal/utility/adopt"
+    ".agents/personal/utility/adopt",
+    ".agents/personal/utility/work-item"
   ],
   "requires": {
     "marketplaces": [
