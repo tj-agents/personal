@@ -30,6 +30,13 @@ It preserves other workflows and refuses to overwrite an unrelated file at that 
 after adopting a project, deleting its marked AGENTS.md block or reintroducing a compatibility alias makes
 the policy check fail; rerun adoption after a policy update and review the generated changes together.
 
+```powershell
+# Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:
+python -B .agents/personal/utility/adopt/scripts/adopt.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/core/.agents/machine/utility/plugin-selection/scripts/adopt_plugins.py
+# Review the preview, then use --mode write; CI uses --mode check.
+# Linux/macOS use python3 and their checkout paths with the same arguments.
+```
+
 Before declaring adoption complete, run its check and verify a fresh actual Claude and Codex entry point
 in the project on supported platforms. Confirm the rule was loaded and inspect its installed selection;
 a version command or a generated file is insufficient. Keep any missing host evidence with the goal.
