@@ -46,6 +46,12 @@ class AdoptionTests(unittest.TestCase):
         self.assertIn(adopt.fragment(), (self.root / "CLAUDE.md").read_text())
         self.assertIn(adopt.fragment(), (self.root / "AGENTS.md").read_text())
 
+    def test_documented_import_example_is_not_treated_as_actual_delivery(self):
+        path = self.root / "CLAUDE.md"
+        path.write_text("# Documentation\n\n```markdown\n@AGENTS.md\n```\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        self.assertIn(adopt.fragment(), path.read_text())
+
     def test_check_detects_policy_drift_and_write_repairs_it(self):
         adopt.run(self.root, "write", None)
         path = self.root / "AGENTS.md"

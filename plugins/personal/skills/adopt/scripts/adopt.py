@@ -49,12 +49,24 @@ def native_plan(root: Path) -> dict[Path, str]:
     targets = {agents: projected(agents_text, block)}
     if not claude.exists():
         targets[claude] = "@AGENTS.md\n"
-    elif "@AGENTS.md" in {line.strip() for line in claude_text.splitlines()}:
+    elif imports_agents(claude_text):
         if START in claude_text or END in claude_text:
             raise ValueError("CLAUDE.md imports AGENTS.md and also contains a duplicate personal block")
     else:
         targets[claude] = projected(claude_text, block)
     return targets
+
+
+def imports_agents(body: str) -> bool:
+    fence = None
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[0]
+            fence = None if fence == marker else marker if fence is None else fence
+        elif fence is None and stripped == "@AGENTS.md":
+            return True
+    return False
 
 
 def check_retained_aliases(root: Path) -> None:
