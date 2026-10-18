@@ -30,6 +30,14 @@ For example, replacing `old-launch` with `launch` means migrating the registered
 configuration and actual callers, deleting the old entry, then invoking `launch` from a fresh session on
 each supported OS. Running `launch --version` alone leaves the cutover unverified.
 
+```text
+Replace old-launch with launch:
+1. Migrate the registered shell command, configuration and actual callers.
+2. Delete the old entry and regenerate installed settings.
+3. Invoke launch from a fresh supported Windows/Linux session and check its actual behavior.
+Result: launch --version alone leaves this migration incomplete.
+```
+
 Do not independently add a backwards-compatibility exception. Surface an explicit contrary user requirement
 as a deliberate policy decision, identify the affected supported behavior and reconcile this profile's
 scope before implementing it. Never hide an exception in a fallback or adapter.

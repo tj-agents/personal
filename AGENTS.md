@@ -13,7 +13,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:current-solution sha256:9444282e9670b2fbc98692e8a420f87c4e8e25504ae70ed8c5012e8fc6f32409 -->
+<!-- BEGIN personal:current-solution sha256:2e091b5f18f67fb2302024e817c71d4a0f5234c1ca63ca1c9af5c4eef3b6a128 -->
 # Personal projects
 
 These rules are mandatory in projects that explicitly adopt `personal@tj-agents`. Adoption records the
@@ -34,6 +34,14 @@ Record any unverified entry point as incomplete, with its resolver and observabl
 For example, replacing `old-launch` with `launch` means migrating the registered shell command, project
 configuration and actual callers, deleting the old entry, then invoking `launch` from a fresh session on
 each supported OS. Running `launch --version` alone leaves the cutover unverified.
+
+```text
+Replace old-launch with launch:
+1. Migrate the registered shell command, configuration and actual callers.
+2. Delete the old entry and regenerate installed settings.
+3. Invoke launch from a fresh supported Windows/Linux session and check its actual behavior.
+Result: launch --version alone leaves this migration incomplete.
+```
 
 Do not independently add a backwards-compatibility exception. Surface an explicit contrary user requirement
 as a deliberate policy decision, identify the affected supported behavior and reconcile this profile's
