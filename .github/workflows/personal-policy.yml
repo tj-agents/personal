@@ -1,0 +1,33 @@
+name: Personal policy
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: python3
+          - os: windows-latest
+            python: python
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: tj-agents/personal
+          ref: ${{ github.repository == 'tj-agents/personal' && github.sha || 'main' }}
+          path: .personal
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check selection, mandatory native instructions and retired aliases
+        run: ${{ matrix.python }} -B .personal/.agents/personal/utility/adopt/scripts/adopt.py --root . --mode check

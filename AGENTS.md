@@ -12,3 +12,38 @@ Change them in Template, then run `template:update` to refresh the exact vendore
 before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
+
+<!-- BEGIN personal:current-solution sha256:9444282e9670b2fbc98692e8a420f87c4e8e25504ae70ed8c5012e8fc6f32409 -->
+# Personal projects
+
+These rules are mandatory in projects that explicitly adopt `personal@tj-agents`. Adoption records the
+project's personal scope; a home directory, author name or employer association never establishes it.
+Employer projects remain outside this profile unless Tommy explicitly changes that scope.
+
+Keep one current supported solution. When replacing behavior, remove the superseded names, aliases,
+fallback implementations, adapters, configuration formats and compatibility branches. Coordinate and
+migrate all known callers, project declarations, installed registrations, generated artifacts and live
+runtime entry points in the same cutover. Do not retain obsolete behavior for hypothetical external users;
+coordinate upgrades with the actual collaborating developers.
+
+Verify the entry points people actually use on every supported platform, including Windows and Linux
+launch paths where supported. Source edits, successful generation, passing unit tests and version commands
+alone do not prove that a migration is complete. Check installed bindings and fresh runtime behavior.
+Record any unverified entry point as incomplete, with its resolver and observable acceptance condition.
+
+For example, replacing `old-launch` with `launch` means migrating the registered shell command, project
+configuration and actual callers, deleting the old entry, then invoking `launch` from a fresh session on
+each supported OS. Running `launch --version` alone leaves the cutover unverified.
+
+Do not independently add a backwards-compatibility exception. Surface an explicit contrary user requirement
+as a deliberate policy decision, identify the affected supported behavior and reconcile this profile's
+scope before implementing it. Never hide an exception in a fallback or adapter.
+
+Solve the demonstrated problem with the smallest suitable implementation. Add abstractions, dependencies,
+configuration switches, duplicate paths or process machinery only for a concrete current need. Prefer the
+capabilities the project already selects. Verify the behavior and meaningful failure paths in proportion
+to the change; do not add tests that merely repeat the implementation or a checklist with no concrete benefit.
+
+This policy is authored once here. Personal adoption generates its marked native instruction block from
+this body and checks it for drift. A selected plugin or an `always` tier alone is not proof of loading.
+<!-- END personal:current-solution -->

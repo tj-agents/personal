@@ -25,6 +25,11 @@ import or an equal generated block in CLAUDE.md. It refuses retained compatibili
 block markers. The policy has one authored body; generated native blocks are checked, never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
+Adoption also writes a dedicated CI caller to check the current published policy on Windows and Linux.
+It preserves other workflows and refuses to overwrite an unrelated file at that path. For example,
+after adopting a project, deleting its marked AGENTS.md block or reintroducing a compatibility alias makes
+the policy check fail; rerun adoption after a policy update and review the generated changes together.
+
 Before declaring adoption complete, run its check and verify a fresh actual Claude and Codex entry point
 in the project on supported platforms. Confirm the rule was loaded and inspect its installed selection;
 a version command or a generated file is insufficient. Keep any missing host evidence with the goal.
