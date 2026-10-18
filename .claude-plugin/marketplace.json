@@ -1,0 +1,21 @@
+{
+  "name": "personal-agents",
+  "description": "Mandatory standards for explicitly adopted personal projects.",
+  "owner": {
+    "name": "Tommy Seery"
+  },
+  "plugins": [
+    {
+      "name": "personal",
+      "source": "./plugins/personal",
+      "description": "Mandatory standards for explicitly adopted personal projects.",
+      "category": "Productivity",
+      "keywords": [
+        "personal"
+      ]
+    }
+  ],
+  "allowCrossMarketplaceDependenciesOn": [
+    "tj-agents"
+  ]
+}
