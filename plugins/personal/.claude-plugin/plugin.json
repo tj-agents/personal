@@ -1,0 +1,17 @@
+{
+  "name": "personal",
+  "displayName": "Personal",
+  "description": "Mandatory standards for explicitly adopted personal projects.",
+  "author": {
+    "name": "Tommy Seery"
+  },
+  "repository": "https://github.com/tj-agents/personal",
+  "skills": "./skills/",
+  "keywords": [
+    "personal"
+  ],
+  "dependencies": [
+    "base@tj-agents",
+    "machine@tj-agents"
+  ]
+}

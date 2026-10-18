@@ -1,0 +1,19 @@
+{
+  "name": "personal",
+  "description": "Mandatory standards for explicitly adopted personal projects.",
+  "author": {
+    "name": "Tommy Seery"
+  },
+  "repository": "https://github.com/tj-agents/personal",
+  "skills": "./skills/",
+  "keywords": ["personal"],
+  "interface": {
+    "displayName": "Personal",
+    "shortDescription": "Mandatory standards for explicitly adopted personal projects.",
+    "longDescription": "Mandatory standards for explicitly adopted personal projects. Follow the Template main branch and run template:update to refresh vendored files.",
+    "developerName": "Tommy Seery",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Apply the personal project policies."
+  }
+}

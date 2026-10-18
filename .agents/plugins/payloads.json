@@ -1,0 +1,8 @@
+{
+  "payloads": {
+    "personal": [
+      "personal"
+    ]
+  },
+  "dependencies": {"personal": ["tj-agents/machine"]}
+}

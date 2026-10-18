@@ -1,0 +1,45 @@
+{
+  "plugin": "personal",
+  "dependencies": [
+    "tj-agents/base",
+    "tj-agents/machine"
+  ],
+  "profiles": {
+    "core": [
+      "adopt",
+      "current-solution"
+    ]
+  },
+  "compatibilitySkillAliases": {},
+  "skills": [
+    {
+      "name": "adopt",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "python",
+        "machine"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "current-solution",
+      "kind": "policy",
+      "profile": "core",
+      "applicability": [
+        "projects explicitly selecting personal"
+      ],
+      "requires": [
+        "personal"
+      ],
+      "provenance": [
+        "house"
+      ]
+    }
+  ]
+}

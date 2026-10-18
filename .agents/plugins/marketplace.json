@@ -1,0 +1,20 @@
+{
+  "name": "personal-agents",
+  "interface": {
+    "displayName": "Personal"
+  },
+  "plugins": [
+    {
+      "name": "personal",
+      "source": {
+        "source": "local",
+        "path": "./plugins/personal"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
