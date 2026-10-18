@@ -7,7 +7,7 @@ Published as plugin `personal` from this repository's `personal-agents` marketpl
 ## Skills
 
 - Policies: `personal:current-solution`.
-- Utilities: `personal:adopt`.
+- Utilities: `personal:adopt`, `personal:work-item`.
 
 ## Adopt a personal project
 
@@ -23,6 +23,16 @@ check and fresh host verification; discovery, installation and version output ar
 
 The check also rejects retained compatibility declarations. Remove obsolete bindings and migrate actual
 callers in the same cutover. Employer projects are outside this profile; personal scope requires explicit adoption.
+
+## Personal Azure Boards
+
+`personal:work-item` provides native Azure features, tasks, bugs, mistakes and debt, with parent/child
+links and a repository identity on every record. Its shipped runtime also launches a separate personal
+Azure DevOps MCP for Codex and Claude using the OS credential store. See the
+[setup and record procedure](.agents/personal/utility/work-item/SKILL.md).
+
+Live adoption requires a confirmed personal organization, provisioned process/project, secure PAT
+and verified host tests. Keep an existing queue authoritative until its migration is reconciled.
 
 ## Authoring and verification
 

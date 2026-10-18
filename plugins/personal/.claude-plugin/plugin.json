@@ -1,7 +1,7 @@
 {
   "name": "personal",
   "displayName": "Personal",
-  "description": "Mandatory standards for explicitly adopted personal projects.",
+  "description": "Personal project standards and Azure Boards work items.",
   "author": {
     "name": "Tommy Seery"
   },
