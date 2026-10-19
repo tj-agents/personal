@@ -66,6 +66,8 @@ class FakeAzure:
         self.persist_then_timeout = False
         self.conflict_next = False
         self.unauthorized_wiql = False
+        self.drop_created_parent = False
+        self.hide_query_results = False
 
     def request(
         self,
@@ -78,6 +80,8 @@ class FakeAzure:
             if self.unauthorized_wiql:
                 raise APIError("Azure DevOps POST failed (HTTP 401)", 401)
             assert isinstance(payload, Mapping)
+            if self.hide_query_results:
+                return {"workItems": []}
             query = payload["query"]
             assert isinstance(query, str)
             return {
@@ -103,6 +107,8 @@ class FakeAzure:
                 "relations": [],
             }
             self._patch(item, payload)
+            if self.drop_created_parent:
+                item["relations"] = []
             self.items[identifier] = item
             self.posts += 1
             if self.persist_then_timeout:
@@ -142,9 +148,10 @@ class FakeAzure:
             match = re.search(rf"\[{re.escape(field)}\] = '((?:''|[^'])*)'", query)
             if match is not None and str(value) != match.group(1).replace("''", "'"):
                 return False
-        return (
-            "[System.State] <> 'Closed'" not in query
-            or fields["System.State"] != "Closed"
+        return all(
+            f"[System.State] <> '{state}'" not in query
+            or fields["System.State"] != state
+            for state in ("Closed", "Removed")
         )
 
     def _patch(
@@ -361,3 +368,84 @@ def test_client_error_does_not_expose_server_body_or_token() -> None:
         client.request("GET", "workitems/1")
     assert "server-secret" not in str(captured.value)
     assert "token-value" not in str(captured.value)
+
+
+def test_uncertain_create_requires_verified_parent_before_success() -> None:
+    value, api = tracker()
+    parent = value.create(record("feature"), "parent-for-uncertain-child")
+    api.drop_created_parent = True
+    api.persist_then_timeout = True
+    for _ in range(2):
+        with pytest.raises(ItemError, match="parent"):
+            value.create(record("task"), "uncertain-child", str(parent["url"]))
+    assert api.posts == 2
+
+
+def test_completed_receipt_requires_parent_when_query_index_lags() -> None:
+    value, api = tracker()
+    parent = value.create(record("feature"), "parent-for-receipt-child")
+    child = value.create(record("task"), "receipt-child", str(parent["url"]))
+    api.items[item_id(child)]["relations"] = []
+    api.hide_query_results = True
+    with pytest.raises(ItemError, match="parent"):
+        value.create(record("task"), "receipt-child", str(parent["url"]))
+    assert api.posts == 2
+
+
+@pytest.mark.parametrize("state", ["New", "Active", "Resolved"])
+def test_core_reader_accepts_persisted_native_open_bug_state(
+    monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    from unittest.mock import Mock
+
+    from personal_work_items import cli, credentials
+
+    value, api = tracker()
+    created = value.create(record("bug"), "native-open-bug")
+    fields = api.items[item_id(created)]["fields"]
+    assert isinstance(fields, dict)
+    fields["System.State"] = state
+    monkeypatch.setattr(
+        cli,
+        "load_context",
+        Mock(return_value={"primary_root": Path.cwd(), "config": CONFIG}),
+    )
+    monkeypatch.setattr(
+        credentials, "get_pat", Mock(return_value="dummy-personal-token")
+    )
+    monkeypatch.setattr(cli, "Client", Mock())
+    monkeypatch.setattr(cli, "Tracker", Mock(return_value=value))
+    result = cli.execute(
+        cli._parser().parse_args(["read-problem", "--record", str(created["url"])])
+    )
+    assert result["record"] == created["url"]
+    assert result["state"] == "open"
+    assert "bug summary" in result["body"]
+
+
+@pytest.mark.parametrize("field", ["System.Title", "System.Description"])
+@pytest.mark.parametrize("operation", ["read", "list"])
+def test_current_facts_reject_human_content_edits(field: str, operation: str) -> None:
+    value, api = tracker()
+    created = value.create(record("bug"), "human-edited-bug")
+    fields = api.items[item_id(created)]["fields"]
+    assert isinstance(fields, dict)
+    fields[field] = "New facts entered through Azure UI"
+    with pytest.raises(ItemError, match="edited outside"):
+        if operation == "read":
+            value.read(str(created["url"]))
+        else:
+            value.list_items()
+
+
+@pytest.mark.parametrize("state", ["Closed", "Removed"])
+def test_default_list_excludes_inactive_items_but_preserves_history(state: str) -> None:
+    value, api = tracker()
+    created = value.create(record("bug"), "inactive-bug")
+    fields = api.items[item_id(created)]["fields"]
+    assert isinstance(fields, dict)
+    fields["System.State"] = state
+    assert value.list_items() == []
+    history = value.list_items(include_closed=True)
+    assert len(history) == 1
+    assert history[0]["state"] == state

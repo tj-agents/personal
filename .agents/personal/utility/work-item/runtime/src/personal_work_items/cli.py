@@ -106,10 +106,9 @@ def execute(args: argparse.Namespace) -> Any:
         return tracker.set_parent(args.record, args.parent)
     if args.command == "read-problem":
         current = tracker.read(args.record)
-        if (
-            current["kind"] not in ("bug", "mistake", "debt")
-            or current["state"] != "open"
-        ):
+        if current["kind"] not in ("bug", "mistake", "debt") or current[
+            "state"
+        ] not in ("New", "Active", "Resolved"):
             raise ItemError("record must be a current open personal problem")
         return {
             "record": args.record,

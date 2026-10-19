@@ -61,7 +61,17 @@ and retry metadata stay consistent. The personal MCP remains available for nativ
 Run `personal-work-item schema <kind>` for the required JSON facts, fill them from evidence, and save
 the JSON to a durable unsent input file. Kinds are `feature`, `task`, `bug`, `mistake` and `debt`.
 Validate with `personal-work-item validate --input <file>`. Do not invent evidence or replace the
-structured schema with an arbitrary description.
+structured schema with an arbitrary description. For example, a task input can contain:
+
+```json
+{
+  "kind": "task",
+  "title": "Verify Feature parent links",
+  "summary": "Confirm that Azure preserves a task under its owning Feature.",
+  "action": "Create a pilot task with the Feature URL and read its parent relation back.",
+  "done_when": "The returned parent identity matches the Feature and the Azure UI shows the link."
+}
+```
 
 Create with `personal-work-item --root <project> create --input <file> --request-id <stable-id>`.
 Retain the same request ID and same facts across retries. An optional `--parent <feature-url>` adds

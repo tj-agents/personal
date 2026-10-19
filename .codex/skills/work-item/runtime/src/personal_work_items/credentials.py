@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 from ctypes import wintypes
+from typing import Protocol, cast
 
 
 class CredentialError(RuntimeError):
@@ -68,11 +69,21 @@ class _Credential(ctypes.Structure):
     ]
 
 
-def _windows_api() -> ctypes.CDLL:
+class _WindowsCtypes(Protocol):
+    WinDLL: type[ctypes.CDLL]
+
+    def get_last_error(self) -> int: ...
+
+
+def _windows_ctypes() -> _WindowsCtypes:
     if os.name != "nt":
         raise CredentialError("Windows Credential Manager is unavailable")
+    return cast(_WindowsCtypes, ctypes)
+
+
+def _windows_api() -> ctypes.CDLL:
     try:
-        api = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+        api = _windows_ctypes().WinDLL("Advapi32.dll", use_last_error=True)
     except (AttributeError, OSError) as error:
         raise CredentialError("Windows Credential Manager is unavailable") from error
     pointer = ctypes.POINTER(_Credential)
@@ -95,7 +106,7 @@ def _windows_api() -> ctypes.CDLL:
 def _windows_error(action: str) -> CredentialError:
     return CredentialError(
         f"Windows Credential Manager could not {action} "
-        f"(error {ctypes.get_last_error()})"
+        f"(error {_windows_ctypes().get_last_error()})"
     )
 
 
@@ -103,7 +114,7 @@ def _windows_get(name: str) -> str | None:
     api = _windows_api()
     credential = ctypes.POINTER(_Credential)()
     if not api.CredReadW(name, 1, 0, ctypes.byref(credential)):
-        if ctypes.get_last_error() == _ERROR_NOT_FOUND:
+        if _windows_ctypes().get_last_error() == _ERROR_NOT_FOUND:
             return None
         raise _windows_error("read the personal Azure token")
     try:

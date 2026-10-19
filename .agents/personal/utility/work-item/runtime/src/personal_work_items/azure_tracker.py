@@ -211,6 +211,8 @@ class Tracker:
             if receipt is not None and receipt["resource_id"] is not None:
                 recovered = self._read_id(_positive_id(receipt["resource_id"]))
                 self._same_create(recovered, request, record)
+                if parent_id is not None:
+                    self._require_parent(recovered["raw"], parent_id)
                 return {**self._managed(recovered["raw"]), "reconciled": True}
             if receipt is not None:
                 raise ItemError(
@@ -238,6 +240,8 @@ class Tracker:
             except APIError as error:
                 found = self._find_request(request, record)
                 if found is not None:
+                    if parent_id is not None:
+                        self._require_parent(found["raw"], parent_id)
                     if self.journal is not None:
                         self.journal.complete(
                             key, fingerprint, _positive_id(found["id"])
@@ -252,7 +256,9 @@ class Tracker:
             return {**self._managed(created["raw"]), "reconciled": False}
 
     def read(self, url: str) -> ManagedItem:
-        return self._managed(self._read_id(self._url_id(url))["raw"])
+        raw = self._read_id(self._url_id(url))["raw"]
+        self._require_unedited(raw)
+        return self._managed(raw)
 
     def list_items(
         self, kind: str | None = None, include_closed: bool = False
@@ -268,7 +274,9 @@ class Tracker:
                 f"[System.WorkItemType] = {self._wiql_literal(self.kinds[kind])}"
             )
         if not include_closed:
-            clauses.append("[System.State] <> 'Closed'")
+            clauses.extend(
+                ["[System.State] <> 'Closed'", "[System.State] <> 'Removed'"]
+            )
         query = "SELECT [System.Id] FROM WorkItems WHERE " + " AND ".join(clauses)
         response = _mapping(
             self.client.request("POST", "wiql?$top=1000", {"query": query}),
@@ -284,12 +292,14 @@ class Tracker:
                     "id"
                 )
             )
-            managed = self._managed(self._read_id(identifier)["raw"])
+            raw = self._read_id(identifier)["raw"]
+            self._require_unedited(raw)
+            managed = self._managed(raw)
             if kind is not None and managed["kind"] != kind:
                 raise ItemError(
                     "Azure DevOps WIQL returned a work item of the wrong kind"
                 )
-            if not include_closed and managed["state"] == "Closed":
+            if not include_closed and managed["state"] in {"Closed", "Removed"}:
                 raise ItemError("Azure DevOps WIQL returned a closed work item")
             result.append(managed)
         return result
@@ -701,8 +711,8 @@ class Tracker:
             or not _same_html(description, self._description(record))
         ):
             raise ItemError(
-                "work item was edited outside personal:work-item; reconcile before "
-                "overwriting it"
+                "work item was edited outside personal:work-item; reconcile current "
+                "content with its structured record before continuing"
             )
 
     def _relations(self, raw: Mapping[str, object]) -> list[dict[str, object]]:

@@ -49,7 +49,8 @@ def test_write_rejects_unretained_stdin_before_credentials(
 
 
 @pytest.mark.parametrize(
-    "kind,state", [("feature", "open"), ("task", "open"), ("bug", "closed")]
+    "kind,state",
+    [("feature", "New"), ("task", "New"), ("bug", "Closed"), ("bug", "Removed")],
 )
 def test_problem_reader_rejects_ineligible_azure_records(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kind: str, state: str
@@ -77,7 +78,7 @@ def test_problem_reader_emits_core_envelope_with_verified_facts(
     record["kind"] = "bug"
     record["actual"] = "Verified actual behavior from Azure"
     tracker = Mock()
-    tracker.read.return_value = {"kind": "bug", "state": "open", "record": record}
+    tracker.read.return_value = {"kind": "bug", "state": "New", "record": record}
     monkeypatch.setattr(cli, "Tracker", Mock(return_value=tracker))
     uri = "https://dev.azure.com/personal-fixture/Personal/_workitems/edit/1"
     result = cli.execute(cli._parser().parse_args(["read-problem", "--record", uri]))
