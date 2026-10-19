@@ -2,17 +2,113 @@
   "plugin": "personal",
   "dependencies": [
     "tj-agents/base",
+    "tj-agents/engineering",
     "tj-agents/machine"
   ],
   "profiles": {
     "core": [
+      "address-bug",
+      "address-debt",
+      "address-feature",
+      "address-mistake",
+      "address-task",
+      "address-work-item",
       "adopt",
+      "bug",
       "current-solution",
+      "debt",
+      "feature",
+      "mistake",
+      "task",
       "work-item"
     ]
   },
   "compatibilitySkillAliases": {},
   "skills": [
+    {
+      "name": "address-bug",
+      "kind": "workflow",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "address-debt",
+      "kind": "workflow",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "address-feature",
+      "kind": "workflow",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "address-mistake",
+      "kind": "workflow",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "address-task",
+      "kind": "workflow",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "address-work-item",
+      "kind": "workflow",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
     {
       "name": "adopt",
       "kind": "utility",
@@ -23,6 +119,20 @@
       "requires": [
         "python",
         "machine"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "bug",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
       ],
       "provenance": [
         "house"
@@ -43,6 +153,62 @@
       ]
     },
     {
+      "name": "debt",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "feature",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "mistake",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "task",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "engineering"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
       "name": "work-item",
       "kind": "utility",
       "profile": "core",
@@ -51,7 +217,8 @@
       ],
       "requires": [
         "python",
-        "machine"
+        "machine",
+        "engineering"
       ],
       "provenance": [
         "house"

@@ -1,6 +1,6 @@
 {
   "name": "personal",
-  "description": "Personal project standards and Azure Boards work items.",
+  "description": "Personal project standards, direct kind recording and Azure Boards work-item addressing.",
   "author": {
     "name": "Tommy Seery"
   },
@@ -11,8 +11,8 @@
   ],
   "interface": {
     "displayName": "Personal",
-    "shortDescription": "Personal project standards and Azure Boards work items.",
-    "longDescription": "Standards for explicitly adopted personal projects and their selected personal Azure Boards workflow.",
+    "shortDescription": "Personal project standards, direct kind recording and Azure Boards work-item addressing.",
+    "longDescription": "Personal standards with known-kind recording and addressing entry points using shared Engineering lifecycles and a selected personal Azure Boards provider.",
     "developerName": "Tommy Seery",
     "category": "Productivity",
     "capabilities": [],
