@@ -19,3 +19,15 @@ Resolution evidence: Personal PR6 merged 37f93858a59ab5318573cf2c3608585301544e8
 plus policy 39311610042 passed. Twelve tests passed on Windows and a real native Linux Git clone.
 All five committed canonical/host/package adopter scripts match on verified main, and the actual
 CLI caller now uses a regular native import and passes adoption check. No remaining repair action.
+
+## B002 — Reusable policy CI used floating action refs in strict consumers
+
+Kind: bug. Observed: 2026-10-19. Priority: P2. State: in-progress.
+Source owner: personal reusable policy workflow.
+Evidence: Concertable/customer PR38 run39323692208 rejected actions/checkout@v4 and
+setup-python@v5 before any policy step because its organization requires full commit pins.
+Repair: pin both shared checkouts and setup-python to official upstream tag commits, verified
+through the owning repositories GitHub ref APIs. Preserve the current-main policy checkout,
+read-only token scope and no secret forwarding. No consumer security policy is relaxed.
+Acceptance: reviewed source CI passes and the actual strict Customer consumer executes its
+Windows/Linux policy checks successfully using the repaired reusable workflow.
