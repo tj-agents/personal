@@ -7,7 +7,10 @@ Published as plugin `personal` from this repository's `personal-agents` marketpl
 ## Skills
 
 - Policies: `personal:current-solution`.
-- Utilities: `personal:adopt`, `personal:work-item`.
+- Utilities: `personal:adopt`, `personal:work-item`, `personal:bug`, `personal:debt`,
+  `personal:mistake`, `personal:feature`, `personal:task`.
+- Workflows: `personal:address-work-item`, `personal:address-bug`, `personal:address-debt`,
+  `personal:address-mistake`, `personal:address-feature`, `personal:address-task`.
 
 ## Adopt a personal project
 
@@ -36,6 +39,22 @@ Azure DevOps MCP for Codex and Claude using the OS credential store. See the
 
 Live adoption requires a confirmed personal organization, provisioned process/project, secure PAT
 and verified host tests. Keep an existing queue authoritative until its migration is reconciled.
+
+## Recording and addressing
+
+When the kind is known, record it directly with `personal:bug`, `personal:debt`, `personal:mistake`,
+`personal:feature` or `personal:task`. Recording preserves the request for later work and does not start
+implementation. `personal:work-item` owns selection, schemas, Azure storage, configuration and credentials.
+
+Use the corresponding personal addressing workflow to fix or implement an existing item, or
+`personal:address-work-item` to read its kind and choose the lifecycle. These entries reuse Engineering's
+repair, feature and plan workflows; the same selected personal provider reads and updates the Azure record.
+Always qualify `personal:feature` when recording and `engineering:feature` when implementing.
+
+Core continues to own provider-neutral record conventions and reusable diagnosis, repair, planning,
+review and delivery. Personal owns Azure transport, personal identity/credential checks and these personal
+entry points. The shipped package declares its Engineering and Machine dependencies. A missing personal
+provider blocks the operation without adopting another queue.
 
 ## Authoring and verification
 

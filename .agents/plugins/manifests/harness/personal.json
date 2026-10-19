@@ -4,17 +4,34 @@
   "source_roots": [
     ".agents/personal/policy/current-solution",
     ".agents/personal/utility/adopt",
-    ".agents/personal/utility/work-item"
+    ".agents/personal/utility/bug",
+    ".agents/personal/utility/debt",
+    ".agents/personal/utility/feature",
+    ".agents/personal/utility/mistake",
+    ".agents/personal/utility/task",
+    ".agents/personal/utility/work-item",
+    ".agents/personal/workflow/address/bug",
+    ".agents/personal/workflow/address/debt",
+    ".agents/personal/workflow/address/feature",
+    ".agents/personal/workflow/address/mistake",
+    ".agents/personal/workflow/address/task",
+    ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
     "marketplaces": [
       {
         "id": "personal-agents",
         "repository": "tj-agents/personal"
+      },
+      {
+        "id": "base-agents",
+        "repository": "tj-agents/core"
       }
     ],
     "plugins": [
-      "personal-agents/personal"
+      "personal-agents/personal",
+      "base-agents/engineering",
+      "base-agents/machine"
     ],
     "hooks": [],
     "permissions": {
