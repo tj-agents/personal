@@ -1,11 +1,11 @@
 ---
 name: work-item
-description: Manage personal Azure Boards features, tasks, bugs, mistakes and debt with repository-scoped records and isolated personal MCP credentials. Use when recording, listing, updating or addressing work in an explicitly adopted personal project, or setting up its personal work-item provider.
+description: Manage personal Azure Boards features, tasks, bugs, mistakes and debt with repository-scoped records and isolated personal MCP credentials. Use when configuring the personal provider or reading, listing, recording and updating its managed Azure facts in an explicitly adopted personal project. For implementing an existing item, use personal:address-work-item.
 kind: utility
 domain: personal
 profile: core
 applicability: explicitly adopted personal projects
-requires: python, machine
+requires: python, machine, engineering
 provenance: house
 ---
 
@@ -15,6 +15,29 @@ Own personal work records in Azure Boards. Use this skill when the primary check
 `personal:work-item` in `.problem-records.json`. Preserve that repository's identity and existing
 records. Reject employer paths, employer origins and the Infonetica organization. Work projects
 continue to use their work-scoped Azure skills and MCP configuration.
+
+## Personal entry points
+
+Verify explicit `personal@tj-agents` adoption and use `doctor` to confirm the source repository selects
+`personal:work-item` before recording or addressing. These entry points never adopt a repository,
+replace its selected provider or select a personal organization automatically. Preserve pending facts
+when selection, credentials or the provider is unavailable, then report the resolver and resume condition.
+
+Choose the known kind directly. Each recording entry loads the matching Engineering recording convention
+and uses this provider's commands; recording does not start implementation. An untyped recording request
+uses `engineering:write-issue` to classify once. Personal addressing is an explicit execution request.
+
+| Kind | Record the known kind | Address existing work |
+| --- | --- | --- |
+| Bug | `personal:bug` | `personal:address-bug` |
+| Debt | `personal:debt` | `personal:address-debt` |
+| Mistake | `personal:mistake` | `personal:address-mistake` |
+| Feature | `personal:feature` | `personal:address-feature` |
+| Task | `personal:task` | `personal:address-task` |
+
+`personal:address-work-item` handles an existing item whose kind is not yet known. Read its persisted kind;
+never infer it from the title or create another item. Always qualify `personal:feature` (recording) and
+`engineering:feature` (implementation), and qualify the address workflows shared with Engineering.
 
 ## Install and configure
 
@@ -96,6 +119,40 @@ Every managed operation validates `Custom.PersonalRepository` as well as the sel
 and project. The Azure process must supply `Custom.PersonalRepository`, `Custom.PersonalRequestId`
 and `Custom.PersonalRecord` on all five work-item types. Finish process/project provisioning and live
 read/write tests before enabling this provider for an existing queue.
+
+## Address an existing item
+
+This section is the personal storage/identity boundary for all personal addressing entries. The typed
+entry supplies an expected kind; the generic entry accepts any supported persisted kind.
+
+1. Apply the Personal entry points prerequisites. Read the named full Azure URL with this provider's
+   `read` command. If no item was named, use `list` with the expected kind when supplied and select one
+   actionable item within the user's requested scope. If choosing among materially different outcomes
+   needs a user decision, preserve the candidates until resolved. A foreign URL, kind mismatch,
+   stale structured facts, missing credential or unavailable read fails visibly; do not reclassify,
+   overwrite or recreate the item.
+2. Reconcile the exact canonical identity, source owner, dependencies, Feature parent and existing
+   goal/session/branch/PR before editing or dispatching. Pass the selected identity into the lifecycle;
+   it must not independently select another record. A Closed or Removed item retains its history;
+   report its current state instead of reopening it without an explicit request. Another active repair
+   owner receives the evidence/link through the existing coordination contract; do not create a second writer.
+3. Resume an existing authorized plan through `engineering:plan-execution`. Otherwise use the following
+   shared lifecycle for the persisted kind. These workflows own diagnosis, implementation, review,
+   verification and authorized delivery; keep Azure operations in this provider.
+
+   | Persisted kind | Shared lifecycle |
+   | --- | --- |
+   | Bug | `engineering:address-bug` |
+   | Debt | `engineering:address-debt` |
+   | Mistake | `engineering:address-mistake` |
+   | Feature | `engineering:feature` |
+   | Task | The task's declared workflow; use `engineering:feature` for an authorized scoped new or changed behavior |
+
+4. Keep the same record current with factual progress, repair links and actual evidence using this
+   provider's read/update/state commands and concurrency checks. Before closure, read the record again,
+   verify its own acceptance/resolution condition and attach the observed evidence. Follow the requested
+   lifecycle's authorization gates; item creation or a recording-only request grants no repair authority.
+   For a blocked repair, retain its reason, resolver and observable resume condition and leave it outstanding.
 
 ## Core problem reader and cutover
 

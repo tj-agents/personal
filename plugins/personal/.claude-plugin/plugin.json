@@ -1,7 +1,7 @@
 {
   "name": "personal",
   "displayName": "Personal",
-  "description": "Personal project standards and Azure Boards work items.",
+  "description": "Personal project standards, direct kind recording and Azure Boards work-item addressing.",
   "author": {
     "name": "Tommy Seery"
   },
@@ -12,6 +12,7 @@
   ],
   "dependencies": [
     "base@tj-agents",
+    "engineering@tj-agents",
     "machine@tj-agents"
   ]
 }
