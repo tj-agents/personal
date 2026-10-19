@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib import import_module
@@ -138,7 +139,7 @@ class RequestJournal:
                 handle.flush()
             handle.seek(0)
             try:
-                if os.name == "nt":
+                if sys.platform == "win32":
                     import msvcrt
 
                     msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
@@ -154,7 +155,7 @@ class RequestJournal:
                 yield
             finally:
                 handle.seek(0)
-                if os.name == "nt":
+                if sys.platform == "win32":
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
                 else:
                     fcntl = _posix_lock()
