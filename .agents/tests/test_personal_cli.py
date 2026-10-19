@@ -4,8 +4,8 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from personal_work_items import cli, credentials
-from personal_work_items.records import ItemError, skeleton
+from personal_work_items import cli, credentials, fingerprint
+from tj_work_items.records import KINDS, ItemError, skeleton
 
 
 def command_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Mock:
@@ -22,6 +22,7 @@ def command_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Mock:
     credential = Mock(return_value="dummy-personal-token")
     monkeypatch.setattr(credentials, "get_pat", credential)
     monkeypatch.setattr(cli, "Client", Mock())
+    monkeypatch.setattr(cli, "RequestJournal", Mock())
     return credential
 
 
@@ -96,3 +97,62 @@ def test_core_reader_shim_accepts_python39_syntax() -> None:
         / "personal/utility/work-item/scripts/read_problem_record.py"
     )
     ast.parse(path.read_text(encoding="utf-8"), feature_version=(3, 9))
+
+
+def test_shared_runtime_mismatch_rejects_before_context_or_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = Mock(side_effect=AssertionError("context must not be read"))
+    credential = Mock(side_effect=AssertionError("credentials must not be read"))
+    monkeypatch.setattr(cli, "load_context", context)
+    monkeypatch.setattr(credentials, "get_pat", credential)
+    monkeypatch.setattr(fingerprint, "shared_source_digest", lambda: "f" * 64)
+    with pytest.raises(ItemError, match="shared work-item runtime source differs"):
+        cli.execute(cli._parser().parse_args(["doctor"]))
+    context.assert_not_called()
+    credential.assert_not_called()
+
+
+def test_personal_adapter_passes_its_fields_and_existing_receipt_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    command_context(monkeypatch, tmp_path)
+    factory = Mock()
+    journal = Mock()
+    monkeypatch.setattr(cli, "Tracker", factory)
+    monkeypatch.setattr(cli, "RequestJournal", journal)
+    cli.execute(cli._parser().parse_args(["list"]))
+    journal.assert_called_once_with(tmp_path, namespace="personal-work-items")
+    assert factory.call_args.kwargs == {
+        "fields": {
+            "repository": "Custom.PersonalRepository",
+            "request": "Custom.PersonalRequestId",
+            "record": "Custom.PersonalRecord",
+        },
+        "lifecycle": {
+            kind: {"open": "New", "closed": "Closed", "inactive": ("Closed", "Removed")}
+            for kind in KINDS
+        },
+    }
+    assert factory.call_args.args[3] is journal.return_value
+
+
+def test_shared_journal_reads_existing_personal_receipt(project: Path) -> None:
+    from tj_work_items.request_journal import RequestJournal
+
+    key = "personal-fixture/Project/example/personal-project:create:existing"
+    fingerprint_value = "a" * 64
+    journal = RequestJournal(project, namespace="personal-work-items")
+    assert journal.root == project / ".git/personal-work-items/requests"
+    journal.root.mkdir(parents=True)
+    journal.path(key).write_text(
+        '{"fingerprint":"' + fingerprint_value + '","resource_id":null}',
+        encoding="utf-8",
+    )
+    assert journal.read(key, fingerprint_value) == {
+        "fingerprint": fingerprint_value,
+        "resource_id": None,
+    }
+    with pytest.raises(ItemError, match="already reserved"):
+        journal.reserve(key, fingerprint_value)

@@ -356,6 +356,17 @@ wheels = [
 name = "tj-personal-work-items"
 version = "0.1.0"
 source = { editable = ".agents/personal/utility/work-item/runtime" }
+dependencies = [
+    { name = "tj-work-items" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tj-work-items", git = "https://github.com/tj-agents/work-items.git?subdirectory=.agents%2Fwork-items%2Futility%2Fmanage%2Fruntime&rev=9b2a2df1d8ff2a6c4968b39624cbdc683e33da07" }]
+
+[[package]]
+name = "tj-work-items"
+version = "0.1.0"
+source = { git = "https://github.com/tj-agents/work-items.git?subdirectory=.agents%2Fwork-items%2Futility%2Fmanage%2Fruntime&rev=9b2a2df1d8ff2a6c4968b39624cbdc683e33da07#9b2a2df1d8ff2a6c4968b39624cbdc683e33da07" }
 
 [[package]]
 name = "typing-extensions"
