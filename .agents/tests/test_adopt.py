@@ -40,6 +40,28 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(0, adopt.run(self.root, "write", None))
         self.assertEqual(body, (self.root / "AGENTS.md").read_text())
 
+    def test_git_symlink_emulation_is_refused_before_any_native_writes(self):
+        def git(*arguments, **kwargs):
+            return subprocess.run(["git", "-C", str(self.root), *arguments],
+                                  capture_output=True, text=True, check=True, **kwargs)
+
+        git("init", "-q")
+        git("config", "core.symlinks", "false")
+        blob = git("hash-object", "-w", "--stdin", input="target.md").stdout.strip()
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_text("target.md", encoding="utf-8")
+                git("update-index", "--add", "--cacheinfo", "120000", blob, name)
+                self.assertFalse(path.is_symlink())
+                before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+                for mode in ("preview", "write", "check"):
+                    with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "tracked instruction link"):
+                        adopt.run(self.root, mode, None)
+                    self.assertEqual(before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+                git("update-index", "--force-remove", name)
+                path.unlink()
+
     def test_independent_claude_instructions_receive_the_same_policy(self):
         (self.root / "CLAUDE.md").write_text("Claude-only rule.\n", encoding="utf-8")
         adopt.run(self.root, "write", None)
