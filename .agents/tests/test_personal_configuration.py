@@ -7,7 +7,7 @@ import pytest
 from personal_work_items.configuration import configure
 from personal_work_items.context import ContextError
 from personal_work_items.fingerprint import require_release, source_digest
-from personal_work_items.records import ItemError
+from tj_work_items.records import ItemError
 
 
 def git(root: Path, *args: str) -> None:

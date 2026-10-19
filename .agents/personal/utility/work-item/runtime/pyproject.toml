@@ -3,7 +3,7 @@ name = "tj-personal-work-items"
 version = "0.1.0"
 description = "Personal Azure Boards provider and isolated Azure DevOps MCP launcher"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["tj-work-items @ git+https://github.com/tj-agents/work-items.git@9b2a2df1d8ff2a6c4968b39624cbdc683e33da07#subdirectory=.agents/work-items/utility/manage/runtime"]
 
 [project.scripts]
 personal-work-item = "personal_work_items.cli:main"

@@ -1,8 +1,12 @@
 import hashlib
+import json
+import re
 from pathlib import Path
 
+from tj_work_items.fingerprint import source_digest as shared_source_digest
+from tj_work_items.records import ItemError
+
 from . import __version__
-from .records import ItemError
 
 
 def source_digest() -> str:
@@ -15,7 +19,27 @@ def source_digest() -> str:
     return digest.hexdigest()
 
 
+def require_shared_runtime() -> None:
+    manifest = json.loads(
+        (Path(__file__).parent / "shared_runtime.json").read_text(encoding="utf-8")
+    )
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"schema_version", "distribution", "source_sha256"}
+        or manifest.get("schema_version") != 1
+        or manifest.get("distribution") != "tj-work-items"
+        or not isinstance(manifest.get("source_sha256"), str)
+        or re.fullmatch(r"[a-f0-9]{64}", manifest["source_sha256"]) is None
+        or manifest["source_sha256"] != shared_source_digest()
+    ):
+        raise ItemError(
+            "installed shared work-item runtime source differs; "
+            "reinstall the selected runtimes"
+        )
+
+
 def require_release(version: str | None, source: str | None) -> None:
+    require_shared_runtime()
     if version is not None and version != __version__:
         raise ItemError(
             "installed personal runtime version differs; reinstall the "

@@ -28,6 +28,10 @@
         "repository": "tj-agents/core"
       },
       {
+        "id": "work-items-agents",
+        "repository": "tj-agents/work-items"
+      },
+      {
         "id": "tj-agents",
         "repository": "tj-agents/marketplace"
       }
@@ -36,7 +40,8 @@
       "personal-agents/personal",
       "tj-agents/base",
       "tj-agents/engineering",
-      "tj-agents/machine"
+      "tj-agents/machine",
+      "tj-agents/work-items"
     ],
     "hooks": [],
     "permissions": {

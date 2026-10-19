@@ -5,7 +5,7 @@ kind: utility
 domain: personal
 profile: core
 applicability: explicitly adopted personal projects
-requires: python, machine, engineering
+requires: python, machine, engineering, work-items
 provenance: house
 ---
 
@@ -41,7 +41,11 @@ never infer it from the title or create another item. Always qualify `personal:f
 
 ## Install and configure
 
-The runtime beside this file is the shipped implementation. Install Python 3.12 or newer through uv,
+The runtime beside this file supplies personal scope, credentials and host configuration. It uses
+`work-items:manage`'s installed shared runtime for schemas, Azure record operations and request receipts.
+The package dependency installs that engine; its source digest must match the shipped personal manifest
+before either credentials or Azure requests are used. Keep the selected Personal and Work Items packages
+installed together. Install Python 3.12 or newer through uv,
 then run `uv tool install <skill-directory>/runtime`. This installs `personal-work-item` and
 `personal-work-item-mcp`; make the uv tool executable directory available to both hosts. Install the
 pinned official server separately with `npm install --global @azure-devops/mcp@2.10.0` beside Node.js.
@@ -109,7 +113,8 @@ Report the verified Azure URL, kind, state and parent after a write. Features an
 Azure work items; Azure stores their parent/child relationship. Confirm the chosen skipped-level
 hierarchy in the Azure UI during the live pilot before promising a particular board view.
 
-The private Git-common-directory journal reserves request IDs before POST. An uncertain write is
+The shared journal preserves the existing personal-work-items/requests namespace in the private
+Git common directory and reserves request IDs before POST. An uncertain write is
 reconciled through Azure's request-ID field before another create. A closed matching record stays
 closed. Multiple matches or unavailable readback fail without another blind write. This prevents
 unsafe retries in the same checkout; Azure does not provide a uniqueness constraint for the custom

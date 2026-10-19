@@ -9,10 +9,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tj_work_items.records import ItemError
+
 from . import __version__, credentials
 from .context import ContextError, load_context
 from .fingerprint import require_release
-from .records import ItemError
 
 _PACKAGE_NAME = "@azure-devops/mcp"
 _PACKAGE_VERSION = "2.10.0"

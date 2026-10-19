@@ -5,14 +5,23 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tj_work_items.azure_api import APIError, Client
+from tj_work_items.azure_tracker import Tracker
+from tj_work_items.records import (
+    KINDS,
+    ItemError,
+    read_input,
+    render,
+    skeleton,
+    validate,
+)
+from tj_work_items.request_journal import RequestJournal
+
 from . import __version__, credentials
-from .azure_api import APIError, Client
-from .azure_tracker import Tracker
 from .configuration import configure
 from .context import ContextError, load_context
 from .fingerprint import require_release, source_digest
 from .host_scope import isolate
-from .records import KINDS, ItemError, read_input, render, skeleton, validate
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -91,7 +100,25 @@ def execute(args: argparse.Namespace) -> Any:
     if args.command in ("create", "update") and args.input == "-":
         raise ItemError("writes require a retained JSON input file")
     token = credentials.get_pat(organization)
-    tracker = Tracker(selected["primary_root"], config, Client(config, token))
+    tracker = Tracker(
+        selected["primary_root"],
+        config,
+        Client(config, token),
+        RequestJournal(selected["primary_root"], namespace="personal-work-items"),
+        fields={
+            "repository": "Custom.PersonalRepository",
+            "request": "Custom.PersonalRequestId",
+            "record": "Custom.PersonalRecord",
+        },
+        lifecycle={
+            kind: {
+                "open": "New",
+                "closed": "Closed",
+                "inactive": ("Closed", "Removed"),
+            }
+            for kind in KINDS
+        },
+    )
     if args.command == "create":
         return tracker.create(read_input(args.input), args.request_id, args.parent)
     if args.command == "list":

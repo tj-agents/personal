@@ -44,7 +44,8 @@ and verified host tests. Keep an existing queue authoritative until its migratio
 
 When the kind is known, record it directly with `personal:bug`, `personal:debt`, `personal:mistake`,
 `personal:feature` or `personal:task`. Recording preserves the request for later work and does not start
-implementation. `personal:work-item` owns selection, schemas, Azure storage, configuration and credentials.
+implementation. `personal:work-item` owns personal selection, configuration and credentials. It delegates
+schemas, Azure record operations and request receipts to the shared Work Items runtime.
 
 Use the corresponding personal addressing workflow to fix or implement an existing item, or
 `personal:address-work-item` to read its kind and choose the lifecycle. These entries reuse Engineering's
@@ -52,9 +53,11 @@ repair, feature and plan workflows; the same selected personal provider reads an
 Always qualify `personal:feature` when recording and `engineering:feature` when implementing.
 
 Core continues to own provider-neutral record conventions and reusable diagnosis, repair, planning,
-review and delivery. Personal owns Azure transport, personal identity/credential checks and these personal
-entry points. The shipped package declares its Engineering and Machine dependencies. A missing personal
-provider blocks the operation without adopting another queue.
+review and delivery. Work Items owns the shared tracker implementation. Personal owns personal identity/credential
+checks, field mappings, host configuration and these personal entry points. Its shipped harness injects
+Work Items alongside Engineering and Machine. The runtime dependency pins the shared implementation,
+and source validation runs before credentials. A missing personal provider blocks the operation without
+adopting another queue.
 
 ## Authoring and verification
 

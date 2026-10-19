@@ -3,7 +3,8 @@
   "dependencies": [
     "tj-agents/base",
     "tj-agents/engineering",
-    "tj-agents/machine"
+    "tj-agents/machine",
+    "tj-agents/work-items"
   ],
   "profiles": {
     "core": [
@@ -218,7 +219,8 @@
       "requires": [
         "python",
         "machine",
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"

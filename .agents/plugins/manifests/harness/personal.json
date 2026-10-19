@@ -26,12 +26,17 @@
       {
         "id": "base-agents",
         "repository": "tj-agents/core"
+      },
+      {
+        "id": "work-items-agents",
+        "repository": "tj-agents/work-items"
       }
     ],
     "plugins": [
       "personal-agents/personal",
       "base-agents/engineering",
-      "base-agents/machine"
+      "base-agents/machine",
+      "work-items-agents/work-items"
     ],
     "hooks": [],
     "permissions": {
