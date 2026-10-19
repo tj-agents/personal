@@ -1,0 +1,17 @@
+[project]
+name = "tj-personal-work-items"
+version = "0.1.0"
+description = "Personal Azure Boards provider and isolated Azure DevOps MCP launcher"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+personal-work-item = "personal_work_items.cli:main"
+personal-work-item-mcp = "personal_work_items.mcp_server:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "personal_work_items"

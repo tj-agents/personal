@@ -7,7 +7,8 @@
   "profiles": {
     "core": [
       "adopt",
-      "current-solution"
+      "current-solution",
+      "work-item"
     ]
   },
   "compatibilitySkillAliases": {},
@@ -36,6 +37,21 @@
       ],
       "requires": [
         "personal"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "work-item",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "python",
+        "machine"
       ],
       "provenance": [
         "house"
