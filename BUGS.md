@@ -22,7 +22,7 @@ CLI caller now uses a regular native import and passes adoption check. No remain
 
 ## B002 — Reusable policy CI used floating action refs in strict consumers
 
-Kind: bug. Observed: 2026-10-19. Priority: P2. State: in-progress.
+Kind: bug. Observed: 2026-10-19. Priority: P2. State: resolved.
 Source owner: personal reusable policy workflow.
 Evidence: Concertable/customer PR38 run39323692208 rejected actions/checkout@v4 and
 setup-python@v5 before any policy step because its organization requires full commit pins.
@@ -31,3 +31,8 @@ through the owning repositories GitHub ref APIs. Preserve the current-main polic
 read-only token scope and no secret forwarding. No consumer security policy is relaxed.
 Acceptance: reviewed source CI passes and the actual strict Customer consumer executes its
 Windows/Linux policy checks successfully using the repaired reusable workflow.
+
+Resolution evidence: Personal PR8 merged cba7c5cec8f95b8e50cf5e1d9da7468a7d65fd92; source
+CI 39324720419 and causal main CI 39325156908 / policy 39325156491 passed. Actual strict
+Customer runs 39323692208 and 39323682895 attempt2 executed policy checks successfully on both
+Windows and Linux. The consumer security policy was preserved; no remaining runner repair action.
