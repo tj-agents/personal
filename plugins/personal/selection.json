@@ -13,15 +13,13 @@
       "address-feature",
       "address-mistake",
       "address-task",
-      "address-work-item",
       "adopt",
       "bug",
       "current-solution",
       "debt",
       "feature",
       "mistake",
-      "task",
-      "work-item"
+      "task"
     ]
   },
   "compatibilitySkillAliases": {},
@@ -31,10 +29,11 @@
       "kind": "workflow",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -45,10 +44,11 @@
       "kind": "workflow",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -59,10 +59,11 @@
       "kind": "workflow",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -73,10 +74,11 @@
       "kind": "workflow",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -87,24 +89,11 @@
       "kind": "workflow",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "address-work-item",
-      "kind": "workflow",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal projects"
-      ],
-      "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -130,10 +119,11 @@
       "kind": "utility",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -158,10 +148,11 @@
       "kind": "utility",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -172,10 +163,11 @@
       "kind": "utility",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -186,10 +178,11 @@
       "kind": "utility",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
+        "engineering",
+        "work-items"
       ],
       "provenance": [
         "house"
@@ -200,25 +193,9 @@
       "kind": "utility",
       "profile": "core",
       "applicability": [
-        "explicitly adopted personal projects"
+        "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "work-item",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal projects"
-      ],
-      "requires": [
-        "python",
-        "machine",
         "engineering",
         "work-items"
       ],

@@ -1,11 +1,11 @@
 ---
 name: address-task
-description: Address an existing personal Azure task record. Use when an explicitly adopted personal project needs an identified task completed.
+description: Address an existing GitHub task record in an explicitly adopted personal project.
 kind: workflow
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 

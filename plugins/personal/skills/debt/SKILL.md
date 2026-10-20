@@ -1,11 +1,11 @@
 ---
 name: debt
-description: Record known technical debt in the selected personal Azure work-item provider. Use when an explicitly adopted personal project has verified debt facts to capture.
+description: Record known technical debt in the explicitly selected GitHub Work Items provider for an adopted personal project.
 kind: utility
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 

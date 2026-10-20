@@ -1,11 +1,11 @@
 ---
 name: address-bug
-description: Address an existing personal Azure bug record. Use when an explicitly adopted personal project needs an identified bug investigated or fixed.
+description: Address an existing GitHub bug record in an explicitly adopted personal project.
 kind: workflow
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 

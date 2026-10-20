@@ -20,9 +20,10 @@ assemble or maintain another copy. Preview with `--mode preview`, and use the id
 `--mode check` in CI. Use `python3` on Linux/macOS. Requires Python 3.11 or newer.
 
 The Core tool owns plugin declarations and host settings. This command selects `personal@tj-agents`,
-generates the mandatory native instruction block in AGENTS.md, and covers Claude through its AGENTS.md
-import or an equal generated block in CLAUDE.md. It refuses retained compatibility declarations and broken
-block markers. The policy has one authored body; generated native blocks are checked, never edited by hand.
+generates the mandatory native instruction block in AGENTS.md, merges distinct CLAUDE.md instructions into
+AGENTS.md, and leaves CLAUDE.md as the exact `@AGENTS.md` pointer. It refuses retained compatibility
+declarations and broken block markers. The policy has one authored body; generated native blocks are checked,
+never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
 Adoption also writes a dedicated CI caller to check the current published policy on Windows and Linux.
