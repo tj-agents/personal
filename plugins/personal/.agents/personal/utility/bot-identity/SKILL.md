@@ -31,3 +31,7 @@ For an agent, `gh` and `git push` pick the account from `-R`/`--repo`, a `repos/
 checkout's `origin`. An installed account gets a one-hour installation token, cached until five minutes
 before expiry; any other account falls through to Tommy's normal credentials. `token --owner <account>`
 prints a token. Restart Claude and Codex after setup.
+
+Setup also schedules `merge-gates` hourly (Task Scheduler or cron), running as Tommy. It runs the installed
+`github-actions:merge-policy` sync over every account the App is installed on, so a repository that declares
+`.github/merge-policy.json` gets its gate on GitHub within the hour. A repository without the file has no gate.

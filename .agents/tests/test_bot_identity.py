@@ -83,6 +83,37 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual("1", environment["TJ_AGENT"])
 
 
+class MergeGateTests(unittest.TestCase):
+    def test_sync_covers_every_installed_account_without_the_agent_flag(self):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs["env"]))
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(bot, "installations", return_value={"tj-agents": 1, "tomjseery": 2}),                 mock.patch.object(bot, "merge_policy_script", return_value=Path("/p/merge_policy.py")),                 mock.patch.dict(bot.os.environ, {"TJ_AGENT": "1"}):
+            self.assertEqual(0, bot.merge_gates(RECORD, run=run))
+        command, environment = calls[0]
+        self.assertEqual(["sync", "--owner", "tj-agents", "--owner", "tomjseery"], command[3:])
+        self.assertNotIn("TJ_AGENT", environment)
+
+    def test_schedule_is_hourly_and_replaces_its_own_entry(self):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs.get("input")))
+            return mock.Mock(returncode=0, stdout="0 * * * * other\n5 * * * * old # tj-agents-merge-gates\n")
+
+        bot.schedule_merge_gates(Path("/s/bot_identity.py"), run=run)
+        if bot.os.name == "nt":
+            self.assertIn("hourly", calls[0][0])
+            self.assertTrue(calls[0][0][-1].endswith('bot_identity.py" merge-gates'))
+        else:
+            written = calls[-1][1].splitlines()
+            self.assertEqual("0 * * * * other", written[0])
+            self.assertEqual(1, sum("tj-agents-merge-gates" in line for line in written))
+
+
 class SettingsTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
