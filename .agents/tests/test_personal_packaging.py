@@ -28,6 +28,10 @@ WORK_ITEM_SKILLS = {
     "write-mistake",
     "write-task",
 }
+EXTERNAL_SKILLS = {
+    "machine": {"plugin-selection"},
+    "engineering": {"address-bug", "address-debt", "address-mistake", "feature"},
+}
 
 
 def load(relative: str) -> dict[str, Any]:
@@ -85,7 +89,7 @@ class PersonalPackagingTests(unittest.TestCase):
         self.assertIn("tj-agents/work-items", harness["requires"]["plugins"])
 
     def test_qualified_references_resolve_to_declared_dependencies(self) -> None:
-        for path in (ROOT / "plugins/personal/skills").rglob("SKILL.md"):
+        for path in (ROOT / ".agents/personal").rglob("SKILL.md"):
             content = path.read_text(encoding="utf-8")
             for namespace, name in re.findall(
                 r"`([a-z][a-z0-9-]*):([a-z][a-z0-9-]*)`", content
@@ -95,11 +99,8 @@ class PersonalPackagingTests(unittest.TestCase):
                 elif namespace == "work-items":
                     self.assertIn(name, WORK_ITEM_SKILLS, str(path))
                 else:
-                    self.assertIn(
-                        name,
-                        {"address-bug", "address-debt", "address-mistake", "feature"},
-                        str(path),
-                    )
+                    self.assertIn(namespace, EXTERNAL_SKILLS, str(path))
+                    self.assertIn(name, EXTERNAL_SKILLS[namespace], str(path))
 
 
 if __name__ == "__main__":
