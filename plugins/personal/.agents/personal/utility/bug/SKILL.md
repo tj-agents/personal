@@ -1,25 +1,26 @@
 ---
 name: bug
-description: Record a known bug in the selected personal Azure work-item provider. Use when an explicitly adopted personal project has verified bug facts to capture.
+description: Record a known bug in the explicitly selected GitHub Work Items provider for an adopted personal project.
 kind: utility
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 
 # Record a personal bug
 
-Load `personal:work-item` first. Follow its entry-point prerequisites to verify explicit personal
-adoption and the selected provider; do not configure or adopt a project automatically.
+Apply this entry only after the source primary checkout explicitly selects `personal@tj-agents` and
+`work-items:manage` resolves its declared GitHub provider. Reject employer scope or another selected
+provider. Do not adopt, configure or replace a provider while recording.
 
-Then load `engineering:write-bug` and fix the record kind to `bug`. Preserve the canonical existing
-identity, factual evidence, unknowns and any supplied reproduction details. The shared provider owns
-schema lookup, validation, creation, updates and persisted readback.
+Then load `work-items:write-bug` and fix the record kind to `bug`. Preserve the canonical existing
+identity, factual evidence, unknowns and supplied reproduction details. The shared provider owns schema
+lookup, validation, creation, updates and persisted readback.
 
 Record only. An explicit request to fix an existing bug belongs to `personal:address-bug`.
-If source facts are unavailable, leave the record pending; do not invent facts or use a fallback store.
+If source facts are unavailable, retain them with the current task; do not use another backend or a local backlog.
 
 ```text
 personal:bug Record the reproducible crash when saving an empty profile.

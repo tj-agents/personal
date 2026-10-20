@@ -1,11 +1,11 @@
 ---
 name: task
-description: Record a known task in the selected personal Azure work-item provider. Use when an explicitly adopted personal project has verified task facts to capture.
+description: Record a known task in the explicitly selected GitHub Work Items provider for an adopted personal project.
 kind: utility
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 

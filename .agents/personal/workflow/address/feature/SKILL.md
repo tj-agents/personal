@@ -1,24 +1,24 @@
 ---
 name: address-feature
-description: Address an existing personal Azure feature record. Use when an explicitly adopted personal project needs an identified feature implemented.
+description: Address an existing GitHub feature record in an explicitly adopted personal project.
 kind: workflow
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 
 # Address a personal feature
 
-Load `personal:work-item`, then follow its **Address an existing item** section with expected kind
-`feature`. Pass the named full URL when one is supplied.
+Apply this entry only after the source primary checkout explicitly selects `personal@tj-agents` and
+`work-items:manage` resolves its declared GitHub provider. Reject employer scope or another selected
+provider. Do not adopt or replace a provider.
 
-Verify the persisted record is actually a feature. Do not reclassify or recreate it; retain closed
-history and its existing repair owner. That shared section selects existing plan execution or
-`engineering:feature`.
-If source facts are unavailable, leave the item pending with no fallback.
+Read the named GitHub item with `work-items:manage`, verify its managed kind is `feature`, then enter
+`engineering:feature` with the same canonical identity and delivery owner. Do not reclassify or recreate it.
+Use Work Items for factual updates and closure evidence; no local backlog exists.
 
 ```text
-personal:address-feature Implement https://dev.azure.com/personal-demo/Personal/_workitems/edit/42 as the next approved feature.
+personal:address-feature Implement owner/repository#42 as the next approved feature.
 ```

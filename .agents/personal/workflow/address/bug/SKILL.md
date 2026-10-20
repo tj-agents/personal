@@ -1,23 +1,24 @@
 ---
 name: address-bug
-description: Address an existing personal Azure bug record. Use when an explicitly adopted personal project needs an identified bug investigated or fixed.
+description: Address an existing GitHub bug record in an explicitly adopted personal project.
 kind: workflow
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 
 # Address a personal bug
 
-Load `personal:work-item`, then follow its **Address an existing item** section with expected kind
-`bug`. Pass the named full URL when one is supplied.
+Apply this entry only after the source primary checkout explicitly selects `personal@tj-agents` and
+`work-items:manage` resolves its declared GitHub provider. Reject employer scope or another selected
+provider. Do not adopt or replace a provider.
 
-Verify the persisted record is actually a bug. Do not reclassify or recreate it; retain closed history
-and its existing repair owner. That shared section selects `engineering:address-bug` for the lifecycle.
-If source facts are unavailable, leave the item pending with no fallback.
+Read the named GitHub item with `work-items:manage`, verify its managed kind is `bug`, then enter
+`engineering:address-bug` with the same canonical identity and repair owner. Do not reclassify or recreate
+it. Use Work Items for factual updates and closure evidence; no local backlog exists.
 
 ```text
-personal:address-bug Fix https://dev.azure.com/personal-demo/Personal/_workitems/edit/42 after reproducing the save crash.
+personal:address-bug Fix owner/repository#42 after reproducing the save crash.
 ```

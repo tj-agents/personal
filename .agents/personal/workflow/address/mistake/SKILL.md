@@ -1,23 +1,24 @@
 ---
 name: address-mistake
-description: Address an existing personal Azure mistake record. Use when an explicitly adopted personal project needs an identified mistake reconciled.
+description: Address an existing GitHub mistake record in an explicitly adopted personal project.
 kind: workflow
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 
 # Address a personal mistake
 
-Load `personal:work-item`, then follow its **Address an existing item** section with expected kind
-`mistake`. Pass the named full URL when one is supplied.
+Apply this entry only after the source primary checkout explicitly selects `personal@tj-agents` and
+`work-items:manage` resolves its declared GitHub provider. Reject employer scope or another selected
+provider. Do not adopt or replace a provider.
 
-Verify the persisted record is actually a mistake. Do not reclassify or recreate it; retain closed
-history and its existing repair owner. That shared section selects `engineering:address-mistake`.
-If source facts are unavailable, leave the item pending with no fallback.
+Read the named GitHub item with `work-items:manage`, verify its managed kind is `mistake`, then enter
+`engineering:address-mistake` with the same canonical identity and correction owner. Do not reclassify or
+recreate it. Use Work Items for factual updates and closure evidence; no local backlog exists.
 
 ```text
-personal:address-mistake Reconcile https://dev.azure.com/personal-demo/Personal/_workitems/edit/42 with the release procedure.
+personal:address-mistake Reconcile owner/repository#42 with the release procedure.
 ```

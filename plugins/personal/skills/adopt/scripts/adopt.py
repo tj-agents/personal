@@ -35,26 +35,44 @@ def text(path: Path) -> str:
 
 
 def projected(existing: str, block: str) -> str:
-    count = len(BLOCK.findall(existing))
-    if existing.count(START) != count or existing.count(END) != count or count > 1:
-        raise ValueError("personal policy has duplicate or malformed block markers")
+    count = policy_block_count(existing)
     if count:
         return BLOCK.sub(lambda _: block, existing)
     return existing.rstrip() + ("\n\n" if existing.strip() else "") + block + "\n"
+
+
+def policy_block_count(existing: str) -> int:
+    count = len(BLOCK.findall(existing))
+    if existing.count(START) != count or existing.count(END) != count or count > 1:
+        raise ValueError("personal policy has duplicate or malformed block markers")
+    return count
+
+
+def claude_instructions(existing: str) -> str:
+    policy_block_count(existing)
+    remaining = BLOCK.sub("", existing)
+    lines: list[str] = []
+    fence = None
+    for line in remaining.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[0]
+            fence = None if fence == marker else marker if fence is None else fence
+        elif fence is None and stripped == "@AGENTS.md":
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def native_plan(root: Path) -> dict[Path, str]:
     block = fragment()
     agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
     agents_text, claude_text = text(agents), text(claude)
-    targets = {agents: projected(agents_text, block)}
-    if not claude.exists():
-        targets[claude] = "@AGENTS.md\n"
-    elif imports_agents(claude_text):
-        if START in claude_text or END in claude_text:
-            raise ValueError("CLAUDE.md imports AGENTS.md and also contains a duplicate personal block")
-    else:
-        targets[claude] = projected(claude_text, block)
+    if claude.exists() and imports_agents(claude_text) and (START in claude_text or END in claude_text):
+        raise ValueError("CLAUDE.md imports AGENTS.md and also contains a duplicate personal block")
+    merged = claude_instructions(claude_text) if claude.exists() else ""
+    combined = agents_text if not merged else agents_text.rstrip() + ("\n\n" if agents_text.strip() else "") + merged
+    targets = {agents: projected(combined, block), claude: "@AGENTS.md\n"}
     workflow = root / ".github/workflows/check-personal-policy.yml"
     if not workflow.resolve().is_relative_to(root):
         raise ValueError("personal workflow path escapes the project root")

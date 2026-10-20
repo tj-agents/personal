@@ -1,25 +1,26 @@
 ---
 name: mistake
-description: Record a known mistake in the selected personal Azure work-item provider. Use when an explicitly adopted personal project has verified mistake facts to capture.
+description: Record a known mistake in the explicitly selected GitHub Work Items provider for an adopted personal project.
 kind: utility
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 
 # Record a personal mistake
 
-Load `personal:work-item` first. Follow its entry-point prerequisites to verify explicit personal
-adoption and the selected provider; do not configure or adopt a project automatically.
+Apply this entry only after the source primary checkout explicitly selects `personal@tj-agents` and
+`work-items:manage` resolves its declared GitHub provider. Reject employer scope or another selected
+provider. Do not adopt, configure or replace a provider while recording.
 
-Then load `engineering:write-mistake` and fix the record kind to `mistake`. Preserve the canonical
-existing identity, factual evidence, unknowns and the observed error. The shared provider owns schema
-lookup, validation, creation, updates and persisted readback.
+Then load `work-items:write-mistake` and fix the record kind to `mistake`. Preserve the canonical existing
+identity, factual evidence, unknowns and observed error. The shared provider owns schema lookup,
+validation, creation, updates and persisted readback.
 
 Record only. An explicit request to repair an existing mistake belongs to `personal:address-mistake`.
-If source facts are unavailable, leave the record pending; do not invent facts or use a fallback store.
+If source facts are unavailable, retain them with the current task; do not use another backend or a local backlog.
 
 ```text
 personal:mistake Record that the release command was run against the wrong environment.

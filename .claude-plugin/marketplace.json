@@ -8,7 +8,7 @@
     {
       "name": "personal",
       "source": "./plugins/personal",
-      "description": "Personal project standards, direct kind recording and Azure Boards work-item addressing.",
+      "description": "Personal project standards, GitHub Work Items recording and typed addressing.",
       "category": "Productivity",
       "keywords": [
         "personal"

@@ -1,11 +1,11 @@
 ---
 name: address-debt
-description: Address an existing personal Azure debt record. Use when an explicitly adopted personal project needs identified technical debt resolved.
+description: Address existing GitHub technical debt in an explicitly adopted personal project.
 kind: workflow
 domain: personal
 profile: core
-applicability: explicitly adopted personal projects
-requires: engineering
+applicability: explicitly adopted personal GitHub repositories
+requires: engineering, work-items
 provenance: house
 ---
 

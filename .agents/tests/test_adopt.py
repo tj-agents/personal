@@ -40,17 +40,30 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(0, adopt.run(self.root, "write", None))
         self.assertEqual(body, (self.root / "AGENTS.md").read_text())
 
-    def test_independent_claude_instructions_receive_the_same_policy(self):
+    def test_independent_claude_instructions_move_to_agents_before_policy_projection(self):
         (self.root / "CLAUDE.md").write_text("Claude-only rule.\n", encoding="utf-8")
         adopt.run(self.root, "write", None)
-        self.assertIn(adopt.fragment(), (self.root / "CLAUDE.md").read_text())
-        self.assertIn(adopt.fragment(), (self.root / "AGENTS.md").read_text())
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertIn("Claude-only rule.", agents)
+        self.assertIn(adopt.fragment(), agents)
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
 
     def test_documented_import_example_is_not_treated_as_actual_delivery(self):
         path = self.root / "CLAUDE.md"
         path.write_text("# Documentation\n\n```markdown\n@AGENTS.md\n```\n", encoding="utf-8")
         adopt.run(self.root, "write", None)
-        self.assertIn(adopt.fragment(), path.read_text())
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertIn("```markdown\n@AGENTS.md\n```", agents)
+        self.assertIn(adopt.fragment(), agents)
+        self.assertEqual("@AGENTS.md\n", path.read_text())
+
+    def test_claude_policy_block_is_removed_before_merging_distinct_instructions(self):
+        (self.root / "CLAUDE.md").write_text("Claude-only rule.\n\n" + adopt.fragment() + "\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertEqual(1, agents.count(adopt.START))
+        self.assertIn("Claude-only rule.", agents)
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
 
     def test_check_detects_policy_drift_and_write_repairs_it(self):
         adopt.run(self.root, "write", None)
