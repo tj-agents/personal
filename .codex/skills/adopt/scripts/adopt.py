@@ -65,6 +65,14 @@ def claude_instructions(existing: str) -> str:
 
 
 def native_plan(root: Path) -> dict[Path, str]:
+    # Git for Windows can materialize tracked symlinks as ordinary target-text files.
+    if (root / ".git").exists():
+        result = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z", "--",
+                                 "AGENTS.md", "CLAUDE.md"], capture_output=True, text=True)
+        if result.returncode:
+            raise ValueError("cannot inspect tracked native instruction file modes")
+        if any(entry.startswith("120000 ") for entry in result.stdout.split("\0")):
+            raise ValueError("refusing tracked instruction link; replace it with a regular native import before adopting")
     block = fragment()
     agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
     agents_text, claude_text = text(agents), text(claude)
