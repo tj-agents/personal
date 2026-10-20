@@ -1,0 +1,11 @@
+{
+  "external_skills": {
+    "work-items:manage": "Recording/provider capability shipped by tj-agents/work-items, declared by this package dependency and outside the public CI corpus.",
+    "work-items:write-issue": "Recording/provider capability shipped by tj-agents/work-items, declared by this package dependency and outside the public CI corpus.",
+    "work-items:write-bug": "Recording/provider capability shipped by tj-agents/work-items, declared by this package dependency and outside the public CI corpus.",
+    "work-items:write-mistake": "Recording/provider capability shipped by tj-agents/work-items, declared by this package dependency and outside the public CI corpus.",
+    "work-items:write-debt": "Recording/provider capability shipped by tj-agents/work-items, declared by this package dependency and outside the public CI corpus.",
+    "work-items:write-feature": "Recording/provider capability shipped by tj-agents/work-items, declared by this package dependency and outside the public CI corpus.",
+    "work-items:write-task": "Recording/provider capability shipped by tj-agents/work-items, declared by this package dependency and outside the public CI corpus."
+  }
+}
