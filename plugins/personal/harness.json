@@ -17,19 +17,12 @@
     ".agents/personal/workflow/address/task"
   ],
   "requires": {
+    "hooks": [],
+    "permissions": {
+      "claude_allow": [],
+      "codex_prefix_rules": []
+    },
     "marketplaces": [
-      {
-        "id": "personal-agents",
-        "repository": "tj-agents/personal"
-      },
-      {
-        "id": "base-agents",
-        "repository": "tj-agents/core"
-      },
-      {
-        "id": "work-items-agents",
-        "repository": "tj-agents/work-items"
-      },
       {
         "id": "tj-agents",
         "repository": "tj-agents/marketplace"
@@ -41,11 +34,6 @@
       "tj-agents/engineering",
       "tj-agents/machine",
       "tj-agents/work-items"
-    ],
-    "hooks": [],
-    "permissions": {
-      "claude_allow": [],
-      "codex_prefix_rules": []
-    }
+    ]
   }
 }
