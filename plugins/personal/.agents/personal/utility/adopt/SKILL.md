@@ -26,10 +26,6 @@ declarations and broken block markers. The policy has one authored body; generat
 never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
-Adoption also writes a dedicated CI caller to check the current published policy on Windows and Linux.
-It preserves other workflows and refuses to overwrite an unrelated file at that path. For example,
-after adopting a project, deleting its marked AGENTS.md block or reintroducing a compatibility alias makes
-the policy check fail; rerun adoption after a policy update and review the generated changes together.
 
 ```powershell
 # Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:

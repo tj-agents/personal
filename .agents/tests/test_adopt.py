@@ -165,16 +165,6 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(7, adopt.run(self.root, "write", tool))
         self.assertFalse((self.root / "AGENTS.md").exists())
 
-    def test_ci_guard_drift_is_detected_and_unrelated_workflow_is_preserved(self):
-        adopt.run(self.root, "write", None)
-        workflow = self.root / ".github/workflows/check-personal-policy.yml"
-        workflow.unlink()
-        self.assertEqual(1, adopt.run(self.root, "check", None))
-        workflow.write_text("name: Unrelated workflow\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "unrelated"):
-            adopt.run(self.root, "write", None)
-        self.assertEqual("name: Unrelated workflow\n", workflow.read_text())
-
     def test_this_repository_adopts_the_same_policy_it_ships(self):
         self.assertEqual(0, adopt.run(ROOT, "check", None))
 
