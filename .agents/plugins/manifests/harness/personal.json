@@ -4,6 +4,7 @@
   "source_roots": [
     ".agents/personal/policy/current-solution",
     ".agents/personal/utility/adopt",
+    ".agents/personal/utility/bot-identity",
     ".agents/personal/utility/bug",
     ".agents/personal/utility/debt",
     ".agents/personal/utility/feature",
