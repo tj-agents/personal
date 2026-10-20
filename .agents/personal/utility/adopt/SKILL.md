@@ -21,9 +21,12 @@ assemble or maintain another copy. Preview with `--mode preview`, and use the id
 
 The Core tool owns plugin declarations and host settings. This command selects `personal@tj-agents`,
 generates the mandatory native instruction block in AGENTS.md, merges distinct CLAUDE.md instructions into
-AGENTS.md, and leaves CLAUDE.md as the exact `@AGENTS.md` pointer. It refuses retained compatibility
-declarations and broken block markers. The policy has one authored body; generated native blocks are checked,
-never edited by hand.
+AGENTS.md once each, and leaves CLAUDE.md as the exact `@AGENTS.md` pointer; `@./AGENTS.md` is the same
+pointer, and any other Claude-only `@path` import is refused rather than copied in as plain text. It also
+removes its own earlier-generated `.github/workflows/check-personal-policy.yml` CI caller, since adoption
+no longer wires CI enforcement, while refusing to touch a workflow of that name it did not generate. It
+refuses retained compatibility declarations and broken block markers. The policy has one authored body;
+generated native blocks are checked, never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
 
