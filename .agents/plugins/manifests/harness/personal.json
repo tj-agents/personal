@@ -17,26 +17,6 @@
     ".agents/personal/workflow/address/task"
   ],
   "requires": {
-    "marketplaces": [
-      {
-        "id": "personal-agents",
-        "repository": "tj-agents/personal"
-      },
-      {
-        "id": "base-agents",
-        "repository": "tj-agents/core"
-      },
-      {
-        "id": "work-items-agents",
-        "repository": "tj-agents/work-items"
-      }
-    ],
-    "plugins": [
-      "personal-agents/personal",
-      "base-agents/engineering",
-      "base-agents/machine",
-      "work-items-agents/work-items"
-    ],
     "hooks": [],
     "permissions": {
       "claude_allow": [],
