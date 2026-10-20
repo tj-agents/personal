@@ -14,6 +14,7 @@
       "address-mistake",
       "address-task",
       "adopt",
+      "bot-identity",
       "bug",
       "current-solution",
       "debt",
@@ -109,6 +110,20 @@
       "requires": [
         "python",
         "machine"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "bot-identity",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "Tommy's machines; GitHub accounts where the App is installed"
+      ],
+      "requires": [
+        "python"
       ],
       "provenance": [
         "house"

@@ -2,6 +2,7 @@
 
 - `current-solution` — policy — core
 - `adopt` — utility — core
+- `bot-identity` — utility — core
 - `bug` — utility — core
 - `debt` — utility — core
 - `feature` — utility — core

@@ -6,6 +6,7 @@ Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; a skill's n
 
 - `current-solution` — policy — core — `.agents/personal/policy/current-solution/SKILL.md`
 - `adopt` — utility — core — `.agents/personal/utility/adopt/SKILL.md`
+- `bot-identity` — utility — core — `.agents/personal/utility/bot-identity/SKILL.md`
 - `bug` — utility — core — `.agents/personal/utility/bug/SKILL.md`
 - `debt` — utility — core — `.agents/personal/utility/debt/SKILL.md`
 - `feature` — utility — core — `.agents/personal/utility/feature/SKILL.md`

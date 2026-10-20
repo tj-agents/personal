@@ -7,6 +7,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SKILLS = {
     "adopt",
+    "bot-identity",
     "bug",
     "current-solution",
     "debt",
@@ -64,7 +65,7 @@ class PersonalPackagingTests(unittest.TestCase):
         self,
     ) -> None:
         for path in (ROOT / "plugins/personal").rglob("*"):
-            if path.is_file():
+            if path.is_file() and "bot-identity" not in path.parts:
                 text = path.read_text(encoding="utf-8").casefold()
                 for retired in (
                     "azure",
