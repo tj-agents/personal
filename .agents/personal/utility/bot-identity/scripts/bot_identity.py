@@ -26,6 +26,10 @@ APP_ENV = "BOT_IDENTITY_APP"
 TIMEOUT_SECONDS = 30
 TOKEN_MARGIN_SECONDS = 300
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+SYNC_TIMEOUT_SECONDS = 1800
+TASK_NAME = "tj-agents merge gates"
+CRON_MARKER = "# tj-agents-merge-gates"
+MERGE_POLICY = Path(".agents", "github-actions", "utility", "merge-policy", "scripts", "merge_policy.py")
 MCP_DENY = (
     "mcp__github__merge_pull_request",
     "mcp__github__create_pull_request",
@@ -308,6 +312,52 @@ def prepend_user_path(directory: Path) -> bool:
     return True
 
 
+def merge_policy_script() -> Path:
+    roots = [Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "plugins" / "cache",
+             Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "plugins" / "cache"]
+    found = [path for root in roots for path in root.glob(f"*/github-actions/*/{MERGE_POLICY.as_posix()}")]
+    if not found:
+        raise IdentityError("the github-actions plugin, which ships merge_policy.py, is not installed")
+    return max(found, key=lambda path: path.stat().st_mtime)
+
+
+def merge_gates(record: dict, run=subprocess.run) -> int:
+    owners = sorted(installations(record, refresh=True))
+    if not owners:
+        raise IdentityError("the GitHub App is not installed on any account")
+    command = [console_python(), "-B", str(merge_policy_script()), "sync"]
+    for owner in owners:
+        command += ["--owner", owner]
+    environment = {key: value for key, value in os.environ.items() if key != AGENT_FLAG}
+    return run(command, env=environment, timeout=SYNC_TIMEOUT_SECONDS, check=False,
+               creationflags=NO_WINDOW).returncode
+
+
+def console_python() -> str:
+    executable = Path(sys.executable)
+    console = executable.with_name("python.exe")
+    return str(console) if executable.name.lower() == "pythonw.exe" and console.is_file() else sys.executable
+
+
+def windowless_python() -> str:
+    executable = Path(sys.executable)
+    hidden = executable.with_name("pythonw.exe")
+    return str(hidden) if os.name == "nt" and hidden.is_file() else sys.executable
+
+
+def schedule_merge_gates(script: Path, run=subprocess.run) -> None:
+    command = f'"{windowless_python()}" -B "{script}" merge-gates'
+    if os.name == "nt":
+        run(["schtasks", "/create", "/f", "/tn", TASK_NAME, "/sc", "hourly", "/tr", command], capture_output=True,
+            text=True, timeout=TIMEOUT_SECONDS, check=True, creationflags=NO_WINDOW)
+        return
+    current = run(["crontab", "-l"], capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False)
+    lines = [line for line in current.stdout.splitlines() if CRON_MARKER not in line]
+    lines.append(f"17 * * * * {command} >/dev/null 2>&1 {CRON_MARKER}")
+    run(["crontab", "-"], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
+        check=True)
+
+
 def setup() -> None:
     app_record()
     script = install_shims(Path(__file__).resolve())
@@ -318,6 +368,8 @@ def setup() -> None:
     update_codex(codex, environment)
     if prepend_user_path(shim_directory()):
         print(f"Added {shim_directory()} to the front of your user PATH")
+    schedule_merge_gates(script)
+    print(f"Scheduled '{TASK_NAME}' hourly: repositories that declare a merge gate get it on GitHub")
     print("Agents now use the GitHub App in its installed accounts; restart Claude and Codex to apply")
 
 
@@ -331,12 +383,15 @@ def main(argv: list[str] | None = None) -> int:
         commands.add_parser("token").add_argument("--owner", required=True)
         commands.add_parser("credential").add_argument("operation")
         commands.add_parser("setup")
+        commands.add_parser("merge-gates")
         arguments = parser.parse_args(argv)
         if arguments.command == "credential":
             return credential(arguments.operation)
         if arguments.command == "setup":
             setup()
             return 0
+        if arguments.command == "merge-gates":
+            return merge_gates(app_record())
         token = installation_token(arguments.owner, app_record())
         if not token:
             raise IdentityError(f"the GitHub App is not installed on {arguments.owner}")
