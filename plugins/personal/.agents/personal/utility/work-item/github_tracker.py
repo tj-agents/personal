@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from runtime_bootstrap import bootstrap
 
@@ -83,12 +83,16 @@ class GitHub:
         executable = shutil.which("gh")
         if executable is None:
             raise APIError("GitHub CLI is unavailable; verify gh authentication and access")
+        path, separator, query = endpoint.partition("?")
         command = [executable, "api", "--hostname", "github.com", "--method", method,
-                   "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2026-03-10", endpoint]
+                   "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2026-03-10"]
+        for key, value in parse_qsl(query, keep_blank_values=True) if separator else ():
+            command.extend(("--raw-field", f"{key}={value}"))
         if payload is not None:
             command.extend(["--input", "-"])
         if paginate:
             command.extend(["--paginate", "--slurp"])
+        command.append(path)
         env = {**os.environ, "GH_PROMPT_DISABLED": "1"}
         env.pop("GH_DEBUG", None)
         try:
