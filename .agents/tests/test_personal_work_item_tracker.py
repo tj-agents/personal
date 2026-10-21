@@ -1,6 +1,7 @@
 import argparse
 import copy
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -321,6 +322,35 @@ class JournalTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_malformed_personal_adoption_selections_are_refused(self):
+        base = {
+            "schema_version": 1,
+            "plugins": ["personal@tj-agents"],
+            "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
+        }
+        malformed = (
+            {**base, "plugins": "personal@tj-agents"},
+            {**base, "plugins": ["personal@tj-agents", 1]},
+            {**base, "marketplaces": "tj-agents"},
+            {**base, "marketplaces": {"tj-agents": "marketplace"}},
+            {
+                **base,
+                "marketplaces": {
+                    "tj-agents": {"repository": ["tj-agents/marketplace"]}
+                },
+            },
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agents = root / ".agents"
+            agents.mkdir()
+            path = agents / "plugins.json"
+            for selection in malformed:
+                with self.subTest(selection=selection):
+                    path.write_text(json.dumps(selection), encoding="utf-8")
+                    with self.assertRaisesRegex(records.ItemError, "explicit personal"):
+                        github.personal_adoption(root)
+
     def test_no_selection_different_origin_and_work_backend_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -372,7 +402,10 @@ class SelectionTests(unittest.TestCase):
         response = subprocess.CompletedProcess(
             [], 0, stdout='[[{"number":1}],[{"number":2}]]', stderr=""
         )
-        with patch.object(github.subprocess, "run", return_value=response) as run:
+        with (
+            patch.object(github.shutil, "which", return_value="gh.exe"),
+            patch.object(github.subprocess, "run", return_value=response) as run,
+        ):
             result = github.GitHub().request(
                 "GET", "repos/owner/project/issues", paginate=True
             )
@@ -381,6 +414,43 @@ class SelectionTests(unittest.TestCase):
             self.assertIn("--slurp", args[0])
             self.assertNotIn("shell", kwargs)
             self.assertEqual("utf-8", kwargs["encoding"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows executable selection")
+    def test_gh_transport_uses_the_front_path_bot_identity_shim(self):
+        response = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shim = root / "bot-identity"
+            real = root / "real-gh"
+            shim.mkdir()
+            real.mkdir()
+            (shim / "gh.cmd").touch()
+            (real / "gh.exe").touch()
+            path = os.pathsep.join((str(shim), str(real)))
+            previous = {
+                name: github.os.environ.get(name)
+                for name in ("PATH", "PATHEXT", "TJ_AGENT")
+            }
+            try:
+                github.os.environ.update(
+                    {"PATH": path, "PATHEXT": ".EXE;.CMD", "TJ_AGENT": "1"}
+                )
+                with patch.object(
+                    github.subprocess, "run", return_value=response
+                ) as run:
+                    github.GitHub().request("GET", "user")
+            finally:
+                for name, value in previous.items():
+                    if value is None:
+                        github.os.environ.pop(name, None)
+                    else:
+                        github.os.environ[name] = value
+            args, kwargs = run.call_args
+            self.assertEqual(
+                os.path.normcase(str(shim / "gh.cmd")),
+                os.path.normcase(args[0][0]),
+            )
+            self.assertEqual("1", kwargs["env"]["TJ_AGENT"])
 
 
 if __name__ == "__main__":
