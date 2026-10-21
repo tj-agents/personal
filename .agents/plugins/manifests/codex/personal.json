@@ -1,19 +1,21 @@
 {
   "name": "personal",
-  "description": "Mandatory standards for explicitly adopted personal projects.",
+  "description": "Personal project standards and GitHub work-item lifecycle.",
   "author": {
     "name": "Tommy Seery"
   },
   "repository": "https://github.com/tj-agents/personal",
   "skills": "./skills/",
-  "keywords": ["personal"],
+  "keywords": [
+    "personal"
+  ],
   "interface": {
     "displayName": "Personal",
-    "shortDescription": "Mandatory standards for explicitly adopted personal projects.",
-    "longDescription": "Mandatory standards for explicitly adopted personal projects. Follow the Template main branch and run template:update to refresh vendored files.",
+    "shortDescription": "Personal project standards and GitHub work-item lifecycle.",
+    "longDescription": "Personal standards with GitHub work-item reading, recording and Engineering lifecycle entry points.",
     "developerName": "Tommy Seery",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Apply the personal project policies."
+    "defaultPrompt": "Apply the personal project standards and selected work-item workflow."
   }
 }

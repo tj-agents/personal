@@ -1,7 +1,7 @@
 {
   "name": "personal",
   "displayName": "Personal",
-  "description": "Mandatory standards for explicitly adopted personal projects.",
+  "description": "Personal project standards and GitHub work-item lifecycle.",
   "author": {
     "name": "Tommy Seery"
   },
@@ -12,6 +12,7 @@
   ],
   "dependencies": [
     "base@tj-agents",
+    "engineering@tj-agents",
     "machine@tj-agents"
   ]
 }

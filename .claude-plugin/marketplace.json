@@ -8,7 +8,7 @@
     {
       "name": "personal",
       "source": "./plugins/personal",
-      "description": "Mandatory standards for explicitly adopted personal projects.",
+      "description": "Personal project standards and GitHub work-item lifecycle.",
       "category": "Productivity",
       "keywords": [
         "personal"

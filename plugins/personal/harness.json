@@ -4,14 +4,18 @@
   "source_roots": [
     ".agents/personal/policy/current-solution",
     ".agents/personal/utility/adopt",
-    ".agents/personal/utility/bot-identity"
+    ".agents/personal/utility/bot-identity",
+    ".agents/personal/utility/create/work-item",
+    ".agents/personal/utility/work-item",
+    ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
+    "hooks": [],
+    "permissions": {
+      "claude_allow": [],
+      "codex_prefix_rules": []
+    },
     "marketplaces": [
-      {
-        "id": "personal-agents",
-        "repository": "tj-agents/personal"
-      },
       {
         "id": "tj-agents",
         "repository": "tj-agents/marketplace"
@@ -20,12 +24,8 @@
     "plugins": [
       "personal-agents/personal",
       "tj-agents/base",
+      "tj-agents/engineering",
       "tj-agents/machine"
-    ],
-    "hooks": [],
-    "permissions": {
-      "claude_allow": [],
-      "codex_prefix_rules": []
-    }
+    ]
   }
 }
