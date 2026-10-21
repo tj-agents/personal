@@ -417,14 +417,29 @@ class SelectionTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows executable selection")
     def test_gh_transport_uses_the_front_path_bot_identity_shim(self):
-        response = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             shim = root / "bot-identity"
             real = root / "real-gh"
             shim.mkdir()
             real.mkdir()
-            (shim / "gh.cmd").touch()
+            recorder = shim / "dummy.py"
+            recorder.write_text(
+                "import json\n"
+                "import os\n"
+                "from pathlib import Path\n"
+                "import sys\n"
+                "record = {'argv': sys.argv[1:],\n"
+                "          'agent': os.environ.get('TJ_AGENT')}\n"
+                "output = Path(__file__).with_name('arguments.json')\n"
+                "output.write_text(json.dumps(record))\n"
+                "print('[[{\\\"number\\\":1}]]')\n",
+                encoding="utf-8",
+            )
+            (shim / "gh.cmd").write_text(
+                f'@"{sys.executable}" -B "{recorder}" gh %*\r\n',
+                encoding="utf-8",
+            )
             (real / "gh.exe").touch()
             path = os.pathsep.join((str(shim), str(real)))
             previous = {
@@ -435,22 +450,32 @@ class SelectionTests(unittest.TestCase):
                 github.os.environ.update(
                     {"PATH": path, "PATHEXT": ".EXE;.CMD", "TJ_AGENT": "1"}
                 )
-                with patch.object(
-                    github.subprocess, "run", return_value=response
-                ) as run:
-                    github.GitHub().request("GET", "user")
+                result = github.GitHub().request(
+                    "GET",
+                    "repos/owner/project/issues?state=all&per_page=100",
+                    paginate=True,
+                )
             finally:
                 for name, value in previous.items():
                     if value is None:
                         github.os.environ.pop(name, None)
                     else:
                         github.os.environ[name] = value
-            args, kwargs = run.call_args
+            recorded = json.loads((shim / "arguments.json").read_text(encoding="utf-8"))
+            self.assertEqual([{"number": 1}], result)
+            self.assertEqual("1", recorded["agent"])
+            self.assertEqual("repos/owner/project/issues", recorded["argv"][-1])
+            self.assertNotIn("?", recorded["argv"][-1])
             self.assertEqual(
-                os.path.normcase(str(shim / "gh.cmd")),
-                os.path.normcase(args[0][0]),
+                ["state=all", "per_page=100"],
+                [
+                    recorded["argv"][index + 1]
+                    for index, value in enumerate(recorded["argv"])
+                    if value == "--raw-field"
+                ],
             )
-            self.assertEqual("1", kwargs["env"]["TJ_AGENT"])
+            self.assertIn("--paginate", recorded["argv"])
+            self.assertIn("--slurp", recorded["argv"])
 
 
 if __name__ == "__main__":
