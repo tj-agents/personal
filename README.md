@@ -1,5 +1,10 @@
 # personal
 
+Personal means personal projects only. Infonetica is work scope, including the `tj-agents/infonetica`
+plugin source repository and every worktree. Never select or inject this profile there. GitHub ownership,
+a publisher account or a checkout location does not establish personal scope; read the target project's
+README.md and AGENTS.md before adoption.
+
 Mandatory standards for explicitly adopted personal projects.
 
 Published as plugin `personal` from this repository's `personal-agents` marketplace.
