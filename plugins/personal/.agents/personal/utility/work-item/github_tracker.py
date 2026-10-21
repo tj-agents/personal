@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from urllib.parse import urlparse
 
@@ -79,7 +80,10 @@ class GitHub:
         self.timeout = timeout
 
     def request(self, method, endpoint, payload=None, paginate=False):
-        command = ["gh", "api", "--hostname", "github.com", "--method", method,
+        executable = shutil.which("gh")
+        if executable is None:
+            raise APIError("GitHub CLI is unavailable; verify gh authentication and access")
+        command = [executable, "api", "--hostname", "github.com", "--method", method,
                    "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2026-03-10", endpoint]
         if payload is not None:
             command.extend(["--input", "-"])
@@ -159,12 +163,24 @@ def personal_adoption(root):
         value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as error:
         raise ItemError("explicit personal adoption is required") from error
+    plugins = value.get("plugins") if isinstance(value, dict) else None
+    marketplaces = value.get("marketplaces") if isinstance(value, dict) else None
+    marketplace = marketplaces.get("tj-agents") if isinstance(marketplaces, dict) else None
     if (
         not isinstance(value, dict)
-        or value.get("schema_version") != 1
-        or "personal@tj-agents" not in value.get("plugins", [])
-        or value.get("marketplaces", {}).get("tj-agents", {}).get("repository")
-        != "tj-agents/marketplace"
+        or type(value.get("schema_version")) is not int
+        or not isinstance(plugins, list)
+        or any(not isinstance(plugin, str) for plugin in plugins)
+        or not isinstance(marketplaces, dict)
+        or any(
+            not isinstance(name, str) or not isinstance(details, dict)
+            for name, details in marketplaces.items()
+        )
+        or not isinstance(marketplace, dict)
+        or not isinstance(marketplace.get("repository"), str)
+        or value["schema_version"] != 1
+        or "personal@tj-agents" not in plugins
+        or marketplace["repository"] != "tj-agents/marketplace"
     ):
         raise ItemError("explicit personal adoption is required")
     return {"root": str(root), "provider": "personal:work-item"}

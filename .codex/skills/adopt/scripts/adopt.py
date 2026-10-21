@@ -114,9 +114,15 @@ def imports_agents(body: str) -> bool:
 
 def ci_caller_removal(root: Path) -> Path | None:
     path = root / CI_CALLER
-    current = text(path)
-    if not current:
+    if not path.exists():
         return None
+    try:
+        path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, ValueError) as error:
+        raise ValueError(
+            f"{CI_CALLER}: refusing workflow linked outside the selected root"
+        ) from error
+    current = text(path)
     if not current.startswith(CI_CALLER_MARKER):
         raise ValueError(f"{CI_CALLER}: refusing to remove unrelated workflow; delete the generated personal:adopt CI caller manually")
     return path
@@ -137,9 +143,40 @@ def selected(root: Path) -> bool:
     path = root / ".agents/plugins.json"
     if not path.is_file():
         return False
-    selection = json.loads(path.read_text(encoding="utf-8"))
-    return (selection.get("schema_version") == 1 and IDENTITY in selection.get("plugins", [])
-            and selection.get("marketplaces", {}).get("tj-agents", {}).get("repository") == "tj-agents/marketplace")
+    try:
+        selection = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError("invalid personal plugin selection") from error
+    plugins = selection.get("plugins") if isinstance(selection, dict) else None
+    marketplaces = (
+        selection.get("marketplaces") if isinstance(selection, dict) else None
+    )
+    marketplace = (
+        marketplaces.get("tj-agents") if isinstance(marketplaces, dict) else None
+    )
+    if (
+        not isinstance(selection, dict)
+        or type(selection.get("schema_version")) is not int
+        or not isinstance(plugins, list)
+        or any(not isinstance(plugin, str) for plugin in plugins)
+        or not isinstance(marketplaces, dict)
+        or any(
+            not isinstance(name, str) or not isinstance(details, dict)
+            for name, details in marketplaces.items()
+        )
+        or (marketplace is not None and not isinstance(marketplace, dict))
+        or (
+            isinstance(marketplace, dict)
+            and not isinstance(marketplace.get("repository"), str)
+        )
+    ):
+        raise ValueError("invalid personal plugin selection")
+    return (
+        selection["schema_version"] == 1
+        and IDENTITY in plugins
+        and marketplace is not None
+        and marketplace["repository"] == "tj-agents/marketplace"
+    )
 
 
 def run(root: Path, mode: str, selection_tool: Path | None) -> int:
@@ -147,6 +184,7 @@ def run(root: Path, mode: str, selection_tool: Path | None) -> int:
     if not root.is_dir():
         raise ValueError("project root must be a directory")
     check_retained_aliases(root)
+    is_selected = selected(root)
     targets = native_plan(root)  # validate every native target before asking Core to write
     retiring = ci_caller_removal(root)
     if selection_tool is not None:
@@ -154,7 +192,7 @@ def run(root: Path, mode: str, selection_tool: Path | None) -> int:
                                  "--plugin", "personal", "--mode", mode], check=False)
         if result.returncode:
             return result.returncode
-    elif not selected(root):
+    elif not is_selected:
         raise ValueError("select personal@tj-agents through the shipped machine plugin-selection tool first, or pass --selection-tool")
     if mode != "preview" and not selected(root):
         raise ValueError("Core selection did not declare personal@tj-agents from tj-agents/marketplace")
