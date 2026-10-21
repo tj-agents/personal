@@ -171,6 +171,29 @@ class AdoptionTests(unittest.TestCase):
             adopt.run(self.root, "write", None)
         self.assertEqual("name: Unrelated workflow\n", caller.read_text())
 
+    def test_the_merge_answer_is_declared_once_and_changed_only_when_given(self):
+        policy = self.root / ".github/merge-policy.json"
+        self.assertEqual(0, adopt.run(self.root, "write", None))
+        self.assertFalse(policy.exists())
+        self.assertEqual(0, adopt.run(self.root, "write", None, False))
+        self.assertEqual({"agents_may_merge": False}, json.loads(policy.read_text()))
+        policy.write_text(json.dumps({"agents_may_merge": False, "required_checks": ["ci-required"]}))
+        self.assertEqual(0, adopt.run(self.root, "write", None))
+        self.assertEqual(0, adopt.run(self.root, "write", None, True))
+        self.assertEqual({"agents_may_merge": True, "required_checks": ["ci-required"]}, json.loads(policy.read_text()))
+        self.assertEqual(0, adopt.run(self.root, "check", None))
+
+    def test_preview_shows_the_merge_policy_without_writing_it(self):
+        self.assertEqual(0, adopt.run(self.root, "preview", None, True))
+        self.assertFalse((self.root / ".github/merge-policy.json").exists())
+
+    def test_invalid_merge_policy_stops_before_any_write(self):
+        (self.root / ".github").mkdir()
+        (self.root / ".github/merge-policy.json").write_text("[]")
+        with self.assertRaisesRegex(ValueError, "JSON object"):
+            adopt.run(self.root, "write", None, True)
+        self.assertFalse((self.root / "AGENTS.md").exists())
+
     def test_this_repository_adopts_the_same_policy_it_ships(self):
         self.assertEqual(0, adopt.run(ROOT, "check", None))
 

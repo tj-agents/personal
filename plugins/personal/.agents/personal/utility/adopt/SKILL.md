@@ -29,6 +29,11 @@ refuses retained compatibility declarations and broken block markers. The policy
 generated native blocks are checked, never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
+Ask Tommy once whether agents may merge without his approval once checks pass, and add
+`--agents-may-merge true|false`. Adoption writes `.github/merge-policy.json`, which
+`github-actions:merge-policy` enforces, or changes only that flag; without the answer it leaves the
+policy undeclared and says so.
+
 
 ```powershell
 # Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:
