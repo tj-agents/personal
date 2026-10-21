@@ -7,10 +7,8 @@ Published as plugin `personal` from this repository's `personal-agents` marketpl
 ## Skills
 
 - Policies: `personal:current-solution`.
-- Utilities: `personal:adopt`, `personal:bug`, `personal:debt`,
-  `personal:mistake`, `personal:feature`, `personal:task`.
-- Workflows: `personal:address-bug`, `personal:address-debt`,
-  `personal:address-mistake`, `personal:address-feature`, `personal:address-task`.
+- Utilities: `personal:adopt`, `personal:work-item`, `personal:create-work-item`.
+- Workflow: `personal:address-work-item`.
 
 ## Adopt a personal project
 
@@ -32,25 +30,21 @@ source before merge.
 
 ## Personal GitHub work items
 
-Personal backlog records live in the GitHub provider shipped by Work Items. Select the Personal profile
-explicitly, then adopt the GitHub tracker in each source repository through `work-items:manage`. Personal
-never configures a cloud account, server, credential store or local backlog.
+Personal owns its GitHub tracker. A source repository must explicitly adopt `personal@tj-agents` and select
+`personal:work-item` in `.problem-records.json`; the tracker then resolves its source primary checkout and
+uses only the matching GitHub origin. Personal never infers scope, selects a provider during read or create,
+or configures a cloud account, server, credential store or local backlog.
 
 ## Recording and addressing
 
-When the kind is known, record it directly with `personal:bug`, `personal:debt`, `personal:mistake`,
-`personal:feature` or `personal:task`. Recording preserves the request for later work and does not start
-implementation. Each entry verifies explicit personal scope and delegates record facts, GitHub operations
-and request receipts to Work Items.
+Use `personal:create-work-item` to classify and record a bug, mistake, debt, feature, Story or task. Recording
+preserves the request for later work and does not start implementation. The shipped helper owns deterministic
+schemas, rendered bodies, GitHub CRUD and durable request receipts.
 
-Use the corresponding personal addressing workflow for an identified GitHub item. These entries reuse
-Engineering's repair, feature and plan workflows; Work Items reads and updates the selected record.
-Always qualify `personal:feature` when recording and `engineering:feature` when implementing.
-
-Work Items owns provider-neutral record conventions and the shared GitHub tracker. Core owns reusable
-diagnosis, repair, planning and delivery. Personal owns explicit personal scope and these typed entry
-points. Its shipped harness injects Work Items alongside Engineering and Machine. A missing or different
-provider blocks the operation without adopting another queue.
+Use `personal:work-item` to read, list or view an identified item. Use `personal:address-work-item` for an
+existing item after reconciling its identity and repair owner; Core Engineering owns execution tracking and
+delivery. The address helper records factual updates and closure evidence. A missing or different provider
+blocks the operation without adopting another queue.
 
 ## Authoring and verification
 

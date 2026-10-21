@@ -7,8 +7,7 @@
   "dependencies": {
     "personal": [
       "tj-agents/engineering",
-      "tj-agents/machine",
-      "tj-agents/work-items"
+      "tj-agents/machine"
     ]
   }
 }

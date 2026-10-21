@@ -1,7 +1,7 @@
 {
   "name": "personal",
   "displayName": "Personal",
-  "description": "Personal project standards, GitHub Work Items recording and typed addressing.",
+  "description": "Personal project standards and GitHub work-item lifecycle.",
   "author": {
     "name": "Tommy Seery"
   },
@@ -13,7 +13,6 @@
   "dependencies": [
     "base@tj-agents",
     "engineering@tj-agents",
-    "machine@tj-agents",
-    "work-items@tj-agents"
+    "machine@tj-agents"
   ]
 }
