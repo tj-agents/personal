@@ -62,17 +62,63 @@ class AdoptionTests(unittest.TestCase):
                 git("update-index", "--force-remove", name)
                 path.unlink()
 
-    def test_independent_claude_instructions_receive_the_same_policy(self):
+    def test_independent_claude_instructions_move_to_agents_before_policy_projection(self):
         (self.root / "CLAUDE.md").write_text("Claude-only rule.\n", encoding="utf-8")
         adopt.run(self.root, "write", None)
-        self.assertIn(adopt.fragment(), (self.root / "CLAUDE.md").read_text())
-        self.assertIn(adopt.fragment(), (self.root / "AGENTS.md").read_text())
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertIn("Claude-only rule.", agents)
+        self.assertIn(adopt.fragment(), agents)
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
 
     def test_documented_import_example_is_not_treated_as_actual_delivery(self):
         path = self.root / "CLAUDE.md"
         path.write_text("# Documentation\n\n```markdown\n@AGENTS.md\n```\n", encoding="utf-8")
         adopt.run(self.root, "write", None)
-        self.assertIn(adopt.fragment(), path.read_text())
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertIn("```markdown\n@AGENTS.md\n```", agents)
+        self.assertIn(adopt.fragment(), agents)
+        self.assertEqual("@AGENTS.md\n", path.read_text())
+
+    def test_claude_policy_block_is_removed_before_merging_distinct_instructions(self):
+        (self.root / "CLAUDE.md").write_text("Claude-only rule.\n\n" + adopt.fragment() + "\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertEqual(1, agents.count(adopt.START))
+        self.assertIn("Claude-only rule.", agents)
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
+
+    def test_relative_agents_import_is_treated_as_the_same_pointer(self):
+        (self.root / "CLAUDE.md").write_text("@./AGENTS.md\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
+        self.assertNotIn("@./AGENTS.md", (self.root / "AGENTS.md").read_text())
+
+    def test_other_claude_only_imports_are_refused_rather_than_copied(self):
+        (self.root / "CLAUDE.md").write_text("@docs/extra.md\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "imports docs/extra.md"):
+            adopt.run(self.root, "write", None)
+        self.assertFalse((self.root / "AGENTS.md").exists())
+
+    def test_retry_after_partial_write_does_not_duplicate_merged_content(self):
+        claude = self.root / "CLAUDE.md"
+        claude.write_text("Claude-only rule.\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertEqual(1, agents.count("Claude-only rule."))
+        claude.write_text("Claude-only rule.\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        agents_again = (self.root / "AGENTS.md").read_text()
+        self.assertEqual(agents, agents_again)
+        self.assertEqual(1, agents_again.count("Claude-only rule."))
+
+    def test_mirrored_claude_md_is_not_merged_again(self):
+        (self.root / "AGENTS.md").write_text("# Project\n\nKeep this rule.\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        agents = (self.root / "AGENTS.md").read_text()
+        (self.root / "CLAUDE.md").write_text(agents, encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        self.assertEqual(agents, (self.root / "AGENTS.md").read_text())
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
 
     def test_check_detects_policy_drift_and_write_repairs_it(self):
         adopt.run(self.root, "write", None)
@@ -112,15 +158,18 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(7, adopt.run(self.root, "write", tool))
         self.assertFalse((self.root / "AGENTS.md").exists())
 
-    def test_ci_guard_drift_is_detected_and_unrelated_workflow_is_preserved(self):
+    def test_generated_ci_caller_is_retired_and_unrelated_workflow_is_preserved(self):
         adopt.run(self.root, "write", None)
-        workflow = self.root / ".github/workflows/check-personal-policy.yml"
-        workflow.unlink()
+        caller = self.root / ".github/workflows/check-personal-policy.yml"
+        caller.parent.mkdir(parents=True, exist_ok=True)
+        caller.write_text(adopt.CI_CALLER_MARKER + "name: Check personal policy\n", encoding="utf-8")
         self.assertEqual(1, adopt.run(self.root, "check", None))
-        workflow.write_text("name: Unrelated workflow\n", encoding="utf-8")
+        adopt.run(self.root, "write", None)
+        self.assertFalse(caller.exists())
+        caller.write_text("name: Unrelated workflow\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "unrelated"):
             adopt.run(self.root, "write", None)
-        self.assertEqual("name: Unrelated workflow\n", workflow.read_text())
+        self.assertEqual("name: Unrelated workflow\n", caller.read_text())
 
     def test_this_repository_adopts_the_same_policy_it_ships(self):
         self.assertEqual(0, adopt.run(ROOT, "check", None))

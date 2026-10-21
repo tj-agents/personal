@@ -20,15 +20,15 @@ assemble or maintain another copy. Preview with `--mode preview`, and use the id
 `--mode check` in CI. Use `python3` on Linux/macOS. Requires Python 3.11 or newer.
 
 The Core tool owns plugin declarations and host settings. This command selects `personal@tj-agents`,
-generates the mandatory native instruction block in AGENTS.md, and covers Claude through its AGENTS.md
-import or an equal generated block in CLAUDE.md. It refuses retained compatibility declarations and broken
-block markers. The policy has one authored body; generated native blocks are checked, never edited by hand.
+generates the mandatory native instruction block in AGENTS.md, merges distinct CLAUDE.md instructions into
+AGENTS.md once each, and leaves CLAUDE.md as the exact `@AGENTS.md` pointer; `@./AGENTS.md` is the same
+pointer, and any other Claude-only `@path` import is refused rather than copied in as plain text. It also
+removes its own earlier-generated `.github/workflows/check-personal-policy.yml` CI caller, since adoption
+no longer wires CI enforcement, while refusing to touch a workflow of that name it did not generate. It
+refuses retained compatibility declarations and broken block markers. The policy has one authored body;
+generated native blocks are checked, never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
-Adoption also writes a dedicated CI caller to check the current published policy on Windows and Linux.
-It preserves other workflows and refuses to overwrite an unrelated file at that path. For example,
-after adopting a project, deleting its marked AGENTS.md block or reintroducing a compatibility alias makes
-the policy check fail; rerun adoption after a policy update and review the generated changes together.
 
 ```powershell
 # Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:

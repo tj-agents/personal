@@ -4,5 +4,10 @@
       "personal"
     ]
   },
-  "dependencies": {"personal": ["tj-agents/machine"]}
+  "dependencies": {
+    "personal": [
+      "tj-agents/engineering",
+      "tj-agents/machine"
+    ]
+  }
 }
