@@ -3,30 +3,22 @@
   "dependencies": [
     "tj-agents/base",
     "tj-agents/engineering",
-    "tj-agents/machine",
-    "tj-agents/work-items"
+    "tj-agents/machine"
   ],
   "profiles": {
     "core": [
-      "address-bug",
-      "address-debt",
-      "address-feature",
-      "address-mistake",
-      "address-task",
+      "address-work-item",
       "adopt",
       "bot-identity",
-      "bug",
+      "create-work-item",
       "current-solution",
-      "debt",
-      "feature",
-      "mistake",
-      "task"
+      "work-item"
     ]
   },
   "compatibilitySkillAliases": {},
   "skills": [
     {
-      "name": "address-bug",
+      "name": "address-work-item",
       "kind": "workflow",
       "profile": "core",
       "applicability": [
@@ -34,67 +26,7 @@
       ],
       "requires": [
         "engineering",
-        "work-items"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "address-debt",
-      "kind": "workflow",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "work-items"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "address-feature",
-      "kind": "workflow",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "work-items"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "address-mistake",
-      "kind": "workflow",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "work-items"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "address-task",
-      "kind": "workflow",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "work-items"
+        "python"
       ],
       "provenance": [
         "house"
@@ -130,7 +62,7 @@
       ]
     },
     {
-      "name": "bug",
+      "name": "create-work-item",
       "kind": "utility",
       "profile": "core",
       "applicability": [
@@ -138,7 +70,7 @@
       ],
       "requires": [
         "engineering",
-        "work-items"
+        "python"
       ],
       "provenance": [
         "house"
@@ -159,7 +91,7 @@
       ]
     },
     {
-      "name": "debt",
+      "name": "work-item",
       "kind": "utility",
       "profile": "core",
       "applicability": [
@@ -167,52 +99,7 @@
       ],
       "requires": [
         "engineering",
-        "work-items"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "feature",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "work-items"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "mistake",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "work-items"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "task",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "work-items"
+        "python"
       ],
       "provenance": [
         "house"

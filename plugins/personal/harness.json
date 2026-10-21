@@ -5,16 +5,9 @@
     ".agents/personal/policy/current-solution",
     ".agents/personal/utility/adopt",
     ".agents/personal/utility/bot-identity",
-    ".agents/personal/utility/bug",
-    ".agents/personal/utility/debt",
-    ".agents/personal/utility/feature",
-    ".agents/personal/utility/mistake",
-    ".agents/personal/utility/task",
-    ".agents/personal/workflow/address/bug",
-    ".agents/personal/workflow/address/debt",
-    ".agents/personal/workflow/address/feature",
-    ".agents/personal/workflow/address/mistake",
-    ".agents/personal/workflow/address/task"
+    ".agents/personal/utility/create/work-item",
+    ".agents/personal/utility/work-item",
+    ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
     "hooks": [],
@@ -32,8 +25,7 @@
       "personal-agents/personal",
       "tj-agents/base",
       "tj-agents/engineering",
-      "tj-agents/machine",
-      "tj-agents/work-items"
+      "tj-agents/machine"
     ]
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "personal",
-  "description": "Personal project standards, GitHub Work Items recording and typed addressing.",
+  "description": "Personal project standards and GitHub work-item lifecycle.",
   "author": {
     "name": "Tommy Seery"
   },
@@ -11,8 +11,8 @@
   ],
   "interface": {
     "displayName": "Personal",
-    "shortDescription": "Personal project standards, GitHub Work Items recording and typed addressing.",
-    "longDescription": "Personal standards with known-kind GitHub recording and typed addressing entry points using shared Engineering lifecycles.",
+    "shortDescription": "Personal project standards and GitHub work-item lifecycle.",
+    "longDescription": "Personal standards with GitHub work-item reading, recording and Engineering lifecycle entry points.",
     "developerName": "Tommy Seery",
     "category": "Productivity",
     "capabilities": [],
