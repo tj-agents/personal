@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:current-solution sha256:6eccad052fbb3e65895ef8ff362c754a43b462e6411640ca8917c49c3bc21fb1 -->
+<!-- BEGIN personal:current-solution sha256:d515f0c4f133f60bb6a39179b6869b8a51bc27156aeb840ec84702f2bf9b8a4c -->
 # Personal projects
 
 These rules are mandatory in projects that explicitly adopt `personal@tj-agents`. Adoption records the
