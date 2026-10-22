@@ -35,9 +35,11 @@ source before merge.
 
 ## Personal GitHub work items
 
-Personal owns its GitHub tracker. A source repository must explicitly adopt `personal@tj-agents` and select
-`personal:work-item` in `.problem-records.json`; the tracker then resolves its source primary checkout and
-uses only the matching GitHub origin. Personal never infers scope, selects a provider during read or create,
+Personal owns its GitHub tracker. Selecting `personal@tj-agents` in a repository's `.agents/plugins.json`
+selects `personal:work-item`; no other declaration exists. The tracker resolves the source primary checkout
+and records issues in its GitHub origin. A created issue is placed on the owner's board named after the
+repository and on the owner-wide board named after the owner, created on first use; that needs `gh` with the
+`project` scope. Personal never infers scope, selects a provider during read or create,
 or configures a cloud account, server, credential store or local backlog.
 
 ## Recording and addressing

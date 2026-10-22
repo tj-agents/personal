@@ -18,9 +18,7 @@ records = import_module("tj_personal_work_items.records")
 RequestJournal = import_module("tj_personal_work_items.request_journal").RequestJournal
 
 CONFIG = {
-    "schema_version": 1,
     "provider": "personal:work-item",
-    "backend": "github",
     "repository": "owner/project",
     "issue_types": {},
 }
@@ -35,15 +33,6 @@ def select_personal(root):
                 "schema_version": 1,
                 "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
                 "plugins": ["personal@tj-agents"],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (Path(root) / ".problem-records.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "provider": "personal:work-item",
             }
         ),
         encoding="utf-8",
@@ -66,9 +55,78 @@ class FakeAPI:
         self.fail_after_create = False
         self.fail_before_create = False
         self.fail_after_comment = False
+        self.projects = []
+        self.placements = []
+        self.status = {}
+        self.fail_graphql = False
+
+    def graphql(self, query, variables):
+        if self.fail_graphql:
+            raise github.APIError("missing project scope", 403)
+        if query.startswith("query($owner:String!){repositoryOwner"):
+            return {
+                "repositoryOwner": {
+                    "id": "owner-id",
+                    "projectsV2": {
+                        "pageInfo": {"hasNextPage": False},
+                        "nodes": copy.deepcopy(self.projects),
+                    },
+                }
+            }
+        if query.startswith("query($owner:String!,$name:String!){repository("):
+            return {"repository": {"id": "repository-id"}}
+        if "createProjectV2(" in query:
+            status = {
+                "id": "status",
+                "name": "Status",
+                "options": [
+                    {"id": "todo", "name": "Todo"},
+                    {"id": "done", "name": "Done"},
+                ],
+            }
+            project = {
+                "id": "board-" + variables["title"],
+                "title": variables["title"],
+                "closed": False,
+                "fields": {"nodes": [status, {}]},
+            }
+            self.projects.append(project)
+            return {"createProjectV2": {"projectV2": copy.deepcopy(project)}}
+        if "createProjectV2Field" in query:
+            project = next(
+                project
+                for project in self.projects
+                if project["id"] == variables["project"]
+            )
+            options = [{"id": "kind-" + name, "name": name} for name in records.KINDS]
+            field = {"id": "kind", "name": "Kind", "options": options}
+            project["fields"]["nodes"].append(field)
+            return {"createProjectV2Field": {"projectV2Field": copy.deepcopy(field)}}
+        if "addProjectV2ItemById" in query:
+            item = variables["project"] + ":" + variables["content"]
+            status = self.status.get(item)
+            return {
+                "addProjectV2ItemById": {
+                    "item": {"id": item, "status": status and {"name": status}}
+                }
+            }
+        if "updateProjectV2ItemFieldValue" in query:
+            self.placements.append(
+                (variables["project"], variables["field"], variables["option"])
+            )
+            if variables["field"] == "status":
+                self.status[variables["item"]] = variables["option"]
+            return {
+                "updateProjectV2ItemFieldValue": {
+                    "projectV2Item": {"id": variables["item"]}
+                }
+            }
+        raise AssertionError(query)
 
     def request(self, method, endpoint, payload=None, paginate=False):
         self.calls.append((method, endpoint, copy.deepcopy(payload)))
+        if endpoint == "graphql":
+            return {"data": self.graphql(payload["query"], payload["variables"])}
         base = "repos/owner/project/issues"
         if method == "GET" and endpoint == base + "?state=all&per_page=100":
             return copy.deepcopy(self.issues)
@@ -96,6 +154,7 @@ class FakeAPI:
                 "number": number,
                 "state": "open",
                 "html_url": f"https://github.com/owner/project/issues/{number}",
+                "node_id": f"issue-{number}",
                 **payload,
             }
             self.issues.append(value)
@@ -120,7 +179,13 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(first["identity"], second["identity"])
         self.assertTrue(second["reconciled"])
         self.assertEqual(1, len(self.api.issues))
-        self.assertEqual(1, sum(method == "POST" for method, _, _ in self.api.calls))
+        self.assertEqual(
+            1,
+            sum(
+                method == "POST" and endpoint != "graphql"
+                for method, endpoint, _ in self.api.calls
+            ),
+        )
 
     def test_lost_create_response_is_reconciled_without_reposting(self):
         self.api.fail_after_create = True
@@ -141,7 +206,7 @@ class TrackerTests(unittest.TestCase):
         with self.assertRaisesRegex(records.ItemError, "multiple issues"):
             self.tracker.create(item(), "request-0001")
 
-    def test_native_type_mapping_is_verified_before_submission(self):
+    def test_native_type_is_set_only_when_the_repository_offers_it(self):
         tracker = github.Tracker(
             {**CONFIG, "issue_types": {"feature": "Feature"}}, self.api
         )
@@ -150,8 +215,49 @@ class TrackerTests(unittest.TestCase):
         tracker = github.Tracker(
             {**CONFIG, "issue_types": {"bug": "Missing"}}, self.api
         )
-        with self.assertRaisesRegex(records.ItemError, "unavailable"):
-            tracker.create(item(), "request-0002")
+        tracker.create(item(), "request-0002")
+        self.assertNotIn("type", self.api.issues[1])
+
+    def test_created_item_lands_on_repository_and_owner_boards(self):
+        created = self.tracker.create(item("debt"), "request-0001")
+        self.assertEqual({"placed": ["project", "owner"]}, created["boards"])
+        self.assertEqual(
+            ["project", "owner"], [project["title"] for project in self.api.projects]
+        )
+        for board in ("board-project", "board-owner"):
+            self.assertIn((board, "status", "todo"), self.api.placements)
+            self.assertIn((board, "kind", "kind-debt"), self.api.placements)
+        self.tracker.create(item("debt"), "request-0001")
+        self.assertEqual(2, len(self.api.projects))
+        self.assertEqual(
+            2, sum(field == "status" for _, field, _ in self.api.placements)
+        )
+
+    def test_issue_urls_match_the_origin_case_insensitively(self):
+        self.tracker.create(item(), "request-0001")
+        tracker = github.Tracker({**CONFIG, "repository": "Owner/Project"}, self.api)
+        self.assertEqual(
+            "Owner/Project#1", tracker.compact(self.api.issues[0])["identity"]
+        )
+        self.assertEqual(
+            1,
+            github.issue_number(
+                "https://github.com/owner/project/issues/1", "Owner/Project"
+            ),
+        )
+
+    def test_lost_create_response_still_sets_the_initial_board_status(self):
+        self.api.fail_after_create = True
+        created = self.tracker.create(item(), "request-0001")
+        self.assertTrue(created["reconciled"])
+        self.assertIn(("board-project", "status", "todo"), self.api.placements)
+
+    def test_board_failure_reports_without_losing_the_created_issue(self):
+        self.api.fail_graphql = True
+        created = self.tracker.create(item(), "request-0001")
+        self.assertFalse(created["reconciled"])
+        self.assertEqual([], created["boards"]["placed"])
+        self.assertIn("board placement incomplete", created["boards"]["error"])
         self.assertEqual(1, len(self.api.issues))
 
     def test_story_uses_native_type_and_round_trips_its_managed_kind(self):
@@ -351,52 +457,28 @@ class SelectionTests(unittest.TestCase):
                     with self.assertRaisesRegex(records.ItemError, "explicit personal"):
                         github.personal_adoption(root)
 
-    def test_no_selection_different_origin_and_work_backend_are_refused(self):
+    def test_personal_selection_alone_selects_the_origin_tracker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             subprocess.run(["git", "init", "-q", str(root)], check=True)
+            with self.assertRaisesRegex(records.ItemError, "explicit personal"):
+                github.selection(root)
             select_personal(root)
-            with self.assertRaisesRegex(records.ItemError, "explicit"):
-                github.selection(root)
-            path = root / github.CONFIG
-            path.write_text(json.dumps(CONFIG), encoding="utf-8")
-            with (
-                patch.object(github, "source_repository", return_value="other/project"),
-                self.assertRaisesRegex(records.ItemError, "does not match"),
+            with patch.object(
+                github, "source_repository", return_value="owner/project"
             ):
-                github.selection(root)
-            path.write_text(
-                json.dumps({**CONFIG, "backend": "azure-devops"}), encoding="utf-8"
+                config = github.selection(root)
+            self.assertEqual("owner/project", config["repository"])
+            self.assertEqual("personal:work-item", config["provider"])
+            self.assertEqual(github.ISSUE_TYPES, config["issue_types"])
+            (root / ".problem-records.json").write_text(
+                json.dumps({"schema_version": 1, "provider": "infonetica:work-item"}),
+                encoding="utf-8",
             )
             with self.assertRaisesRegex(
-                records.ItemError, "explicitly selected GitHub"
+                records.ItemError, "another problem-record provider"
             ):
                 github.selection(root)
-
-    def test_adoption_writes_only_an_explicit_source_selection(self):
-        api = FakeAPI()
-        api.request = unittest.mock.Mock(
-            side_effect=[
-                {"full_name": "owner/project", "has_issues": True, "archived": False},
-                [{"name": name} for name in ("Feature", "Task", "Bug")],
-            ]
-        )
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            patch.object(github, "source_repository", return_value="owner/project"),
-        ):
-            subprocess.run(["git", "init", "-q", directory], check=True)
-            select_personal(Path(directory))
-            result = github.adopt(directory, "owner/project", api)
-            self.assertFalse(result["github_writes"])
-            config = github.selection(directory)
-            self.assertEqual("Feature", config["issue_types"]["feature"])
-            self.assertEqual("Bug", config["issue_types"]["bug"])
-            self.assertTrue(
-                all(call.args[0] == "GET" for call in api.request.call_args_list)
-            )
-            with self.assertRaisesRegex(records.ItemError, "must match"):
-                github.adopt(directory, "other/project", api)
 
     def test_gh_transport_uses_argument_arrays_and_flattens_all_pages(self):
         response = subprocess.CompletedProcess(
