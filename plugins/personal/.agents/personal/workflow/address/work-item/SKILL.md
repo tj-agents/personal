@@ -14,8 +14,8 @@ provenance: house
 This is the execution intent. It reconciles an existing record with one Engineering lifecycle; it neither
 creates a second record nor starts a second owner.
 
-Read the identified item through `personal:work-item`, verify the source primary checkout explicitly
-adopts Personal and the selected provider is `personal:work-item`. Reconcile the canonical GitHub
+Read the identified item through `personal:work-item`, verify the source primary checkout selects
+`personal@tj-agents` and declares no other provider. Reconcile the canonical GitHub
 identity, managed kind, current facts and any existing repair owner before delivery work. Reject employer
 evidence, another provider, a foreign identity or an unmanaged body. If an owner already exists, continue
 with that owner. If a legitimate item is unowned, the selected Engineering lifecycle acquires its owner;

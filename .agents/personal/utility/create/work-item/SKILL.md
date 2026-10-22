@@ -14,8 +14,9 @@ provenance: house
 This is the recording intent: it classifies and creates one record. It does not start, assign or track
 execution.
 
-Confirm the source primary checkout explicitly adopts `personal@tj-agents`, then use the selected
-`personal:work-item` provider. Never adopt, configure or replace a provider while recording.
+The source primary checkout's `personal@tj-agents` selection selects this provider. Never adopt,
+configure or replace a provider while recording. Creation places the issue on the repository and owner
+boards; report a returned `boards.error` rather than retrying the issue.
 
 Classify the supplied facts once: faulty behavior is `bug`; an observed agent or process error is
 `mistake`; a deliberate deferral is `debt`; changed product behavior is `feature`; concrete work with a
