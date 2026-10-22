@@ -63,24 +63,56 @@ class FakeAPI:
         if self.fail_graphql:
             raise github.APIError("missing project scope", 403)
         if query.startswith("query($owner:String!){repositoryOwner"):
-            return {"repositoryOwner": {"id": "owner-id", "projectsV2": {"nodes": copy.deepcopy(self.projects)}}}
+            return {
+                "repositoryOwner": {
+                    "id": "owner-id",
+                    "projectsV2": {"nodes": copy.deepcopy(self.projects)},
+                }
+            }
         if query.startswith("query($owner:String!,$name:String!){repository("):
             return {"repository": {"id": "repository-id"}}
         if "createProjectV2(" in query:
-            status = {"id": "status", "name": "Status", "options": [{"id": "todo", "name": "Todo"}, {"id": "done", "name": "Done"}]}
-            project = {"id": "board-" + variables["title"], "title": variables["title"], "fields": {"nodes": [status, {}]}}
+            status = {
+                "id": "status",
+                "name": "Status",
+                "options": [
+                    {"id": "todo", "name": "Todo"},
+                    {"id": "done", "name": "Done"},
+                ],
+            }
+            project = {
+                "id": "board-" + variables["title"],
+                "title": variables["title"],
+                "fields": {"nodes": [status, {}]},
+            }
             self.projects.append(project)
             return {"createProjectV2": {"projectV2": copy.deepcopy(project)}}
         if "createProjectV2Field" in query:
-            project = next(project for project in self.projects if project["id"] == variables["project"])
+            project = next(
+                project
+                for project in self.projects
+                if project["id"] == variables["project"]
+            )
             options = [{"id": "kind-" + name, "name": name} for name in records.KINDS]
-            project["fields"]["nodes"].append({"id": "kind", "name": "Kind", "options": options})
+            project["fields"]["nodes"].append(
+                {"id": "kind", "name": "Kind", "options": options}
+            )
             return {"createProjectV2Field": {"projectV2Field": {"id": "kind"}}}
         if "addProjectV2ItemById" in query:
-            return {"addProjectV2ItemById": {"item": {"id": variables["project"] + ":" + variables["content"]}}}
+            return {
+                "addProjectV2ItemById": {
+                    "item": {"id": variables["project"] + ":" + variables["content"]}
+                }
+            }
         if "updateProjectV2ItemFieldValue" in query:
-            self.placements.append((variables["project"], variables["field"], variables["option"]))
-            return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": variables["item"]}}}
+            self.placements.append(
+                (variables["project"], variables["field"], variables["option"])
+            )
+            return {
+                "updateProjectV2ItemFieldValue": {
+                    "projectV2Item": {"id": variables["item"]}
+                }
+            }
         raise AssertionError(query)
 
     def request(self, method, endpoint, payload=None, paginate=False):
@@ -139,7 +171,13 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(first["identity"], second["identity"])
         self.assertTrue(second["reconciled"])
         self.assertEqual(1, len(self.api.issues))
-        self.assertEqual(1, sum(method == "POST" and endpoint != "graphql" for method, endpoint, _ in self.api.calls))
+        self.assertEqual(
+            1,
+            sum(
+                method == "POST" and endpoint != "graphql"
+                for method, endpoint, _ in self.api.calls
+            ),
+        )
 
     def test_lost_create_response_is_reconciled_without_reposting(self):
         self.api.fail_after_create = True
@@ -175,7 +213,9 @@ class TrackerTests(unittest.TestCase):
     def test_created_item_lands_on_repository_and_owner_boards(self):
         created = self.tracker.create(item("debt"), "request-0001")
         self.assertEqual({"placed": ["project", "owner"]}, created["boards"])
-        self.assertEqual(["project", "owner"], [project["title"] for project in self.api.projects])
+        self.assertEqual(
+            ["project", "owner"], [project["title"] for project in self.api.projects]
+        )
         for board in ("board-project", "board-owner"):
             self.assertIn((board, "status", "todo"), self.api.placements)
             self.assertIn((board, "kind", "kind-debt"), self.api.placements)
@@ -394,7 +434,9 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaisesRegex(records.ItemError, "explicit personal"):
                 github.selection(root)
             select_personal(root)
-            with patch.object(github, "source_repository", return_value="owner/project"):
+            with patch.object(
+                github, "source_repository", return_value="owner/project"
+            ):
                 config = github.selection(root)
             self.assertEqual("owner/project", config["repository"])
             self.assertEqual("personal:work-item", config["provider"])
