@@ -57,6 +57,7 @@ class FakeAPI:
         self.fail_after_comment = False
         self.projects = []
         self.placements = []
+        self.status = {}
         self.fail_graphql = False
 
     def graphql(self, query, variables):
@@ -102,15 +103,19 @@ class FakeAPI:
             project["fields"]["nodes"].append(field)
             return {"createProjectV2Field": {"projectV2Field": copy.deepcopy(field)}}
         if "addProjectV2ItemById" in query:
+            item = variables["project"] + ":" + variables["content"]
+            status = self.status.get(item)
             return {
                 "addProjectV2ItemById": {
-                    "item": {"id": variables["project"] + ":" + variables["content"]}
+                    "item": {"id": item, "status": status and {"name": status}}
                 }
             }
         if "updateProjectV2ItemFieldValue" in query:
             self.placements.append(
                 (variables["project"], variables["field"], variables["option"])
             )
+            if variables["field"] == "status":
+                self.status[variables["item"]] = variables["option"]
             return {
                 "updateProjectV2ItemFieldValue": {
                     "projectV2Item": {"id": variables["item"]}
@@ -240,6 +245,12 @@ class TrackerTests(unittest.TestCase):
                 "https://github.com/owner/project/issues/1", "Owner/Project"
             ),
         )
+
+    def test_lost_create_response_still_sets_the_initial_board_status(self):
+        self.api.fail_after_create = True
+        created = self.tracker.create(item(), "request-0001")
+        self.assertTrue(created["reconciled"])
+        self.assertIn(("board-project", "status", "todo"), self.api.placements)
 
     def test_board_failure_reports_without_losing_the_created_issue(self):
         self.api.fail_graphql = True
