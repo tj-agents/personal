@@ -7,7 +7,7 @@ README.md and AGENTS.md before adoption.
 
 Mandatory standards for explicitly adopted personal projects.
 
-Published as plugin `personal` from this repository's `personal-agents` marketplace.
+Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 
 ## Skills
 
