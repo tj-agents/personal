@@ -176,9 +176,16 @@ class SetupRepoTests(unittest.TestCase):
 
     def test_packaged_canonical_utility_can_check_a_consumer(self):
         setup_repo.run(self.root, "write", None)
-        result = subprocess.run([sys.executable, "-B", str(ROOT / "plugins/personal/.agents/personal/utility/setup/repo/scripts/setup_repo.py"),
-                                 "--root", str(self.root), "--mode", "check"], capture_output=True, text=True)
-        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        for relative in (
+            "plugins/personal/.agents/personal/utility/setup/repo/scripts/setup_repo.py",
+            "plugins/personal/skills/setup-repo/scripts/setup_repo.py",
+            ".claude/skills/setup-repo/scripts/setup_repo.py",
+            ".codex/skills/setup-repo/scripts/setup_repo.py",
+        ):
+            with self.subTest(entry=relative):
+                result = subprocess.run([sys.executable, "-B", str(ROOT / relative),
+                                         "--root", str(self.root), "--mode", "check"], capture_output=True, text=True)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
