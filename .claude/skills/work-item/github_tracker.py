@@ -1,5 +1,4 @@
 import hashlib
-from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -20,45 +19,8 @@ REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REQUEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
 MARKER = re.compile(r"\n<!-- work-item:v1 (.+) -->\n?\Z")
 COMMENT = re.compile(r"\n<!-- work-item-comment:v1 (.+) -->\n?\Z")
-CONFIG = ".personal-work-items.json"
-
-
-@contextmanager
-def adoption_lock(root):
-    root = Path(root).resolve()
-    directory = RequestJournal(root).root.parent / "adoptions"
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / (
-        hashlib.sha256(os.path.normcase(str(root)).encode("utf-8")).hexdigest()
-        + ".lock"
-    )
-    with path.open("a+b") as handle:
-        if handle.seek(0, 2) == 0:
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            raise ItemError(
-                "repository adoption is already running; retry after its "
-                "writer finishes"
-            ) from error
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if os.name == "nt":
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+ISSUE_TYPES = {"feature": "Feature", "task": "Task", "bug": "Bug", "mistake": "Task", "debt": "Task"}
+BOARD_STATUS = "Todo"
 
 
 class APIError(ItemError):
@@ -190,45 +152,10 @@ def personal_adoption(root):
     return {"root": str(root), "provider": "personal:work-item"}
 
 
-def provider_selection(root):
+def selection(root):
     root = source_primary(root)
     personal_adoption(root)
-    path = root / ".problem-records.json"
-    if path.is_symlink():
-        raise ItemError("problem-record provider selection must be a regular repository file")
-    try:
-        value = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as error:
-        raise ItemError("explicit personal:work-item provider selection is required") from error
-    if value != {"schema_version": 1, "provider": "personal:work-item"}:
-        raise ItemError("personal:work-item must be the selected problem-record provider")
-    return {"root": str(root), "provider": "personal:work-item"}
-
-
-def selection(root, require_provider=True):
-    root = source_primary(root)
-    personal_adoption(root)
-    if require_provider:
-        provider_selection(root)
-    path = root / CONFIG
-    if path.is_symlink():
-        raise ItemError("tracker configuration must be a regular repository file")
-    try:
-        config = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as error:
-        raise ItemError("explicit .personal-work-items.json selection is required; run adopt for the intended repository") from error
-    if not isinstance(config, dict) or set(config) != {"schema_version", "provider", "backend", "repository", "issue_types"}:
-        raise ItemError("invalid tracker selection shape")
-    if (type(config["schema_version"]) is not int or config["schema_version"] != 1
-            or config["provider"] != "personal:work-item" or config["backend"] != "github"):
-        raise ItemError("this utility requires an explicitly selected GitHub backend")
-    repo = source_repository(root)
-    if not isinstance(config["repository"], str) or config["repository"].casefold() != repo.casefold():
-        raise ItemError("selected repository does not match origin")
-    types = config["issue_types"]
-    if not isinstance(types, dict) or set(types) - set(KINDS) or any(not isinstance(v, str) or not v.strip() for v in types.values()):
-        raise ItemError("invalid issue type mapping")
-    return config
+    return {"provider": "personal:work-item", "repository": source_repository(root), "issue_types": dict(ISSUE_TYPES)}
 
 
 def request_id(value):
@@ -275,6 +202,14 @@ def body_for(item, request, existing=None):
     if len(body) > 65536:
         raise ItemError("rendered issue body exceeds 65536 characters")
     return body
+
+
+BOARDS = "query($owner:String!){repositoryOwner(login:$owner){... on ProjectV2Owner{id projectsV2(first:100){nodes{id title fields(first:50){nodes{... on ProjectV2SingleSelectField{id name options{id name}}}}}}}}}"
+REPOSITORY_ID = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}"
+CREATE_BOARD = "mutation($owner:ID!,$title:String!,$repository:ID!){createProjectV2(input:{ownerId:$owner,title:$title,repositoryId:$repository}){projectV2{id title fields(first:50){nodes{... on ProjectV2SingleSelectField{id name options{id name}}}}}}}"
+KIND_FIELD = "mutation($project:ID!){createProjectV2Field(input:{projectId:$project,dataType:SINGLE_SELECT,name:\"Kind\",singleSelectOptions:[{name:\"bug\",color:RED,description:\"\"},{name:\"mistake\",color:ORANGE,description:\"\"},{name:\"debt\",color:YELLOW,description:\"\"},{name:\"feature\",color:GREEN,description:\"\"},{name:\"task\",color:BLUE,description:\"\"},{name:\"story\",color:PURPLE,description:\"\"}]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}"
+ADD_ITEM = "mutation($project:ID!,$content:ID!){addProjectV2ItemById(input:{projectId:$project,contentId:$content}){item{id}}}"
+SET_OPTION = "mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}}){projectV2Item{id}}}"
 
 
 class Tracker:
@@ -335,16 +270,20 @@ class Tracker:
         if existing:
             if self.journal:
                 self.journal.complete(key, fingerprint, existing["number"])
-            return {**self.compact(existing), "reconciled": True}
+            return {**self.compact(existing), "reconciled": True, "boards": self.place(existing, item["kind"])}
         if receipt or reconcile_only:
             raise ItemError("request outcome remains uncertain; reconcile without another POST")
         payload = {"title": item["title"], "body": body}
         issue_type = self.config["issue_types"].get(item["kind"])
         if issue_type:
-            available = self.api.request("GET", "repos/" + self.repo + "/issue-types")
-            if issue_type not in [entry["name"] for entry in available]:
-                raise ItemError("configured issue type is unavailable; reconcile repository selection")
-            payload["type"] = issue_type
+            try:
+                available = self.api.request("GET", "repos/" + self.repo + "/issue-types")
+            except APIError as error:
+                if error.status != 404:
+                    raise
+                available = []
+            if issue_type in [entry["name"] for entry in available]:
+                payload["type"] = issue_type
         if self.journal:
             self.journal.reserve(key, fingerprint)
         try:
@@ -357,9 +296,43 @@ class Tracker:
             if existing:
                 if self.journal:
                     self.journal.complete(key, fingerprint, existing["number"])
-                return {**self.compact(existing), "reconciled": True}
+                return {**self.compact(existing), "reconciled": True, "boards": self.place(existing, item["kind"])}
             raise ItemError("create outcome uncertain or rejected; retain request-id and reconcile before retrying")
-        return {**result, "reconciled": False}
+        return {**result, "reconciled": False, "boards": self.place(issue, item["kind"])}
+
+    def graphql(self, query, **variables):
+        response = self.api.request("POST", "graphql", {"query": query, "variables": variables})
+        if not isinstance(response, dict) or response.get("errors") or not isinstance(response.get("data"), dict):
+            raise APIError("GitHub GraphQL request failed; verify gh has the project scope")
+        return response["data"]
+
+    def board(self, owner, title):
+        data = self.graphql(BOARDS, owner=owner)["repositoryOwner"]
+        found = next((node for node in data["projectsV2"]["nodes"] if node["title"] == title), None)
+        if found is None:
+            repository = self.graphql(REPOSITORY_ID, owner=owner, name=self.repo.split("/")[1])["repository"]["id"]
+            found = self.graphql(CREATE_BOARD, owner=data["id"], title=title, repository=repository)["createProjectV2"]["projectV2"]
+        fields = {field["name"]: field for field in found["fields"]["nodes"] if field}
+        if "Kind" not in fields:
+            self.graphql(KIND_FIELD, project=found["id"])
+            return self.board(owner, title)
+        return found["id"], fields
+
+    def place(self, issue, kind):
+        owner, name = self.repo.split("/")
+        placed = []
+        try:
+            for title in (name, owner):
+                project, fields = self.board(owner, title)
+                entry = self.graphql(ADD_ITEM, project=project, content=issue["node_id"])["addProjectV2ItemById"]["item"]["id"]
+                for field, value in (("Status", BOARD_STATUS), ("Kind", kind)):
+                    option = next((o["id"] for o in fields.get(field, {}).get("options", []) if o["name"] == value), None)
+                    if option:
+                        self.graphql(SET_OPTION, project=project, item=entry, field=fields[field]["id"], option=option)
+                placed.append(title)
+        except (APIError, KeyError, TypeError) as error:
+            return {"placed": placed, "error": "board placement incomplete: " + str(error)}
+        return {"placed": placed}
 
     def update(self, number, item, expected_hash):
         issue = self.get(number)
@@ -431,60 +404,9 @@ class Tracker:
             raise ItemError("comment outcome uncertain or rejected; retain request-id and reconcile before retrying")
 
 
-def adopt(root, repository, api):
-    root = source_primary(root)
-    provider_selection(root)
-    with adoption_lock(root):
-        return adopt_locked(root, repository, api)
-
-
-def adopt_locked(root, repository, api):
-    root = source_primary(root)
-    provider_selection(root)
-    if not REPOSITORY.fullmatch(repository) or source_repository(root).casefold() != repository.casefold():
-        raise ItemError("adoption repository must match the source origin")
-    repo = api.request("GET", "repos/" + repository)
-    if not repo.get("has_issues") or repo.get("archived") or repo.get("full_name", "").casefold() != repository.casefold():
-        raise ItemError("source repository must have issues enabled and be writable")
-    try:
-        types = api.request("GET", "repos/" + repository + "/issue-types")
-    except APIError as error:
-        if error.status != 404:
-            raise
-        types = []
-    available = {entry["name"] for entry in types}
-    mapping = {kind: name for kind, name in {"feature": "Feature", "story": "Story", "task": "Task", "bug": "Bug", "mistake": "Task", "debt": "Task"}.items() if name in available}
-    config = {"schema_version": 1, "provider": "personal:work-item", "backend": "github", "repository": repo["full_name"], "issue_types": mapping}
-    path = Path(root).resolve() / CONFIG
-    if path.exists():
-        existing = selection(root, require_provider=False)
-        if existing != config:
-            raise ItemError("existing tracker selection differs; reconcile it explicitly before adoption")
-    created = []
-    tracker_existed = path.exists()
-    try:
-        for target, value, existed in ((path, config, tracker_existed),):
-            if not existed:
-                with target.open("x", encoding="utf-8", newline="\n") as handle:
-                    created.append(target)
-                    handle.write(json.dumps(value, indent=2) + "\n")
-        selection(root)
-    except (OSError, ItemError):
-        for target in reversed(created):
-            target.unlink()
-        raise
-    return {"selected": config, "provider": "personal:work-item", "type_support": "native" if mapping else "body-kind", "github_writes": False}
-
-
 def add_commands(commands, names=None):
-    names = names or ("adopt", "create", "read", "list", "state", "update", "note", "link", "close")
-    if "adopt" in names:
-        command = commands.add_parser("adopt")
-        command.add_argument("--root", default=".")
-        command.add_argument("--repository", required=True)
+    names = names or ("create", "read", "list", "state", "update", "note", "link", "close")
     for name in names:
-        if name == "adopt":
-            continue
         command = commands.add_parser(name)
         command.add_argument("--root", default=".")
         if name in ("create", "update"):
@@ -511,8 +433,6 @@ def add_commands(commands, names=None):
 
 def execute(args):
     api = GitHub()
-    if args.command == "adopt":
-        return adopt(args.root, args.repository, api)
     tracker = Tracker(selection(args.root), api, RequestJournal(args.root))
     if args.command == "create":
         return tracker.create(read_input(args.input), args.request_id, args.reconcile_only)
