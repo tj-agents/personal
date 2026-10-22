@@ -66,7 +66,10 @@ class FakeAPI:
             return {
                 "repositoryOwner": {
                     "id": "owner-id",
-                    "projectsV2": {"nodes": copy.deepcopy(self.projects)},
+                    "projectsV2": {
+                        "pageInfo": {"hasNextPage": False},
+                        "nodes": copy.deepcopy(self.projects),
+                    },
                 }
             }
         if query.startswith("query($owner:String!,$name:String!){repository("):
@@ -83,6 +86,7 @@ class FakeAPI:
             project = {
                 "id": "board-" + variables["title"],
                 "title": variables["title"],
+                "closed": False,
                 "fields": {"nodes": [status, {}]},
             }
             self.projects.append(project)
@@ -94,10 +98,9 @@ class FakeAPI:
                 if project["id"] == variables["project"]
             )
             options = [{"id": "kind-" + name, "name": name} for name in records.KINDS]
-            project["fields"]["nodes"].append(
-                {"id": "kind", "name": "Kind", "options": options}
-            )
-            return {"createProjectV2Field": {"projectV2Field": {"id": "kind"}}}
+            field = {"id": "kind", "name": "Kind", "options": options}
+            project["fields"]["nodes"].append(field)
+            return {"createProjectV2Field": {"projectV2Field": copy.deepcopy(field)}}
         if "addProjectV2ItemById" in query:
             return {
                 "addProjectV2ItemById": {
@@ -221,6 +224,22 @@ class TrackerTests(unittest.TestCase):
             self.assertIn((board, "kind", "kind-debt"), self.api.placements)
         self.tracker.create(item("debt"), "request-0001")
         self.assertEqual(2, len(self.api.projects))
+        self.assertEqual(
+            2, sum(field == "status" for _, field, _ in self.api.placements)
+        )
+
+    def test_issue_urls_match_the_origin_case_insensitively(self):
+        self.tracker.create(item(), "request-0001")
+        tracker = github.Tracker({**CONFIG, "repository": "Owner/Project"}, self.api)
+        self.assertEqual(
+            "Owner/Project#1", tracker.compact(self.api.issues[0])["identity"]
+        )
+        self.assertEqual(
+            1,
+            github.issue_number(
+                "https://github.com/owner/project/issues/1", "Owner/Project"
+            ),
+        )
 
     def test_board_failure_reports_without_losing_the_created_issue(self):
         self.api.fail_graphql = True
@@ -441,6 +460,14 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual("owner/project", config["repository"])
             self.assertEqual("personal:work-item", config["provider"])
             self.assertEqual(github.ISSUE_TYPES, config["issue_types"])
+            (root / ".problem-records.json").write_text(
+                json.dumps({"schema_version": 1, "provider": "infonetica:work-item"}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                records.ItemError, "another problem-record provider"
+            ):
+                github.selection(root)
 
     def test_gh_transport_uses_argument_arrays_and_flattens_all_pages(self):
         response = subprocess.CompletedProcess(

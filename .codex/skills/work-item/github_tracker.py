@@ -19,7 +19,7 @@ REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REQUEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
 MARKER = re.compile(r"\n<!-- work-item:v1 (.+) -->\n?\Z")
 COMMENT = re.compile(r"\n<!-- work-item-comment:v1 (.+) -->\n?\Z")
-ISSUE_TYPES = {"feature": "Feature", "task": "Task", "bug": "Bug", "mistake": "Task", "debt": "Task"}
+ISSUE_TYPES = {"feature": "Feature", "story": "Story", "task": "Task", "bug": "Bug", "mistake": "Task", "debt": "Task"}
 BOARD_STATUS = "Todo"
 
 
@@ -155,6 +155,14 @@ def personal_adoption(root):
 def selection(root):
     root = source_primary(root)
     personal_adoption(root)
+    declared = root / ".problem-records.json"
+    if declared.exists():
+        try:
+            provider = json.loads(declared.read_text(encoding="utf-8-sig")).get("provider")
+        except (OSError, ValueError, AttributeError) as error:
+            raise ItemError("the repository's problem-record declaration is unreadable") from error
+        if provider != "personal:work-item":
+            raise ItemError("the repository declares another problem-record provider")
     return {"provider": "personal:work-item", "repository": source_repository(root), "issue_types": dict(ISSUE_TYPES)}
 
 
@@ -165,9 +173,10 @@ def request_id(value):
 
 
 def issue_number(value, repository):
-    prefix = f"https://github.com/{repository}/issues/"
-    identity = repository + "#"
-    number = value[len(prefix):] if value.startswith(prefix) else value[len(identity):] if value.startswith(identity) else ""
+    prefix = f"https://github.com/{repository}/issues/".casefold()
+    identity = (repository + "#").casefold()
+    folded = value.casefold()
+    number = value[len(prefix):] if folded.startswith(prefix) else value[len(identity):] if folded.startswith(identity) else ""
     if not number.isascii() or not number.isdecimal() or int(number) <= 0:
         raise ItemError("item must be a full issue URL or repository#number matching the selected repository")
     return int(number)
@@ -204,10 +213,14 @@ def body_for(item, request, existing=None):
     return body
 
 
-BOARDS = "query($owner:String!){repositoryOwner(login:$owner){... on ProjectV2Owner{id projectsV2(first:100){nodes{id title fields(first:50){nodes{... on ProjectV2SingleSelectField{id name options{id name}}}}}}}}}"
+FIELDS = "fields(first:50){nodes{... on ProjectV2SingleSelectField{id name options{id name}}}}"
+BOARDS = "query($owner:String!){repositoryOwner(login:$owner){... on ProjectV2Owner{id projectsV2(first:100){pageInfo{hasNextPage} nodes{id title closed " + FIELDS + "}}}}}"
 REPOSITORY_ID = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}"
-CREATE_BOARD = "mutation($owner:ID!,$title:String!,$repository:ID!){createProjectV2(input:{ownerId:$owner,title:$title,repositoryId:$repository}){projectV2{id title fields(first:50){nodes{... on ProjectV2SingleSelectField{id name options{id name}}}}}}}"
-KIND_FIELD = "mutation($project:ID!){createProjectV2Field(input:{projectId:$project,dataType:SINGLE_SELECT,name:\"Kind\",singleSelectOptions:[{name:\"bug\",color:RED,description:\"\"},{name:\"mistake\",color:ORANGE,description:\"\"},{name:\"debt\",color:YELLOW,description:\"\"},{name:\"feature\",color:GREEN,description:\"\"},{name:\"task\",color:BLUE,description:\"\"},{name:\"story\",color:PURPLE,description:\"\"}]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}"
+CREATE_BOARD = "mutation($owner:ID!,$title:String!,$repository:ID!){createProjectV2(input:{ownerId:$owner,title:$title,repositoryId:$repository}){projectV2{id title " + FIELDS + "}}}"
+KIND_COLORS = {"bug": "RED", "mistake": "ORANGE", "debt": "YELLOW", "feature": "GREEN", "task": "BLUE", "story": "PURPLE"}
+KIND_FIELD = ("mutation($project:ID!){createProjectV2Field(input:{projectId:$project,dataType:SINGLE_SELECT,name:\"Kind\",singleSelectOptions:["
+              + ",".join('{name:"%s",color:%s,description:""}' % (kind, KIND_COLORS.get(kind, "GRAY")) for kind in KINDS)
+              + "]}){projectV2Field{... on ProjectV2SingleSelectField{id name options{id name}}}}}")
 ADD_ITEM = "mutation($project:ID!,$content:ID!){addProjectV2ItemById(input:{projectId:$project,contentId:$content}){item{id}}}"
 SET_OPTION = "mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}}){projectV2Item{id}}}"
 
@@ -234,7 +247,7 @@ class Tracker:
     def compact(self, issue):
         if not isinstance(issue, dict) or type(issue.get("number")) is not int or issue["number"] <= 0:
             raise ItemError("invalid issue response identity")
-        if issue.get("html_url") != f"https://github.com/{self.repo}/issues/{issue['number']}" or issue.get("state") not in ("open", "closed") or not isinstance(issue.get("title"), str):
+        if str(issue.get("html_url")).casefold() != f"https://github.com/{self.repo}/issues/{issue['number']}".casefold() or issue.get("state") not in ("open", "closed") or not isinstance(issue.get("title"), str):
             raise ItemError("invalid issue response fields")
         info, _ = metadata(issue.get("body"))
         return {"identity": f"{self.repo}#{issue['number']}", "url": issue["html_url"], "state": issue["state"],
@@ -270,7 +283,7 @@ class Tracker:
         if existing:
             if self.journal:
                 self.journal.complete(key, fingerprint, existing["number"])
-            return {**self.compact(existing), "reconciled": True, "boards": self.place(existing, item["kind"])}
+            return {**self.compact(existing), "reconciled": True, "boards": self.place(existing, item["kind"], initial=False)}
         if receipt or reconcile_only:
             raise ItemError("request outcome remains uncertain; reconcile without another POST")
         payload = {"title": item["title"], "body": body}
@@ -278,11 +291,10 @@ class Tracker:
         if issue_type:
             try:
                 available = self.api.request("GET", "repos/" + self.repo + "/issue-types")
-            except APIError as error:
-                if error.status != 404:
-                    raise
+            except APIError:
                 available = []
-            if issue_type in [entry["name"] for entry in available]:
+            names = [entry.get("name") for entry in available if isinstance(entry, dict)] if isinstance(available, list) else []
+            if issue_type in names:
                 payload["type"] = issue_type
         if self.journal:
             self.journal.reserve(key, fingerprint)
@@ -296,7 +308,7 @@ class Tracker:
             if existing:
                 if self.journal:
                     self.journal.complete(key, fingerprint, existing["number"])
-                return {**self.compact(existing), "reconciled": True, "boards": self.place(existing, item["kind"])}
+                return {**self.compact(existing), "reconciled": True, "boards": self.place(existing, item["kind"], initial=False)}
             raise ItemError("create outcome uncertain or rejected; retain request-id and reconcile before retrying")
         return {**result, "reconciled": False, "boards": self.place(issue, item["kind"])}
 
@@ -306,26 +318,33 @@ class Tracker:
             raise APIError("GitHub GraphQL request failed; verify gh has the project scope")
         return response["data"]
 
-    def board(self, owner, title):
+    def boards(self, owner):
         data = self.graphql(BOARDS, owner=owner)["repositoryOwner"]
-        found = next((node for node in data["projectsV2"]["nodes"] if node["title"] == title), None)
-        if found is None:
-            repository = self.graphql(REPOSITORY_ID, owner=owner, name=self.repo.split("/")[1])["repository"]["id"]
-            found = self.graphql(CREATE_BOARD, owner=data["id"], title=title, repository=repository)["createProjectV2"]["projectV2"]
-        fields = {field["name"]: field for field in found["fields"]["nodes"] if field}
-        if "Kind" not in fields:
-            self.graphql(KIND_FIELD, project=found["id"])
-            return self.board(owner, title)
-        return found["id"], fields
+        if data["projectsV2"]["pageInfo"]["hasNextPage"]:
+            raise APIError("the owner has more than 100 open projects; place the item manually")
+        return data["id"], {node["title"]: node for node in data["projectsV2"]["nodes"] if not node["closed"]}
 
-    def place(self, issue, kind):
+    def board(self, owner_id, found, title, owner):
+        project = found.get(title)
+        if project is None:
+            repository = self.graphql(REPOSITORY_ID, owner=owner, name=self.repo.split("/")[1])["repository"]["id"]
+            project = self.graphql(CREATE_BOARD, owner=owner_id, title=title, repository=repository)["createProjectV2"]["projectV2"]
+        fields = {field["name"]: field for field in project["fields"]["nodes"] if field}
+        if "Kind" not in fields:
+            created = self.graphql(KIND_FIELD, project=project["id"])["createProjectV2Field"]["projectV2Field"]
+            fields["Kind"] = created
+        return project["id"], fields
+
+    def place(self, issue, kind, initial=True):
         owner, name = self.repo.split("/")
         placed = []
         try:
-            for title in (name, owner):
-                project, fields = self.board(owner, title)
+            owner_id, found = self.boards(owner)
+            for title in dict.fromkeys((name, owner)):
+                project, fields = self.board(owner_id, found, title, owner)
                 entry = self.graphql(ADD_ITEM, project=project, content=issue["node_id"])["addProjectV2ItemById"]["item"]["id"]
-                for field, value in (("Status", BOARD_STATUS), ("Kind", kind)):
+                values = (("Status", BOARD_STATUS), ("Kind", kind)) if initial else (("Kind", kind),)
+                for field, value in values:
                     option = next((o["id"] for o in fields.get(field, {}).get("options", []) if o["name"] == value), None)
                     if option:
                         self.graphql(SET_OPTION, project=project, item=entry, field=fields[field]["id"], option=option)
