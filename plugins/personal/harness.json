@@ -3,7 +3,7 @@
   "plugin": "personal-agents/personal",
   "source_roots": [
     ".agents/personal/policy/current-solution",
-    ".agents/personal/utility/adopt",
+    ".agents/personal/utility/setup/repo",
     ".agents/personal/utility/bot-identity",
     ".agents/personal/utility/create/work-item",
     ".agents/personal/utility/work-item",

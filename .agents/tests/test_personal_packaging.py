@@ -8,7 +8,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SKILLS = {
-    "adopt",
+    "setup-repo",
     "address-work-item",
     "bot-identity",
     "create-work-item",

@@ -8,10 +8,10 @@
   "profiles": {
     "core": [
       "address-work-item",
-      "adopt",
       "bot-identity",
       "create-work-item",
       "current-solution",
+      "setup-repo",
       "work-item"
     ]
   },
@@ -27,21 +27,6 @@
       "requires": [
         "engineering",
         "python"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "adopt",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal projects"
-      ],
-      "requires": [
-        "python",
-        "machine"
       ],
       "provenance": [
         "house"
@@ -85,6 +70,21 @@
       ],
       "requires": [
         "personal"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "setup-repo",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "explicitly adopted personal projects"
+      ],
+      "requires": [
+        "python",
+        "machine"
       ],
       "provenance": [
         "house"
