@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "plugin": "personal-agents/personal",
+  "plugin": "tj-agents/personal",
   "source_roots": [
     ".agents/personal/policy/current-solution",
     ".agents/personal/utility/adopt",
