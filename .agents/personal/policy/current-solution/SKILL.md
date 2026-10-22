@@ -1,6 +1,6 @@
 ---
 name: current-solution
-description: Mandatory current-solution and proportionate-engineering rules for explicitly adopted personal projects.
+description: Mandatory current-solution, proportionate-engineering and GitHub work-tracking rules for explicitly adopted personal projects.
 kind: policy
 domain: personal
 profile: core
@@ -46,6 +46,29 @@ Solve the demonstrated problem with the smallest suitable implementation. Add ab
 configuration switches, duplicate paths or process machinery only for a concrete current need. Prefer the
 capabilities the project already selects. Verify the behavior and meaningful failure paths in proportion
 to the change; do not add tests that merely repeat the implementation or a checklist with no concrete benefit.
+
+## Work tracking
+
+GitHub Issues owns the live backlog for projects that adopt Personal. Use `personal:work-item` to read or
+list work, `personal:create-work-item` to record it and `personal:address-work-item` to execute an existing
+item. These operations use the repository's explicit `personal:work-item` provider binding. A missing or
+different binding blocks the operation; it never authorizes silently selecting another tracker.
+
+Keep scope, acceptance, hierarchy, dependencies, status, verification and the next action in the canonical
+issues. Keep lasting design and reference material in the project's permanent documentation, linked to
+those issues. Do not create a `plans/` backlog or another local queue. Core's shared agent store owns
+session and execution state; it does not replace the GitHub backlog.
+
+When migrating existing plans, reuse existing issue identities and preserve useful design in permanent
+documentation. Verify coverage and update active links and resume references before removing the old
+plans. Repository instructions must not duplicate these shared tracking rules.
+
+```text
+Existing feature: read its GitHub issue and children through personal:work-item.
+New task: record it through personal:create-work-item under the existing feature.
+Implementation: use personal:address-work-item for that task; update its issue with progress and evidence.
+Design: maintain docs/design.md and link the feature; do not create plans/TASK_PLAN.md.
+```
 
 This policy is authored once here. Personal adoption generates its marked native instruction block from
 this body and checks it for drift. A selected plugin or an `always` tier alone is not proof of loading.
