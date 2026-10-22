@@ -47,9 +47,9 @@ preserves the request for later work and does not start implementation. The ship
 schemas, rendered bodies, GitHub CRUD and durable request receipts.
 
 Use `personal:work-item` to read, list or view an identified item. Use `personal:address-work-item` for an
-existing item after reconciling its identity and repair owner; Core Engineering owns execution tracking and
-delivery. The address helper records factual updates and closure evidence. A missing or different provider
-blocks the operation without adopting another queue.
+existing item after reconciling its identity and repair owner; Workflow owns the goal and execution, and the
+mapped Engineering operation owns bounded software delivery. The address helper records factual updates and
+closure evidence. A missing or different provider blocks the operation without adopting another queue.
 
 ## Authoring and verification
 
