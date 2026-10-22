@@ -241,13 +241,29 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual({"placed": ["project", "owner"]}, created["boards"])
         self.assertEqual(1, len(self.api.issues))
         self.assertEqual([], self.api.projects)
-        self.assertEqual(["project", "owner"], [project["title"] for project in boards.projects])
+        self.assertEqual(
+            ["project", "owner"], [project["title"] for project in boards.projects]
+        )
 
     def test_project_token_uses_an_inactive_login_with_project_scope(self):
-        hosts = {"hosts": {"github.com": [
-            {"login": "work", "active": True, "state": "success", "scopes": "repo, read:org"},
-            {"login": "personal", "active": False, "state": "success", "scopes": "project, repo"},
-        ]}}
+        hosts = {
+            "hosts": {
+                "github.com": [
+                    {
+                        "login": "work",
+                        "active": True,
+                        "state": "success",
+                        "scopes": "repo, read:org",
+                    },
+                    {
+                        "login": "personal",
+                        "active": False,
+                        "state": "success",
+                        "scopes": "project, repo",
+                    },
+                ]
+            }
+        }
         calls = []
 
         def run(command, **_):
@@ -259,7 +275,9 @@ class TrackerTests(unittest.TestCase):
         self.assertIn("personal", calls[-1])
         hosts["hosts"]["github.com"][0]["scopes"] = "project, repo"
         self.assertIsNone(github.project_token(run))
-        self.assertIsNone(github.project_token(lambda *_, **__: SimpleNamespace(stdout="not json")))
+        self.assertIsNone(
+            github.project_token(lambda *_, **__: SimpleNamespace(stdout="not json"))
+        )
 
     def test_issue_urls_match_the_origin_case_insensitively(self):
         self.tracker.create(item(), "request-0001")
