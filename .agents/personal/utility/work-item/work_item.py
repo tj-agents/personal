@@ -21,14 +21,14 @@ def parser():
     provider = commands.add_parser("provider")
     provider.add_argument("--root", required=True)
     from github_tracker import add_commands
-    add_commands(commands, ("adopt", "create", "read", "list", "state"))
+    add_commands(commands, ("create", "read", "list", "state"))
     return result
 
 
 def run(arguments):
     if arguments.command == "provider":
-        from github_tracker import provider_selection
-        return provider_selection(arguments.root)
+        from github_tracker import selection
+        return selection(arguments.root)
     if arguments.command == "schema":
         return schema_for(arguments.kind)
     if arguments.command == "template":

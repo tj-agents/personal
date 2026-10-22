@@ -14,9 +14,8 @@ provenance: house
 This is the inspection intent: it reads, lists and views existing records. It does not create records or
 start execution.
 
-Use the shipped helper beside this skill. It resolves the source primary checkout, requires its explicit
-personal adoption and accepts only its selected `personal:work-item` GitHub provider. It never adopts,
-configures or substitutes a provider.
+Use the shipped helper beside this skill. It resolves the source primary checkout and requires its
+`personal@tj-agents` selection, which alone selects this GitHub provider for the checkout's origin.
 
 ```text
 python -B <skill-directory>/work_item.py provider --root .

@@ -14,8 +14,8 @@ provenance: house
 This is the execution intent. It reconciles an existing record with one Workflow goal; it does not create
 a duplicate goal or provider record.
 
-Read the identified item through `personal:work-item`, verify the source primary checkout explicitly
-adopts Personal and the selected provider is `personal:work-item`. Reconcile the canonical GitHub
+Read the identified item through `personal:work-item`, verify the source primary checkout selects
+`personal@tj-agents` and declares no other provider. Reconcile the canonical GitHub
 identity, managed kind, current facts and any existing repair owner before delivery work. Reject employer
 evidence, another provider, a foreign identity or an unmanaged body. If an owner already exists,
 `workflow:run` reuses it. If a legitimate item is unowned, `workflow:run` acquires its sole whole-goal
