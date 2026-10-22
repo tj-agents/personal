@@ -3,7 +3,7 @@
 ## B001 — Windows Git symlink emulation was edited as native instructions
 
 Kind: bug. Observed: 2026-10-19. Priority: P2. State: resolved.
-Source owner: personal:adopt, native_plan.
+Source owner: personal:setup-repo, native_plan.
 Evidence: CLI's tracked CLAUDE.md mode was 120000 with core.symlinks=false, so Windows
 materialized its link target as an ordinary file. Adoption appended policy to that target text;
 frozen review correctly rejected the resulting invalid link before publication.

@@ -30,4 +30,4 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check selection, mandatory native instructions and retired aliases
-        run: ${{ matrix.python }} -B .personal/.agents/personal/utility/adopt/scripts/adopt.py --root . --mode check
+        run: ${{ matrix.python }} -B .personal/.agents/personal/utility/setup/repo/scripts/setup_repo.py --root . --mode check
