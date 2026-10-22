@@ -3,7 +3,11 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -15,6 +19,13 @@ bot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bot)
 
 RECORD = {"slug": "test-bot", "client_id": "Iv1", "key": "unused.pem"}
+INSTALLED = {"tj-agents": 7, "tomjseery": 8}
+ARGV_RECORDER = "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+
+
+def without_agent_settings(environment):
+    return {key: value for key, value in environment.items()
+            if key not in bot.AGENT_ONLY and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
 
 class FakeGitHub:
@@ -28,59 +39,321 @@ class FakeGitHub:
         return {"token": f"ghs_{len(self.calls)}", "expires_at": "2030-01-01T00:00:00Z"}
 
 
-class IdentityTests(unittest.TestCase):
+class FakeGh:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, command, env=None, check=False):
+        self.calls.append((command, env))
+        return subprocess.CompletedProcess(command, 0)
+
+
+def fake_installed(owners, record):
+    return {owner.lower(): INSTALLED[owner.lower()] for owner in owners if owner.lower() in INSTALLED}
+
+
+class Sandbox(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.home = Path(directory.name)
-        patcher = mock.patch.object(bot, "store", return_value=self.home / "github-app")
+        for target, value in (("store", self.home / "github-app"), ("shim_directory", self.home / "shim")):
+            patcher = mock.patch.object(bot, target, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        (self.home / "github-app").mkdir()
+        (self.home / "github-app" / "test-bot.json").write_text(json.dumps(RECORD), encoding="utf-8")
+
+    def patch_environment(self, values):
+        patcher = mock.patch.object(os, "environ", {**os.environ, **values})
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.github = FakeGitHub()
 
-    def token(self, owner, now=0):
-        return bot.installation_token(owner, RECORD, now=now, fetch=self.github, sign=lambda record: "jwt")
+
+class IdentityTests(Sandbox):
+    def token(self, owner, github, now=0):
+        return bot.installation_token(owner, RECORD, now=now, fetch=github, sign=lambda record: "jwt")
 
     def test_installed_owner_gets_one_cached_token_and_others_get_none(self):
-        self.assertEqual("ghs_2", self.token("TJ-Agents"))
-        self.assertEqual("ghs_2", self.token("tj-agents"))
-        self.assertIsNone(self.token("Infonetica"))
-        self.assertEqual(1, sum(method == "POST" for method, _ in self.github.calls))
+        github = FakeGitHub()
+        self.assertEqual("ghs_2", self.token("TJ-Agents", github))
+        self.assertEqual("ghs_2", self.token("tj-agents", github))
+        self.assertIsNone(self.token("Infonetica", github))
+        self.assertEqual(1, sum(method == "POST" for method, _ in github.calls))
 
     def test_an_expiring_token_is_reissued(self):
-        first = self.token("tj-agents")
+        github = FakeGitHub()
+        first = self.token("tj-agents", github)
         late = bot.datetime.fromisoformat("2030-01-01T00:00:00+00:00").timestamp() - 60
-        self.assertNotEqual(first, self.token("tj-agents", now=late))
+        self.assertNotEqual(first, self.token("tj-agents", github, now=late))
 
-    def test_owner_comes_from_repo_flags_and_api_paths(self):
-        cases = {("pr", "merge", "-R", "tj-agents/core"): "tj-agents",
-                 ("pr", "view", "--repo=Concertable/auth"): "Concertable",
-                 ("pr", "list", "-Rtomjseery/winwrap"): "tomjseery",
-                 ("api", "repos/tj-agents/core/pulls/1/merge", "-X", "PUT"): "tj-agents",
-                 ("pr", "view", "-R", "https://github.com/Concertable/b2b"): "Concertable",
-                 ("api", "graphql"): None}
-        for arguments, owner in cases.items():
+    def test_owners_come_from_flags_urls_and_api_paths(self):
+        cases = {("pr", "merge", "-R", "tj-agents/core"): ["tj-agents"],
+                 ("pr", "view", "--repo=Concertable/auth"): ["Concertable"],
+                 ("pr", "list", "-Rtomjseery/winwrap"): ["tomjseery"],
+                 ("api", "repos/tj-agents/core/pulls/1/merge", "-X", "PUT"): ["tj-agents"],
+                 ("api", "https://api.github.com/orgs/tj-agents/rulesets"): ["tj-agents"],
+                 ("pr", "view", "-R", "https://github.com/Concertable/b2b"): ["Concertable"],
+                 ("pr", "view", "-R", "github.com/Concertable/b2b"): ["Concertable"],
+                 ("pr", "review", "--approve", "https://github.com/tj-agents/core/pull/5"): ["tj-agents"],
+                 ("repo", "delete", "tomjseery/notes", "--yes"): ["tomjseery"],
+                 ("project", "list", "--owner", "tj-agents"): ["tj-agents"],
+                 ("api", "graphql"): []}
+        for arguments, owners in cases.items():
             with self.subTest(arguments=arguments):
-                self.assertEqual(owner, bot.owner_from_arguments(list(arguments)))
+                self.assertEqual(owners, bot.owners_from_arguments(list(arguments)))
 
-    def test_credential_helper_answers_only_for_installed_accounts(self):
-        with mock.patch.object(bot, "app_record", return_value=RECORD), \
-                mock.patch.object(bot, "installation_token", side_effect=lambda owner, record: "ghs_x"
-                                  if owner == "tj-agents" else None):
-            for path, expected in (("tj-agents/core.git", "password=ghs_x"), ("Infonetica/x.git", "")):
-                out = io.StringIO()
-                bot.credential("get", io.StringIO(f"protocol=https\nhost=github.com\npath={path}\n\n"), out)
-                self.assertIn(expected, out.getvalue())
-                if not expected:
-                    self.assertEqual("", out.getvalue())
+    def test_checkout_owner_comes_only_from_github_remotes(self):
+        cases = {"https://x-access-token@github.com/tj-agents/core.git": "tj-agents",
+                 "git@github.com:Infonetica/cris.git": "Infonetica",
+                 "https://dev.azure.com/infonetica/_git/cris": None,
+                 "https://notgithub.com/tj-agents/core": None}
+        for url, owner in cases.items():
+            with self.subTest(url=url):
+                remote = mock.Mock(return_value=subprocess.CompletedProcess([], 0, url + "\n"))
+                self.assertEqual(owner, bot.owner_from_checkout(run=remote))
 
-    def test_agent_git_config_replaces_helpers_then_keeps_the_fallbacks(self):
-        environment = bot.agent_environment(Path("/s/bot_identity.py"), ["manager", "store"])
-        values = [environment[f"GIT_CONFIG_VALUE_{index}"] for index in range(int(environment["GIT_CONFIG_COUNT"]))]
-        self.assertEqual(["true", ""], values[:2])
-        self.assertTrue(values[2].endswith('bot_identity.py" credential'))
-        self.assertEqual(["manager", "store"], values[3:])
-        self.assertEqual("1", environment["TJ_AGENT"])
+
+class CredentialTests(Sandbox):
+    def ask(self, request, token="ghs_x", fallback="username=tomjseery\npassword=gho_tommy\n"):
+        calls = []
+
+        def tommy(command, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(command, 0 if fallback else 128, fallback)
+
+        out = io.StringIO()
+        with mock.patch.object(bot, "installed", side_effect=fake_installed), \
+                mock.patch.object(bot, "installation_token", return_value=token):
+            bot.credential("get", io.StringIO(request + "\n"), out, run=tommy)
+        return out.getvalue(), calls
+
+    def test_installed_accounts_get_only_the_app_token(self):
+        answer, calls = self.ask("protocol=https\nhost=github.com\npath=tj-agents/core.git\n")
+        self.assertEqual("username=x-access-token\npassword=ghs_x\n", answer)
+        self.assertEqual([], calls)
+
+    def test_an_installed_account_never_falls_back_when_minting_fails(self):
+        answer, calls = self.ask("protocol=https\nhost=github.com\npath=tomjseery/notes.git\n", token=None)
+        self.assertEqual(("", []), (answer, calls))
+
+    def test_requests_without_an_account_get_nothing(self):
+        for request in ("protocol=https\nhost=github.com\n", "protocol=http\nhost=github.com\npath=Infonetica/x\n",
+                        "protocol=https\nhost=gist.github.com\npath=tj-agents/x\n"):
+            with self.subTest(request=request):
+                self.assertEqual(("", []), self.ask(request))
+
+    def test_a_missing_app_record_fails_closed(self):
+        (self.home / "github-app" / "test-bot.json").unlink()
+        with mock.patch.object(bot, "tommy_credential") as tommy:
+            out = io.StringIO()
+            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=Infonetica/x\n\n"), out)
+        self.assertEqual("", out.getvalue())
+        tommy.assert_not_called()
+
+    def test_other_accounts_use_tommys_own_helpers_without_agent_settings(self):
+        self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+        answer, calls = self.ask("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n")
+        self.assertEqual("username=tomjseery\npassword=gho_tommy\n", answer)
+        environment = calls[0]["env"]
+        self.assertEqual("0", environment["GIT_TERMINAL_PROMPT"])
+        self.assertFalse({"TJ_AGENT", "GH_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT"} & environment.keys())
+        self.assertIn("path=Infonetica/cris.git\n", calls[0]["input"])
+
+
+@unittest.skipUnless(shutil.which("git"), "needs git")
+class GitContainmentTests(Sandbox):
+    def setUp(self):
+        super().setUp()
+        global_config = self.home / "gitconfig"
+        global_config.write_text(
+            '[credential]\n\thelper = "!f() { echo username=generic; echo password=TOMMY_GENERIC; }; f"\n'
+            '[credential "https://github.com"]\n\thelper =\n'
+            '\thelper = "!f() { echo username=gh; echo password=TOMMY_GH; }; f"\n'
+            '[credential "https://gist.github.com"]\n\thelper =\n'
+            '\thelper = "!f() { echo username=gh; echo password=TOMMY_GIST; }; f"\n', encoding="utf-8")
+        self.tommy = {**without_agent_settings(os.environ), "GIT_CONFIG_NOSYSTEM": "1",
+                      "GIT_CONFIG_GLOBAL": str(global_config), "GIT_TERMINAL_PROMPT": "0"}
+
+    def fill(self, request, environment):
+        result = subprocess.run(["git", "credential", "fill"], input=request + "\n", env=environment,
+                                capture_output=True, text=True, timeout=60, check=False)
+        return "".join(line for line in result.stdout.splitlines() if line.startswith("password="))
+
+    def agent(self, helper):
+        script = self.home / "helper.py"
+        script.write_text(helper, encoding="utf-8")
+        settings = bot.agent_environment(script, os.environ["PATH"])
+        return {**self.tommy, **{key: value for key, value in settings.items() if key.startswith("GIT_CONFIG_")}}
+
+    def test_github_hosts_reach_only_the_bot_helper(self):
+        environment = self.agent("import sys\nsys.stdin.read()\nprint('username=x-access-token')\n"
+                                 "print('password=BOT')\n")
+        cases = {"protocol=https\nhost=github.com\npath=tj-agents/core.git\n": "password=BOT",
+                 "protocol=https\nhost=github.com\n": "password=BOT",
+                 "protocol=https\nhost=gist.github.com\n": "",
+                 "protocol=https\nhost=api.github.com\n": "",
+                 "protocol=http\nhost=github.com\n": "",
+                 "protocol=https\nhost=dev.azure.com\n": "password=TOMMY_GENERIC"}
+        for request, expected in cases.items():
+            with self.subTest(request=request):
+                self.assertEqual(expected, self.fill(request, environment))
+
+    def test_the_fallback_reaches_tommys_helpers_and_never_reenters_the_agent_chain(self):
+        self.patch_environment(self.agent("print('username=x-access-token')\nprint('password=BOT')\n"))
+        os.environ.update({"TJ_AGENT": "1", "GH_TOKEN": bot.UNAUTHENTICATED})
+        for key in ("GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"):
+            os.environ[key] = self.tommy[key]
+        out = io.StringIO()
+        with mock.patch.object(bot, "installed", side_effect=fake_installed):
+            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n\n"), out)
+        self.assertEqual("username=gh\npassword=TOMMY_GH\n", out.getvalue())
+
+
+class GhWrapperTests(Sandbox):
+    def setUp(self):
+        super().setUp()
+        self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+        self.gh = FakeGh()
+        for target, value in (("real_gh", mock.DEFAULT), ("installed", mock.DEFAULT),
+                              ("installation_token", mock.DEFAULT)):
+            patcher = mock.patch.object(bot, target, value)
+            started = patcher.start()
+            self.addCleanup(patcher.stop)
+            setattr(self, target, started)
+        self.real_gh.return_value = "real-gh"
+        self.installed.side_effect = fake_installed
+        self.installation_token.side_effect = lambda owner, record: f"ghs_{owner}"
+
+    def environment(self, *arguments, checkout=None):
+        self.assertEqual(0, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout))
+        command, environment = self.gh.calls[-1]
+        self.assertEqual(["real-gh", *arguments], command)
+        return environment
+
+    def refused(self, *arguments, checkout=None):
+        with self.assertRaises(bot.IdentityError):
+            bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout)
+        self.assertEqual([], self.gh.calls)
+
+    def test_installed_accounts_get_the_app_token_and_the_agent_gh_config(self):
+        environment = self.environment("pr", "merge", "5", "-R", "tj-agents/core")
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+        self.assertEqual(str(bot.gh_config_directory()), environment["GH_CONFIG_DIR"])
+
+    def test_naming_an_installed_account_wins_over_an_uncovered_checkout(self):
+        environment = self.environment("pr", "review", "--approve", "https://github.com/tomjseery/notes/pull/2",
+                                       checkout="Infonetica")
+        self.assertEqual("ghs_tomjseery", environment["GH_TOKEN"])
+
+    def test_an_installed_checkout_wins_over_an_uncovered_flag(self):
+        environment = self.environment("issue", "list", "-R", "Infonetica/cris", checkout="tj-agents")
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_uncovered_accounts_fall_through_to_tommys_own_gh(self):
+        environment = self.environment("pr", "list", checkout="Infonetica")
+        self.assertFalse({"TJ_AGENT", "GH_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT"} & environment.keys())
+
+    def test_commands_without_an_account_stay_unauthenticated(self):
+        environment = self.environment("api", "graphql", "-f", "query={viewer{login}}")
+        self.assertEqual(bot.UNAUTHENTICATED, environment["GH_TOKEN"])
+        self.installed.assert_not_called()
+
+    def test_gh_auth_never_reaches_tommys_credentials(self):
+        for arguments in (("auth", "token"), ("auth", "token", "-u", "tomjseery"), ("auth", "git-credential", "get"),
+                          ("auth", "logout"), ("auth", "setup-git")):
+            with self.subTest(arguments=arguments):
+                self.refused(*arguments)
+        environment = self.environment("auth", "status", "--show-token", checkout="Infonetica")
+        self.assertEqual(bot.UNAUTHENTICATED, environment["GH_TOKEN"])
+
+    def test_a_failed_mint_for_an_installed_account_stops_the_command(self):
+        self.installation_token.side_effect = lambda owner, record: None
+        self.refused("pr", "create", "-R", "tj-agents/core")
+
+    def test_tommys_own_terminal_runs_the_real_gh_untouched(self):
+        del os.environ["TJ_AGENT"]
+        self.assertEqual(0, bot.run_gh(["pr", "list"], run=self.gh, checkout=lambda: "tj-agents"))
+        self.assertEqual([(["real-gh", "pr", "list"], None)], self.gh.calls)
+
+
+class AgentEnvironmentTests(Sandbox):
+    def settings(self, windows, path):
+        with mock.patch.object(bot, "WINDOWS", windows):
+            return bot.agent_environment(Path("/s/bot_identity.py"), path)
+
+    def test_git_reaches_github_only_through_the_bot_helper(self):
+        environment = self.settings(False, "/usr/bin")
+        entries = [(environment[f"GIT_CONFIG_KEY_{index}"], environment[f"GIT_CONFIG_VALUE_{index}"])
+                   for index in range(int(environment["GIT_CONFIG_COUNT"]))]
+        helpers = [value for key, value in entries if key == "credential.https://github.com.helper"]
+        self.assertEqual("", helpers[0])
+        self.assertEqual(1, len(helpers[1:]))
+        self.assertTrue(helpers[1].endswith('bot_identity.py" credential'))
+        cleared = {key for key, value in entries if key.endswith(".helper") and value == ""}
+        self.assertEqual({f"credential.{url}.helper" for url in ("https://github.com", "https://*.github.com",
+                                                                  "http://github.com", "http://*.github.com")}, cleared)
+
+    def test_gh_has_no_saved_login_in_agent_sessions(self):
+        environment = self.settings(False, "/usr/bin")
+        self.assertEqual(("1", bot.UNAUTHENTICATED, str(bot.gh_config_directory())),
+                         (environment["TJ_AGENT"], environment["GH_TOKEN"], environment["GH_CONFIG_DIR"]))
+
+    def test_the_wrapper_leads_path_once_under_every_spelling(self):
+        shim = str(bot.shim_directory())
+        posix = self.settings(False, os.pathsep.join(["/usr/bin", shim, "/bin"]))
+        self.assertEqual(os.pathsep.join([shim, "/usr/bin", "/bin"]), posix["PATH"])
+        self.assertNotIn("Path", posix)
+        windows = self.settings(True, "/usr/bin")
+        self.assertEqual(windows["PATH"], windows["Path"])
+
+    def test_the_agent_path_resolves_gh_to_the_wrapper_before_the_real_gh(self):
+        shim, real = bot.shim_directory(), self.home / "real"
+        name = "gh.exe" if bot.WINDOWS else "gh"
+        for directory in (shim, real):
+            directory.mkdir()
+            (directory / name).write_bytes(b"")
+            (directory / name).chmod(0o755)
+        path = bot.agent_environment(Path("/s/bot_identity.py"), str(real))["PATH"]
+        self.assertEqual(shim / name, Path(shutil.which("gh", path=path)))
+
+
+class ShimTests(Sandbox):
+    ARGUMENTS = ("pr", "create", "--title", "t", "--body", 'line one\nline "two" 50% & a|b ^c')
+
+    def install(self):
+        source = self.home / "bot_identity.py"
+        source.write_text(ARGV_RECORDER, encoding="utf-8")
+        bot.shim_directory().mkdir()
+        for retired in ("gh", "gh.cmd"):
+            (bot.shim_directory() / retired).write_text("old", encoding="utf-8")
+        bot.install_shims(source)
+
+    @unittest.skipUnless(os.name == "nt", "Windows launcher")
+    def test_windows_gh_exe_passes_every_argument_through(self):
+        self.install()
+        self.assertEqual(["bot_identity.py", "gh.exe"], sorted(path.name for path in bot.shim_directory().iterdir()))
+        result = subprocess.run([str(bot.shim_directory() / "gh.exe"), *self.ARGUMENTS], capture_output=True,
+                                text=True, timeout=60, check=True)
+        self.assertEqual(["gh", *self.ARGUMENTS], json.loads(result.stdout))
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "Windows PowerShell")
+    def test_powershell_resolves_the_wrapper_from_the_agent_path(self):
+        self.install()
+        environment = {**os.environ, "PATH": bot.agent_environment(Path("/s/x.py"), os.environ["PATH"])["PATH"]}
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                                 "(Get-Command gh).Source; gh pr view 'a b'"], env=environment,
+                                capture_output=True, text=True, timeout=120, check=True)
+        source, argv = result.stdout.strip().splitlines()
+        self.assertEqual(bot.shim_directory() / "gh.exe", Path(source))
+        self.assertEqual(["gh", "pr", "view", "a b"], json.loads(argv))
+
+    @unittest.skipIf(os.name == "nt", "POSIX wrapper")
+    def test_posix_gh_script_passes_every_argument_through(self):
+        self.install()
+        result = subprocess.run([str(bot.shim_directory() / "gh"), *self.ARGUMENTS], capture_output=True, text=True,
+                                timeout=60, check=True)
+        self.assertEqual(["gh", *self.ARGUMENTS], json.loads(result.stdout))
 
 
 class SettingsTests(unittest.TestCase):
@@ -88,13 +361,13 @@ class SettingsTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        self.environment = {"TJ_AGENT": "1", "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "a.b",
-                            "GIT_CONFIG_VALUE_0": 'say "hi"'}
+        self.environment = {"TJ_AGENT": "1", "GH_TOKEN": "x", "PATH": "/shim:/usr/bin", "GIT_CONFIG_COUNT": "1",
+                            "GIT_CONFIG_KEY_0": "a.b", "GIT_CONFIG_VALUE_0": 'say "hi"'}
 
     def test_codex_keeps_other_settings_and_is_idempotent(self):
         path = self.root / "config.toml"
-        path.write_text('model = "x"\n\n[shell_environment_policy.set]\nKEEP = "1"\nGIT_CONFIG_KEY_9 = "old"\n\n'
-                        '[projects.a]\ntrust_level = "trusted"\n', encoding="utf-8")
+        path.write_text('model = "x"\n\n[shell_environment_policy.set]\nKEEP = "1"\nGIT_CONFIG_KEY_9 = "old"\n'
+                        'Path = "old"\n\n[projects.a]\ntrust_level = "trusted"\n', encoding="utf-8")
         bot.update_codex(path, self.environment)
         once = path.read_text(encoding="utf-8")
         bot.update_codex(path, self.environment)
@@ -106,13 +379,22 @@ class SettingsTests(unittest.TestCase):
 
     def test_claude_merges_env_and_denies_mcp_writes(self):
         path = self.root / "settings.json"
-        path.write_text(json.dumps({"env": {"KEEP": "1", "GIT_CONFIG_KEY_9": "old"},
+        path.write_text(json.dumps({"env": {"KEEP": "1", "GIT_CONFIG_KEY_9": "old", "Path": "old"},
                                     "permissions": {"deny": ["Bash(rm:*)"]}}), encoding="utf-8")
         bot.update_claude(path, self.environment)
         settings = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual({"KEEP": "1", **self.environment}, settings["env"])
         self.assertIn("Bash(rm:*)", settings["permissions"]["deny"])
         self.assertIn("mcp__github__merge_pull_request", settings["permissions"]["deny"])
+
+    def test_setup_takes_the_wrapper_back_out_of_the_posix_profile(self):
+        shim = self.root / "shim"
+        profile = self.root / ".profile"
+        profile.write_text(f'export A=1\nexport PATH="{shim}:$PATH"  # bot-identity\nexport B=2\n', encoding="utf-8")
+        with mock.patch.object(bot, "WINDOWS", False), mock.patch.object(bot.Path, "home", return_value=self.root):
+            self.assertTrue(bot.remove_user_path(shim))
+            self.assertFalse(bot.remove_user_path(shim))
+        self.assertEqual("export A=1\nexport B=2\n", profile.read_text(encoding="utf-8"))
 
 
 def bot_toml(text):
