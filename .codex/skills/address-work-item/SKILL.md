@@ -1,6 +1,6 @@
 ---
 name: address-work-item
-description: Reconcile an existing personal GitHub work item and enter the Core Engineering lifecycle. Use when asked to address, fix or deliver an identified personal backlog item.
+description: Reconcile an existing personal GitHub work item and enter Workflow execution with its mapped Engineering technical operation. Use when asked to address, fix or deliver an identified personal backlog item.
 kind: workflow
 domain: personal
 profile: core
