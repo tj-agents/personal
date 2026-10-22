@@ -1,5 +1,5 @@
 {
-  "name": "personal-agents",
+  "name": "tj-agents",
   "description": "Mandatory standards for explicitly adopted personal projects.",
   "owner": {
     "name": "Tommy Seery"
@@ -14,8 +14,5 @@
         "personal"
       ]
     }
-  ],
-  "allowCrossMarketplaceDependenciesOn": [
-    "tj-agents"
   ]
 }
