@@ -23,6 +23,7 @@ EXTERNAL_SKILLS = {
         "feature",
     },
     "machine": {"plugin-selection"},
+    "workflow": {"run"},
 }
 
 
