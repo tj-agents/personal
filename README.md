@@ -35,6 +35,9 @@ source before merge.
 
 ## Personal GitHub work items
 
+The [mandatory policy](.agents/personal/policy/current-solution/SKILL.md#work-tracking) owns backlog and
+plan-migration rules for every adopted project. Project instructions do not restate them.
+
 Personal owns its GitHub tracker. A source repository must explicitly adopt `personal@tj-agents` and select
 `personal:work-item` in `.problem-records.json`; the tracker then resolves its source primary checkout and
 uses only the matching GitHub origin. Personal never infers scope, selects a provider during read or create,

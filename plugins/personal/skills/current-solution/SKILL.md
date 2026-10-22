@@ -1,6 +1,6 @@
 ---
 name: current-solution
-description: Mandatory current-solution and proportionate-engineering rules for explicitly adopted personal projects.
+description: Mandatory current-solution, proportionate-engineering and GitHub tracking rules. Use when a project explicitly adopts Personal.
 kind: policy
 domain: personal
 profile: core
