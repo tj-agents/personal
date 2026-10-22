@@ -12,15 +12,18 @@ Published as plugin `personal` from this repository's `personal-agents` marketpl
 ## Skills
 
 - Policies: `personal:current-solution`.
-- Utilities: `personal:adopt`, `personal:work-item`, `personal:create-work-item`.
+- Utilities: `personal:setup-repo`, `personal:work-item`, `personal:create-work-item`.
 - Workflow: `personal:address-work-item`.
 
-## Adopt a personal project
+## Set up a personal repository
 
 Explicitly select `personal@tj-agents` through Core's `machine:plugin-selection` tool, then run the
-shipped adoption utility. Its `--selection-tool` option performs both steps together. Use `--mode preview`
+shipped repository setup utility. Its `--selection-tool` option performs both steps together. Use `--mode preview`
 to inspect changes, `--mode write` to apply them and `--mode check` in CI. See the
-[adoption procedure](.agents/personal/utility/adopt/SKILL.md) for the complete command.
+[repository setup procedure](.agents/personal/utility/setup/repo/SKILL.md) for the complete command.
+
+`personal:setup-repo` owns initial repository configuration and repeatable checks or repairs. Extend this
+entry point when adding repository setup options; everyday tracker operations retain their existing owners.
 
 The mandatory policy is generated into AGENTS.md from one authored body with a source hash. Adoption merges
 distinct CLAUDE.md instructions into AGENTS.md and leaves CLAUDE.md as its exact import pointer. This uses

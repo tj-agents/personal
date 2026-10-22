@@ -1,6 +1,6 @@
 ---
-name: adopt
-description: Adopt or check mandatory personal-project policy through explicit selection and native Claude/Codex instructions.
+name: setup-repo
+description: Set up, check or repair an explicitly personal repository. Use when enabling Personal or configuring its repository setup options.
 kind: utility
 domain: personal
 profile: core
@@ -9,12 +9,16 @@ requires: python, machine
 provenance: house
 ---
 
-# Adopt personal project policy
+# Set up a personal repository
 
 Use only for a project Tommy explicitly identifies as personal. Never infer scope from its location or
 from every repository on a machine. Preserve unrelated work and use the project's owning delivery branch.
 
-Run `python <skill-directory>/scripts/adopt.py --root <project> --mode write --selection-tool <machine-plugin-selection>/scripts/adopt_plugins.py`.
+This skill owns initial repository setup and repeatable checks or repairs as repository configuration grows.
+Keep setup options here with their implementing helpers. Use `personal:work-item`, `personal:create-work-item`
+and `personal:address-work-item` for subsequent tracker operations.
+
+Run `python <skill-directory>/scripts/setup_repo.py --root <project> --mode write --selection-tool <machine-plugin-selection>/scripts/adopt_plugins.py`.
 Resolve the selection tool from the installed `machine:plugin-selection` skill, which ships it; do not
 assemble or maintain another copy. Preview with `--mode preview`, and use the identical command with
 `--mode check` in CI. Use `python3` on Linux/macOS. Requires Python 3.11 or newer.
@@ -32,11 +36,11 @@ This is native instruction delivery, not a claim of plugin hook execution or tru
 
 ```powershell
 # Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:
-python -B .agents/personal/utility/adopt/scripts/adopt.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/core/.agents/machine/utility/plugin-selection/scripts/adopt_plugins.py
+python -B .agents/personal/utility/setup/repo/scripts/setup_repo.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/core/.agents/machine/utility/plugin-selection/scripts/adopt_plugins.py
 # Review the preview, then use --mode write; CI uses --mode check.
 # Linux/macOS use python3 and their checkout paths with the same arguments.
 ```
 
-Before declaring adoption complete, run its check and verify a fresh actual Claude and Codex entry point
+Before declaring repository setup complete, run its check and verify a fresh actual Claude and Codex entry point
 in the project on supported platforms. Confirm the rule was loaded and inspect its installed selection;
 a version command or a generated file is insufficient. Keep any missing host evidence with the goal.
