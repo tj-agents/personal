@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -231,6 +232,51 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(2, len(self.api.projects))
         self.assertEqual(
             2, sum(field == "status" for _, field, _ in self.api.placements)
+        )
+
+    def test_board_placement_uses_its_own_client(self):
+        boards = FakeAPI()
+        tracker = github.Tracker(CONFIG, self.api, board_api=boards)
+        created = tracker.create(item("debt"), "request-0001")
+        self.assertEqual({"placed": ["project", "owner"]}, created["boards"])
+        self.assertEqual(1, len(self.api.issues))
+        self.assertEqual([], self.api.projects)
+        self.assertEqual(
+            ["project", "owner"], [project["title"] for project in boards.projects]
+        )
+
+    def test_project_token_uses_an_inactive_login_with_project_scope(self):
+        hosts = {
+            "hosts": {
+                "github.com": [
+                    {
+                        "login": "work",
+                        "active": True,
+                        "state": "success",
+                        "scopes": "repo, read:org",
+                    },
+                    {
+                        "login": "personal",
+                        "active": False,
+                        "state": "success",
+                        "scopes": "project, repo",
+                    },
+                ]
+            }
+        }
+        calls = []
+
+        def run(command, **_):
+            calls.append(command)
+            output = json.dumps(hosts) if command[2] == "status" else "secret\n"
+            return SimpleNamespace(stdout=output)
+
+        self.assertEqual("secret", github.project_token(run))
+        self.assertIn("personal", calls[-1])
+        hosts["hosts"]["github.com"][0]["scopes"] = "project, repo"
+        self.assertIsNone(github.project_token(run))
+        self.assertIsNone(
+            github.project_token(lambda *_, **__: SimpleNamespace(stdout="not json"))
         )
 
     def test_issue_urls_match_the_origin_case_insensitively(self):

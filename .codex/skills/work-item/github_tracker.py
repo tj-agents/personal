@@ -37,9 +37,26 @@ def json_text(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def project_token(run=subprocess.run):
+    try:
+        status = run(["gh", "auth", "status", "--json", "hosts"], capture_output=True, text=True,
+                     encoding="utf-8", timeout=20, check=False)
+        accounts = json.loads(status.stdout)["hosts"]["github.com"]
+        eligible = [account for account in accounts if account.get("state") == "success"
+                    and "project" in [scope.strip() for scope in account.get("scopes", "").split(",")]]
+        if not eligible or any(account.get("active") for account in eligible):
+            return None
+        token = run(["gh", "auth", "token", "--hostname", "github.com", "--user", eligible[0]["login"]],
+                    capture_output=True, text=True, encoding="utf-8", timeout=20, check=False)
+        return token.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
 class GitHub:
-    def __init__(self, timeout=60):
+    def __init__(self, timeout=60, token=None):
         self.timeout = timeout
+        self.token = token
 
     def request(self, method, endpoint, payload=None, paginate=False):
         executable = shutil.which("gh")
@@ -57,6 +74,8 @@ class GitHub:
         command.append(path)
         env = {**os.environ, "GH_PROMPT_DISABLED": "1"}
         env.pop("GH_DEBUG", None)
+        if self.token:
+            env["GH_TOKEN"] = self.token
         try:
             result = subprocess.run(command, input=json_text(payload) if payload is not None else None,
                                     capture_output=True, text=True, encoding="utf-8", timeout=self.timeout,
@@ -228,10 +247,11 @@ SET_OPTION = "mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){update
 
 
 class Tracker:
-    def __init__(self, config, api=None, journal=None):
+    def __init__(self, config, api=None, journal=None, board_api=None):
         self.config = config
         self.repo = config["repository"]
         self.api = api or GitHub()
+        self.board_api = board_api or self.api
         self.journal = journal
         self.endpoint = "repos/" + self.repo + "/issues"
 
@@ -317,7 +337,7 @@ class Tracker:
         return {**result, "reconciled": False, "boards": self.place(issue, item["kind"])}
 
     def graphql(self, query, **variables):
-        response = self.api.request("POST", "graphql", {"query": query, "variables": variables})
+        response = self.board_api.request("POST", "graphql", {"query": query, "variables": variables})
         if not isinstance(response, dict) or response.get("errors") or not isinstance(response.get("data"), dict):
             raise APIError("GitHub GraphQL request failed; verify gh has the project scope")
         return response["data"]
@@ -460,7 +480,8 @@ def add_commands(commands, names=None):
 
 def execute(args):
     api = GitHub()
-    tracker = Tracker(selection(args.root), api, RequestJournal(args.root))
+    board_api = GitHub(token=project_token()) if args.command == "create" else None
+    tracker = Tracker(selection(args.root), api, RequestJournal(args.root), board_api)
     if args.command == "create":
         return tracker.create(read_input(args.input), args.request_id, args.reconcile_only)
     if args.command == "list":
