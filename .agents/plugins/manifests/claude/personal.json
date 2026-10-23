@@ -9,5 +9,6 @@
   "skills": "./skills/",
   "keywords": [
     "personal"
-  ]
+  ],
+  "hooks": "./.agents/personal/policy/current-solution/hooks/claude.json"
 }
