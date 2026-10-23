@@ -10,7 +10,22 @@
     ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
-    "hooks": [],
+    "hooks": [
+      {
+        "path": ".agents/personal/policy/current-solution/scripts/clean_cut.py",
+        "hosts": [
+          "claude",
+          "codex"
+        ]
+      },
+      {
+        "path": ".agents/personal/policy/current-solution/scripts/session-context.py",
+        "hosts": [
+          "claude",
+          "codex"
+        ]
+      }
+    ],
     "permissions": {
       "claude_allow": [],
       "codex_prefix_rules": []
