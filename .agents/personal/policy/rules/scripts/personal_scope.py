@@ -21,9 +21,9 @@ def policy(contract=CONTRACT):
 
 def repository_root(directory):
     try:
-        result = subprocess.run(["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
+        result = subprocess.run(["git", "-C", str(directory), "rev-parse", "--show-toplevel"], timeout=8,
                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     return Path(result.stdout.strip()) if result.returncode == 0 else None
 

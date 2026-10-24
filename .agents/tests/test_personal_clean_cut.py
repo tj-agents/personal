@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -137,6 +138,38 @@ class CleanCutGateTests(unittest.TestCase):
         self.assertTrue(self.gate("git commit -am move"))
         self.git("add", "-A")
         self.assertEqual("", self.gate("git commit -m move"))
+
+    def test_directory_forms_resolve_to_the_repository(self) -> None:
+        self.git("rm", "-rq", ".agents/demo/contract/old")
+        commands = [f"Set-Location -Path '{self.root}'; git commit -m x"]
+        if os.name == "nt":
+            drive, rest = str(self.root).replace("\\", "/").split(":", 1)
+            commands.append(f"cd /{drive.lower()}{rest} && git commit -m x")
+        for command in commands:
+            with self.subTest(command=command):
+                payload_cwd = self.root.parent
+                self.assertTrue(self.gate(command, workdir=str(payload_cwd)))
+
+    def test_every_commit_in_a_call_is_inspected(self) -> None:
+        self.git("rm", "-rq", ".agents/demo/contract/old")
+        self.assertTrue(self.gate("git commit-graph write && git commit -m x"))
+        self.assertTrue(
+            self.gate("git status && git commit -m prep && git commit -m x")
+        )
+
+    def test_heredoc_message_is_not_a_pathspec(self) -> None:
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        message = (
+            "git commit -m \"$(cat <<'EOF'\nDrop it\n\nCo-Authored-By: x\nEOF\n)\""
+        )
+        self.assertEqual("", self.gate(message))
+
+    def test_chained_removal_outside_skill_repositories_is_allowed(self) -> None:
+        self.git("rm", "-rq", ".agents/demo")
+        self.git(
+            "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "x"
+        )
+        self.assertEqual("", self.gate("git rm README.md && git commit -m x"))
 
     def test_an_uninspectable_commit_is_denied(self) -> None:
         self.git("rm", "-rq", ".agents/demo/contract/old")
