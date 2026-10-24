@@ -11,7 +11,7 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 
 ## Skills
 
-- Policies: `personal:current-solution`.
+- Policies: `personal:rules`.
 - Utilities: `personal:adopt`, `personal:work-item`, `personal:create-work-item`.
 - Workflow: `personal:address-work-item`.
 

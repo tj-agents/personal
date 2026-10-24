@@ -10,5 +10,5 @@
   "keywords": [
     "personal"
   ],
-  "hooks": "./.agents/personal/policy/current-solution/hooks/claude.json"
+  "hooks": "./.agents/personal/policy/rules/hooks/claude.json"
 }
