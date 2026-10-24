@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 
@@ -17,6 +18,10 @@ CHDIR = re.compile(r"""(?:^|[;&|\n]\s*)(?:cd|Set-Location|pushd|Push-Location)\s
 TARGET = re.compile(r"""-C\s+("[^"]*"|'[^']*'|\S+)""")
 NAME = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 VALUE_FLAGS = set("mFCct")
+WORKTREE_FLAGS = set("aoi")
+VALUE_OPTIONS = {"--message", "--file", "--author", "--date", "--template", "--reuse-message",
+                 "--reedit-message", "--fixup", "--squash", "--cleanup", "--trailer"}
+STAGES = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+(?P<verb>add|rm|mv)\b")
 
 
 class GitError(Exception):
@@ -25,23 +30,37 @@ class GitError(Exception):
 
 def command_text(tool_input):
     value = tool_input.get("command") or tool_input.get("cmd") or ""
-    return " ".join(value) if isinstance(value, list) else str(value)
+    return "\n".join(map(str, value)) if isinstance(value, list) else str(value)
 
 
 def unquote(value):
     return value[1:-1] if value[:1] in "\"'" and value[-1:] == value[:1] else value
 
 
-def commits_all(arguments):
-    for token in arguments.split():
-        if token == "--all":
+def tokens(arguments):
+    try:
+        return shlex.split(arguments)
+    except ValueError:
+        return arguments.split()
+
+
+def commits_worktree(arguments):
+    values = iter(tokens(arguments))
+    for token in values:
+        if token == "--" or not token.startswith("-"):
             return True
-        if token.startswith("--") or not token.startswith("-"):
+        if token.startswith("--"):
+            if token in ("--all", "--only", "--include"):
+                return True
+            if token in VALUE_OPTIONS:
+                next(values, None)
             continue
-        for flag in token[1:]:
-            if flag == "a":
+        for index, flag in enumerate(token[1:], 1):
+            if flag in WORKTREE_FLAGS:
                 return True
             if flag in VALUE_FLAGS:
+                if index == len(token) - 1:
+                    next(values, None)
                 break
     return False
 
@@ -58,7 +77,8 @@ def commit_target(command, directory):
         directory = resolve(directory, move["path"])
     for option in TARGET.finditer(match.group(1)):
         directory = resolve(directory, option.group(1))
-    return directory, commits_all(match["args"])
+    staged = {stage["verb"] for stage in STAGES.finditer(command[:match.start()])}
+    return directory, commits_worktree(match["args"]) or "add" in staged, bool(staged & {"rm", "mv"})
 
 
 def git(root, *arguments, accept=(0,)):
@@ -134,9 +154,10 @@ def removed_skills(root, include_worktree):
     if include_worktree:
         for path in paths:
             try:
-                current |= qualified(path, (root / path).read_text(encoding="utf-8-sig"), owners)
-            except FileNotFoundError:
+                body = (root / path).read_bytes().decode("utf-8-sig", errors="replace")
+            except OSError:
                 continue
+            current |= qualified(path, body, owners)
     else:
         for path, body in zip(paths, blobs(root, [f":0:{path}" for path in paths])):
             current |= qualified(path, body, owners)
@@ -156,8 +177,24 @@ def references(root, names, include_worktree):
 
 def deny(reason):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                             "permissionDecisionReason": reason}}, ensure_ascii=False))
+                                             "permissionDecisionReason": reason}}, ensure_ascii=True))
     return 0
+
+
+def check(root, include_worktree, stages_removal):
+    if stages_removal:
+        return ("Clean cut: run `git rm`/`git mv` and the commit as separate calls so the gate can see "
+                "what this commit removes.")
+    names = removed_skills(root, include_worktree)
+    hits = references(root, names, include_worktree) if names else []
+    if not hits:
+        return None
+    shown = "\n".join(f"  {hit}" for hit in hits[:40])
+    more = f"\n  ... and {len(hits) - 40} more" if len(hits) > 40 else ""
+    return (f"Clean cut: this commit removes {', '.join(sorted(names))}, but tracked files still name "
+            f"{'them' if len(names) > 1 else 'it'}:\n{shown}{more}\nMigrate each reference to the "
+            "current skill or delete it, then commit again. Generated payloads are excluded; "
+            "regenerate them with the repository's sync.")
 
 
 def main():
@@ -165,29 +202,23 @@ def main():
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return 0
-    tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
-    start = Path(tool_input.get("workdir") or data.get("cwd") or os.getcwd())
+    if not isinstance(data, dict) or not isinstance(data.get("tool_input"), dict):
+        return 0
+    tool_input = data["tool_input"]
+    start = Path(str(tool_input.get("workdir") or data.get("cwd") or os.getcwd()))
     target = commit_target(command_text(tool_input), start)
     if target is None:
         return 0
-    directory, include_worktree = target
+    directory, include_worktree, stages_removal = target
     root = repository_root(directory)
     if root is None or not selects_personal(root):
         return 0
     try:
-        names = removed_skills(root, include_worktree)
-        hits = references(root, names, include_worktree) if names else []
-    except (GitError, OSError, ValueError) as error:
-        return deny(f"Clean cut: the gate could not inspect this commit in {root} ({error}). "
-                    "Resolve the git error and commit again.")
-    if not hits:
-        return 0
-    shown = "\n".join(f"  {hit}" for hit in hits[:40])
-    more = f"\n  ... and {len(hits) - 40} more" if len(hits) > 40 else ""
-    return deny(f"Clean cut: this commit removes {', '.join(sorted(names))}, but tracked files still name "
-                f"{'them' if len(names) > 1 else 'it'}:\n{shown}{more}\nMigrate each reference to the "
-                "current skill or delete it, then commit again. Generated payloads are excluded; "
-                "regenerate them with the repository's sync.")
+        reason = check(root, include_worktree, stages_removal)
+    except Exception as error:
+        reason = (f"Clean cut: the gate could not inspect this commit in {root} ({error}). "
+                  "Resolve the error and commit again.")
+    return deny(reason) if reason else 0
 
 
 if __name__ == "__main__":

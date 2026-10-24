@@ -49,7 +49,7 @@ class CleanCutGateTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8", newline="\n")
 
-    def gate(self, command: str, **tool_input: str) -> str:
+    def gate(self, command: str | list[str], **tool_input: str) -> str:
         payload = {
             "tool_name": "Bash",
             "cwd": str(self.root),
@@ -100,6 +100,28 @@ class CleanCutGateTests(unittest.TestCase):
         name = self.root.name
         self.assertTrue(self.gate(f"cd .. && cd {name}/sub && git commit -m x"))
         self.assertTrue(self.gate("git commit -m x", workdir=str(self.root / "sub")))
+
+    def test_codex_list_command_and_pathspec_commits_are_inspected(self) -> None:
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        name = self.root.name
+        self.assertTrue(self.gate(["bash", "-lc", f"cd ../{name} && git commit -am x"]))
+        self.assertTrue(
+            self.gate('git commit -m "drop it" .agents/demo/contract/old/SKILL.md')
+        )
+
+    def test_chained_staging_is_inspected_or_split(self) -> None:
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        self.assertTrue(self.gate("git add -A && git commit -m x"))
+        self.git("checkout", "--", ".")
+        self.assertIn(
+            "separate calls",
+            self.gate("git rm -r .agents/demo/contract/old && git commit -m x"),
+        )
+
+    def test_an_uninspectable_commit_is_denied(self) -> None:
+        self.git("rm", "-rq", ".agents/demo/contract/old")
+        (self.root / ".git/index").write_bytes(b"corrupt")
+        self.assertIn("could not inspect", self.gate("git commit -m x"))
 
     def test_only_the_command_is_parsed(self) -> None:
         self.git("rm", "-rq", ".agents/demo/contract/old")
