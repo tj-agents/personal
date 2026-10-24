@@ -13,7 +13,8 @@ from personal_scope import repository_root, selects_personal
 RESERVED = {"continuation", "plugins", "tiers", "tests", "hooks"}
 GENERATED = ("plugins", ".claude/skills", ".codex/skills", ".agents/INDEX.md",
              ".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json")
-COMMIT = re.compile(r"""\bgit((?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--\S+))*)\s+commit\b(?P<args>[^;&|\n]*)""")
+GIT_OPTIONS = r"""((?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--\S+))*)"""
+COMMIT = re.compile(rf"""\bgit{GIT_OPTIONS}\s+commit\b(?P<args>[^;&|\n]*)""")
 CHDIR = re.compile(r"""(?:^|[;&|\n]\s*)(?:cd|Set-Location|pushd|Push-Location)\s+(?P<path>"[^"]*"|'[^']*'|[^\s;&|]+)""")
 TARGET = re.compile(r"""-C\s+("[^"]*"|'[^']*'|\S+)""")
 NAME = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
@@ -23,7 +24,7 @@ WORKTREE_FLAGS = set("aoi")
 SHELLS = {"bash", "sh", "zsh", "dash", "pwsh", "powershell", "cmd"}
 VALUE_OPTIONS = {"--message", "--file", "--author", "--date", "--template", "--reuse-message",
                  "--reedit-message", "--fixup", "--squash", "--cleanup", "--trailer"}
-STAGES = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+(?P<verb>add|rm|mv)\b")
+STAGES = re.compile(rf"""\bgit{GIT_OPTIONS}\s+(?P<verb>add|rm|mv)\b""")
 
 
 class GitError(Exception):
@@ -194,10 +195,12 @@ def touches_skills(root):
 
 
 def check(root, include_worktree, chained_staging):
-    if chained_staging & {"rm", "mv"} or (chained_staging and touches_skills(root)):
-        return ("Clean cut: this call stages and commits while skills under .agents have changed. Run the "
-                "staging (git add/rm/mv) as its own call, then commit, so the gate inspects exactly what "
-                "the commit contains.")
+    if chained_staging & {"rm", "mv"}:
+        return ("Clean cut: run `git rm`/`git mv` as its own call, then commit, so the gate can inspect "
+                "what the commit removes.")
+    if chained_staging and touches_skills(root):
+        return ("Clean cut: skills under .agents have changed, so run `git add` as its own call, then "
+                "commit, so the gate inspects exactly what the commit contains.")
     names = removed_skills(root, include_worktree)
     hits = references(root, names, include_worktree) if names else []
     if not hits:
