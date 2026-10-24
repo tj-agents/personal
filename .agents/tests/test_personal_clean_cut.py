@@ -109,14 +109,18 @@ class CleanCutGateTests(unittest.TestCase):
             self.gate('git commit -m "drop it" .agents/demo/contract/old/SKILL.md')
         )
 
-    def test_chained_staging_is_inspected_or_split(self) -> None:
-        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
-        self.assertTrue(self.gate("git add -A && git commit -m x"))
-        self.git("checkout", "--", ".")
-        self.assertIn(
-            "separate calls",
-            self.gate("git rm -r .agents/demo/contract/old && git commit -m x"),
-        )
+    def test_chained_staging_is_split_only_when_skills_changed(self) -> None:
+        self.write("README.md", "Edited.\n")
+        self.assertEqual("", self.gate("git add -A && git commit -m x"))
+        for command in (
+            "git add -A && git commit -m x",
+            "git rm -r .agents/demo/contract/old && git commit -m x",
+        ):
+            with self.subTest(command=command):
+                (self.root / ".agents/demo/contract/old/SKILL.md").unlink(
+                    missing_ok=True
+                )
+                self.assertIn("as its own call", self.gate(command))
 
     def test_argv_commands_and_attached_values_are_parsed(self) -> None:
         (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
@@ -127,8 +131,9 @@ class CleanCutGateTests(unittest.TestCase):
         (self.root / ".agents/demo/contract/old").rename(
             self.root / ".agents/demo/contract/moved"
         )
-        self.assertEqual("", self.gate("git add -A && git commit -m move"))
         self.assertTrue(self.gate("git commit -am move"))
+        self.git("add", "-A")
+        self.assertEqual("", self.gate("git commit -m move"))
 
     def test_an_uninspectable_commit_is_denied(self) -> None:
         self.git("rm", "-rq", ".agents/demo/contract/old")
