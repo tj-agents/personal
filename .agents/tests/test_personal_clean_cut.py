@@ -50,9 +50,11 @@ class CleanCutGateTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8", newline="\n")
 
-    def gate(self, command: str | list[str], **tool_input: str) -> str:
+    def gate(
+        self, command: str | list[str], tool: str = "Bash", **tool_input: str
+    ) -> str:
         payload = {
-            "tool_name": "Bash",
+            "tool_name": tool,
             "cwd": str(self.root),
             "tool_input": {"command": command, **tool_input},
         }
@@ -187,6 +189,17 @@ class CleanCutGateTests(unittest.TestCase):
         for command in (here_string, "git commit -m x > log.txt"):
             with self.subTest(command=command):
                 self.assertEqual("", self.gate(command))
+
+    def test_quoted_values_do_not_hide_later_commits_or_flags(self) -> None:
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        for command in (
+            "cat > notes.md <<'EOF'\nPass -m \"the message\nEOF\ngit commit -a -m x",
+            'git -c user.name="Tommy Seery" commit -a -m x',
+            'git commit -m"a; b" -a',
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(self.gate(command))
+        self.assertTrue(self.gate('git commit -m "C:\\dir\\" -a', tool="PowerShell"))
 
     def test_variable_directories_must_be_literal(self) -> None:
         self.assertIn("literal path", self.gate("cd $REPO && git commit -m x"))

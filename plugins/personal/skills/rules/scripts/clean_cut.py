@@ -15,13 +15,14 @@ from personal_scope import repository_root, selects_personal
 RESERVED = {"continuation", "plugins", "tiers", "tests", "hooks"}
 GENERATED = ("plugins", ".claude/skills", ".codex/skills", ".agents/INDEX.md",
              ".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json")
-GIT_OPTIONS = r"""((?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--\S+))*)"""
+QUOTED_WORD = r"""(?:[^\s"']*(?:"[^"]*"|'[^']*'))+[^\s"']*|\S+"""
+GIT_OPTIONS = rf"""((?:\s+(?:-C\s+(?:{QUOTED_WORD})|-c\s+(?:{QUOTED_WORD})|--[^\s=]+(?:=(?:{QUOTED_WORD}))?))*)"""
 COMMIT = re.compile(rf"""\bgit{GIT_OPTIONS}\s+commit\b(?!-)(?P<args>[^;&|\n]*)""")
 STAGES = re.compile(rf"""\bgit{GIT_OPTIONS}\s+(?P<verb>add|rm|mv)\b""")
 CHDIR = re.compile(r"""(?:^|[;&|\n]\s*)(?:cd|Set-Location|pushd|Push-Location)(?:\s+(?:-Path|-LiteralPath|/d))?\s+(?P<path>"[^"]*"|'[^']*'|[^\s;&|]+)""", re.IGNORECASE)
 TARGET = re.compile(r"""-C\s+("[^"]*"|'[^']*'|\S+)""")
 HEREDOC = re.compile(r"""(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1""")
-MESSAGE = re.compile(r"""(?<=\s)(?:-[A-Za-z]*[mF]|--message|--file)(?:=|\s+)""")
+MESSAGE = re.compile(r"""(?<=\s)(?:-[A-Za-z]*[mF]|--message|--file)(?:=|\s+|(?=["'@]))""")
 REDIRECT = re.compile(r"^\d*[<>]+&?(?P<target>.*)$")
 UNRESOLVED = re.compile(r"[$%`]")
 DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
@@ -49,15 +50,15 @@ def command_text(tool_input):
     return "\n".join(words) if shell else shlex.join(words)
 
 
-def heredoc_end(command, heredoc):
+def heredoc_span(command, heredoc):
     body = command.find("\n", heredoc.end())
     if body == -1:
-        return heredoc.end()
+        return heredoc.end(), heredoc.end(), heredoc.end()
     end = re.compile(rf"^\s*{re.escape(heredoc.group(2))}\s*$", re.MULTILINE).search(command, body + 1)
-    return end.end() if end else len(command)
+    return (body + 1, end.start(), end.end()) if end else (body + 1, len(command), len(command))
 
 
-def value_end(command, start):
+def value_end(command, start, escape):
     if command.startswith(("@'", '@"'), start):
         close = command.find(f"\n{command[start + 1]}@", start + 2)
         return close + 3 if close != -1 else len(command)
@@ -72,9 +73,9 @@ def value_end(command, start):
             char = command[index]
             heredoc = HEREDOC.match(command, index) if depth else None
             if heredoc:
-                index = heredoc_end(command, heredoc)
+                index = heredoc_span(command, heredoc)[2]
                 continue
-            if char == "\\" and command[index + 1:index + 2] in ('"', "\\", "$", "`"):
+            if char == escape and index + 1 < len(command):
                 index += 2
                 continue
             if char == "(" and command[index - 1] == "$":
@@ -89,19 +90,17 @@ def value_end(command, start):
     return match.end()
 
 
-def masked(command):
+def masked(command, escape):
     chars = list(command)
-
-    for flag in MESSAGE.finditer(command):
-        for position in range(flag.end(), value_end(command, flag.end())):
-            chars[position] = "x"
+    for heredoc in HEREDOC.finditer(command):
+        body, terminator, _ = heredoc_span(command, heredoc)
+        for position in range(body, terminator):
+            if chars[position] != "\n":
+                chars[position] = "x"
     shape = "".join(chars)
-    for heredoc in HEREDOC.finditer(shape):
-        body = shape.find("\n", heredoc.end())
-        if body != -1:
-            for position in range(body + 1, heredoc_end(shape, heredoc)):
-                if chars[position] != "\n":
-                    chars[position] = "x"
+    for flag in MESSAGE.finditer(shape):
+        for position in range(flag.end(), value_end(shape, flag.end(), escape)):
+            chars[position] = "x"
     return "".join(chars)
 
 
@@ -150,8 +149,8 @@ def resolve(directory, value):
     return directory / Path(value)
 
 
-def commit_targets(command, start):
-    shape = masked(command)
+def commit_targets(command, start, escape="\\"):
+    shape = masked(command, escape)
     targets, previous = [], 0
     for match in COMMIT.finditer(shape):
         paths = [command[move.start("path"):move.end("path")] for move in CHDIR.finditer(shape[:match.start()])]
@@ -313,7 +312,8 @@ def main():
     global deadline
     deadline = time.monotonic() + BUDGET_SECONDS
     seen = set()
-    for directory, include_worktree, chained_staging in commit_targets(command_text(tool_input), start):
+    escape = "`" if str(data.get("tool_name", "")).lower() == "powershell" else "\\"
+    for directory, include_worktree, chained_staging in commit_targets(command_text(tool_input), start, escape):
         if directory is None:
             session = repository_root(start, timeout=max(deadline - time.monotonic(), 0.1))
             if session is not None and selects_personal(session):
