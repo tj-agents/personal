@@ -15,7 +15,7 @@ from personal_scope import repository_root, selects_personal
 RESERVED = {"continuation", "plugins", "tiers", "tests", "hooks"}
 GENERATED = ("plugins", ".claude/skills", ".codex/skills", ".agents/INDEX.md",
              ".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json")
-QUOTED_WORD = r"""(?:[^\s"']|"[^"]*"|'[^']*')+"""
+QUOTED_WORD = r"""(?>(?:[^\s"']|"[^"]*"|'[^']*')+(?!\S)|\S+)"""
 GIT_OPTIONS = rf"""((?:\s+(?:-C\s+(?:{QUOTED_WORD})|-c\s+(?:{QUOTED_WORD})|--[^\s=]+(?:=(?:{QUOTED_WORD}))?))*)"""
 COMMIT = re.compile(rf"""\bgit{GIT_OPTIONS}\s+commit\b(?!-)(?P<args>[^;&|\n]*)""")
 STAGES = re.compile(rf"""\bgit{GIT_OPTIONS}\s+(?P<verb>add|rm|mv)\b""")
@@ -99,21 +99,26 @@ def value_end(command, start, escape):
 
 
 def masked(command, escape):
-    chars, index = list(command), 0
+    chars, index, bodies = list(command), 0, []
     while True:
         flag, heredoc = MESSAGE.search(command, index), HEREDOC.search(command, index)
         if flag is None and heredoc is None:
             return "".join(chars)
-        if heredoc is None or (flag is not None and flag.start() < heredoc.start()):
+        found = heredoc if flag is None or (heredoc is not None and heredoc.start() < flag.start()) else flag
+        body = next((span for span in bodies if span[0] <= found.start() < span[1]), None)
+        if body is not None:
+            index = body[1]
+        elif found is flag:
             index = value_end(command, flag.end(), escape)
             for position in range(flag.end(), index):
                 chars[position] = "x"
         else:
-            body, terminator, index = heredoc_span(command, heredoc)
-            for position in range(body, terminator):
+            start, terminator, _ = heredoc_span(command, heredoc)
+            bodies.append((start, terminator))
+            for position in range(start, terminator):
                 if chars[position] != "\n":
                     chars[position] = "x"
-            index = max(index, heredoc.end())
+            index = heredoc.end()
 
 
 def unquote(value):
