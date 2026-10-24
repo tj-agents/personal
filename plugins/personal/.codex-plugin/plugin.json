@@ -18,5 +18,5 @@
     "capabilities": [],
     "defaultPrompt": "Apply the personal project standards and selected work-item workflow."
   },
-  "hooks": "./.agents/personal/policy/current-solution/hooks/codex.json"
+  "hooks": "./.agents/personal/policy/rules/hooks/codex.json"
 }

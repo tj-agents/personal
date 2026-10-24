@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-POLICY = ROOT / ".agents/personal/policy/current-solution"
+POLICY = ROOT / ".agents/personal/policy/rules"
 GATE = POLICY / "scripts/clean_cut.py"
 CONTEXT = POLICY / "scripts/session-context.py"
 
