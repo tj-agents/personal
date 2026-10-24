@@ -19,9 +19,9 @@ def policy(contract=CONTRACT):
     return body, hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
-def repository_root(directory):
+def repository_root(directory, timeout=8):
     try:
-        result = subprocess.run(["git", "-C", str(directory), "rev-parse", "--show-toplevel"], timeout=8,
+        result = subprocess.run(["git", "-C", str(directory), "rev-parse", "--show-toplevel"], timeout=timeout,
                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
     except (OSError, subprocess.TimeoutExpired):
         return None

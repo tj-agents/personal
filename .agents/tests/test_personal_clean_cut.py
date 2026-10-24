@@ -171,6 +171,24 @@ class CleanCutGateTests(unittest.TestCase):
         self.assertTrue(self.gate("git commit -m \"$(cat <<'EOF'" + body + " -a"))
         self.assertTrue(self.gate("git commit .agents -m \"$(cat <<'EOF'" + body))
 
+    def test_shell_and_powershell_shapes_are_parsed(self) -> None:
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        here_string = "git commit -m @'\nDon't git rm this\n'@"
+        for command in (
+            'bash -c "git commit -a -m x"',
+            f'git -C "{self.root}\\" commit -a -m x',
+            "git commit -m x <<<'wip'\ngit commit -a -m y",
+            here_string + "\ngit commit -a -m y",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(self.gate(command))
+        for command in (here_string, "git commit -m x > log.txt"):
+            with self.subTest(command=command):
+                self.assertEqual("", self.gate(command))
+
+    def test_variable_directories_must_be_literal(self) -> None:
+        self.assertIn("literal path", self.gate("cd $REPO && git commit -m x"))
+
     def test_chained_removal_outside_skill_repositories_is_allowed(self) -> None:
         self.git("rm", "-rq", ".agents/demo")
         self.git(

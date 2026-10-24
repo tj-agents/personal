@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from personal_scope import selects_personal
+from personal_scope import repository_root, selects_personal
 
 RESERVED = {"continuation", "plugins", "tiers", "tests", "hooks"}
 GENERATED = ("plugins", ".claude/skills", ".codex/skills", ".agents/INDEX.md",
@@ -20,8 +20,10 @@ COMMIT = re.compile(rf"""\bgit{GIT_OPTIONS}\s+commit\b(?!-)(?P<args>[^;&|\n]*)""
 STAGES = re.compile(rf"""\bgit{GIT_OPTIONS}\s+(?P<verb>add|rm|mv)\b""")
 CHDIR = re.compile(r"""(?:^|[;&|\n]\s*)(?:cd|Set-Location|pushd|Push-Location)(?:\s+(?:-Path|-LiteralPath|/d))?\s+(?P<path>"[^"]*"|'[^']*'|[^\s;&|]+)""", re.IGNORECASE)
 TARGET = re.compile(r"""-C\s+("[^"]*"|'[^']*'|\S+)""")
-HEREDOC = re.compile(r"""<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1""")
-REDIRECT = re.compile(r"^\d*[<>]")
+HEREDOC = re.compile(r"""(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1""")
+MESSAGE = re.compile(r"""(?<=\s)(?:-[A-Za-z]*[mF]|--message|--file)(?:=|\s+)""")
+REDIRECT = re.compile(r"^\d*[<>]+&?(?P<target>.*)$")
+UNRESOLVED = re.compile(r"[$%`]")
 DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
 NAME = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 VALUE_FLAGS = set("mFCct")
@@ -31,7 +33,7 @@ SHELLS = {"bash", "sh", "zsh", "dash", "pwsh", "powershell", "cmd"}
 VALUE_OPTIONS = {"--message", "--file", "--author", "--date", "--template", "--reuse-message",
                  "--reedit-message", "--fixup", "--squash", "--cleanup", "--trailer"}
 BUDGET_SECONDS = 25
-deadline = time.monotonic() + BUDGET_SECONDS
+deadline = 0.0
 
 
 class GitError(Exception):
@@ -47,30 +49,59 @@ def command_text(tool_input):
     return "\n".join(words) if shell else shlex.join(words)
 
 
+def heredoc_end(command, heredoc):
+    body = command.find("\n", heredoc.end())
+    if body == -1:
+        return heredoc.end()
+    end = re.compile(rf"^\s*{re.escape(heredoc.group(2))}\s*$", re.MULTILINE).search(command, body + 1)
+    return end.end() if end else len(command)
+
+
+def value_end(command, start):
+    if command.startswith(("@'", '@"'), start):
+        close = command.find(f"\n{command[start + 1]}@", start + 2)
+        return close + 3 if close != -1 else len(command)
+    if command[start:start + 1] == "'":
+        index = start + 1
+        while (index := command.find("'", index)) != -1 and command[index + 1:index + 2] == "'":
+            index += 2
+        return index + 1 if index != -1 else len(command)
+    if command[start:start + 1] == '"':
+        index, depth = start + 1, 0
+        while index < len(command):
+            char = command[index]
+            heredoc = HEREDOC.match(command, index) if depth else None
+            if heredoc:
+                index = heredoc_end(command, heredoc)
+                continue
+            if char == "\\" and command[index + 1:index + 2] in ('"', "\\", "$", "`"):
+                index += 2
+                continue
+            if char == "(" and command[index - 1] == "$":
+                depth += 1
+            elif char == ")" and depth:
+                depth -= 1
+            elif char == '"' and not depth:
+                return index + 1
+            index += 1
+        return len(command)
+    match = re.compile(r"\S*").match(command, start)
+    return match.end()
+
+
 def masked(command):
     chars = list(command)
-    for heredoc in HEREDOC.finditer(command):
-        body = command.find("\n", heredoc.end())
-        if body == -1:
-            continue
-        end = re.compile(rf"^\s*{re.escape(heredoc.group(2))}\s*$", re.MULTILINE).search(command, body + 1)
-        for position in range(body + 1, end.end() if end else len(command)):
-            if chars[position] != "\n":
-                chars[position] = "x"
-    quote, index = None, 0
-    while index < len(chars):
-        char = chars[index]
-        if quote == '"' and char == "\\" and index + 1 < len(chars):
-            chars[index] = chars[index + 1] = "x"
-            index += 2
-            continue
-        if quote and char == quote:
-            quote = None
-        elif quote:
-            chars[index] = "x"
-        elif char in "\"'":
-            quote = char
-        index += 1
+
+    for flag in MESSAGE.finditer(command):
+        for position in range(flag.end(), value_end(command, flag.end())):
+            chars[position] = "x"
+    shape = "".join(chars)
+    for heredoc in HEREDOC.finditer(shape):
+        body = shape.find("\n", heredoc.end())
+        if body != -1:
+            for position in range(body + 1, heredoc_end(shape, heredoc)):
+                if chars[position] != "\n":
+                    chars[position] = "x"
     return "".join(chars)
 
 
@@ -88,7 +119,9 @@ def tokens(arguments):
 def commits_worktree(arguments):
     values = iter(tokens(arguments))
     for token in values:
-        if REDIRECT.match(token):
+        if redirect := REDIRECT.match(token):
+            if not redirect["target"]:
+                next(values, None)
             continue
         if token == "--" or not token.startswith("-"):
             return True
@@ -121,11 +154,14 @@ def commit_targets(command, start):
     shape = masked(command)
     targets, previous = [], 0
     for match in COMMIT.finditer(shape):
+        paths = [command[move.start("path"):move.end("path")] for move in CHDIR.finditer(shape[:match.start()])]
+        paths += [command[option.start(1):option.end(1)]
+                  for option in TARGET.finditer(shape, match.start(1), match.end(1))]
         directory = start
-        for move in CHDIR.finditer(shape[:match.start()]):
-            directory = resolve(directory, command[move.start("path"):move.end("path")])
-        for option in TARGET.finditer(shape, match.start(1), match.end(1)):
-            directory = resolve(directory, command[option.start(1):option.end(1)])
+        for path in paths:
+            directory = resolve(directory, path)
+        if any(UNRESOLVED.search(path) for path in paths):
+            directory = None
         staged = frozenset(stage["verb"] for stage in STAGES.finditer(shape[previous:match.start()]))
         targets.append((directory, commits_worktree(match["args"]), staged))
         previous = match.end()
@@ -145,11 +181,6 @@ def git(root, *arguments, accept=(0,), stdin=None):
 
 def text(root, *arguments, accept=(0,)):
     return git(root, *arguments, accept=accept).decode("utf-8", "replace")
-
-
-def toplevel(directory):
-    root = text(directory, "rev-parse", "--show-toplevel", accept=(0, 128)).strip()
-    return Path(root) if root else None
 
 
 def packages(root):
@@ -279,15 +310,23 @@ def main():
         return 0
     tool_input = data["tool_input"]
     start = Path(str(tool_input.get("workdir") or data.get("cwd") or os.getcwd()))
+    global deadline
+    deadline = time.monotonic() + BUDGET_SECONDS
     seen = set()
     for directory, include_worktree, chained_staging in commit_targets(command_text(tool_input), start):
+        if directory is None:
+            session = repository_root(start, timeout=max(deadline - time.monotonic(), 0.1))
+            if session is not None and selects_personal(session):
+                return deny("Clean cut: this commit's directory comes from a variable or substitution. Use a "
+                            "literal path for cd or git -C so the gate can inspect the commit.")
+            continue
         if not directory.is_dir():
             continue
+        root = repository_root(directory, timeout=max(deadline - time.monotonic(), 0.1))
+        if root is None or not selects_personal(root) or (root, include_worktree, chained_staging) in seen:
+            continue
+        seen.add((root, include_worktree, chained_staging))
         try:
-            root = toplevel(directory)
-            if root is None or not selects_personal(root) or (root, include_worktree, chained_staging) in seen:
-                continue
-            seen.add((root, include_worktree, chained_staging))
             reason = check(root, include_worktree, chained_staging)
         except Exception as error:
             reason = (f"Clean cut: the gate could not inspect this commit from {directory} ({error}). "
