@@ -118,6 +118,17 @@ class CleanCutGateTests(unittest.TestCase):
             self.gate("git rm -r .agents/demo/contract/old && git commit -m x"),
         )
 
+    def test_argv_commands_and_attached_values_are_parsed(self) -> None:
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        self.assertTrue(self.gate(["git", "commit", "-am", "x"]))
+        self.assertEqual("", self.gate("git commit -uno -m x"))
+
+    def test_moving_a_skill_without_renaming_it_is_allowed(self) -> None:
+        (self.root / ".agents/demo/contract/old").rename(
+            self.root / ".agents/demo/contract/moved"
+        )
+        self.assertEqual("", self.gate("git add -A && git commit -m move"))
+
     def test_an_uninspectable_commit_is_denied(self) -> None:
         self.git("rm", "-rq", ".agents/demo/contract/old")
         (self.root / ".git/index").write_bytes(b"corrupt")
