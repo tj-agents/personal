@@ -109,18 +109,19 @@ class CleanCutGateTests(unittest.TestCase):
             self.gate('git commit -m "drop it" .agents/demo/contract/old/SKILL.md')
         )
 
-    def test_chained_staging_is_split_only_when_skills_changed(self) -> None:
+    def test_chained_removal_always_splits_and_chained_add_splits_on_skill_changes(
+        self,
+    ) -> None:
         self.write("README.md", "Edited.\n")
         self.assertEqual("", self.gate("git add -A && git commit -m x"))
         for command in (
-            "git add -A && git commit -m x",
             "git rm -r .agents/demo/contract/old && git commit -m x",
+            "git mv .agents/demo/contract/old .agents/demo/new && git commit -m x",
         ):
             with self.subTest(command=command):
-                (self.root / ".agents/demo/contract/old/SKILL.md").unlink(
-                    missing_ok=True
-                )
                 self.assertIn("as its own call", self.gate(command))
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        self.assertIn("as its own call", self.gate("git add -A && git commit -m x"))
 
     def test_argv_commands_and_attached_values_are_parsed(self) -> None:
         (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
