@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plugin": "tj-agents/personal",
   "source_roots": [
-    ".agents/personal/policy/current-solution",
+    ".agents/personal/policy/rules",
     ".agents/personal/utility/adopt",
     ".agents/personal/utility/bot-identity",
     ".agents/personal/utility/create/work-item",
@@ -10,7 +10,22 @@
     ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
-    "hooks": [],
+    "hooks": [
+      {
+        "path": ".agents/personal/policy/rules/scripts/clean_cut.py",
+        "hosts": [
+          "claude",
+          "codex"
+        ]
+      },
+      {
+        "path": ".agents/personal/policy/rules/scripts/session-context.py",
+        "hosts": [
+          "claude",
+          "codex"
+        ]
+      }
+    ],
     "permissions": {
       "claude_allow": [],
       "codex_prefix_rules": []

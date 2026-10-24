@@ -10,6 +10,7 @@
   "keywords": [
     "personal"
   ],
+  "hooks": "./.agents/personal/policy/rules/hooks/claude.json",
   "dependencies": [
     "base@tj-agents",
     "engineering@tj-agents",

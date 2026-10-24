@@ -12,7 +12,7 @@ EXPECTED_SKILLS = {
     "address-work-item",
     "bot-identity",
     "create-work-item",
-    "current-solution",
+    "rules",
     "work-item",
 }
 EXTERNAL_SKILLS = {
