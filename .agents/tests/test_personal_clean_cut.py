@@ -202,6 +202,10 @@ class CleanCutGateTests(unittest.TestCase):
                 self.assertTrue(self.gate(command))
         self.assertTrue(self.gate('git commit -m "C:\\dir\\" -a', tool="PowerShell"))
         self.assertTrue(self.gate('git commit -m "use <<EOF here"\ngit commit -a -m y'))
+        self.assertTrue(
+            self.gate('cat <<EOF > out && git commit -m "fix; cleanup" -a\nbody\nEOF')
+        )
+        self.assertTrue(self.gate("git -c user.name=O\\'Brien commit -a -m x"))
         if os.name == "nt":
             self.assertTrue(
                 self.gate('git commit -m "C:\\dir\\" -a', tool="exec_command")
