@@ -49,55 +49,84 @@ class CleanCutGateTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8", newline="\n")
 
-    def gate(self, command: str) -> subprocess.CompletedProcess[str]:
+    def gate(self, command: str, **tool_input: str) -> str:
         payload = {
             "tool_name": "Bash",
             "cwd": str(self.root),
-            "tool_input": {"command": command},
+            "tool_input": {"command": command, **tool_input},
         }
-        return subprocess.run(
+        result = subprocess.run(
             [sys.executable, "-B", str(GATE)],
             input=json.dumps(payload),
             capture_output=True,
             text=True,
-            check=False,
+            check=True,
         )
+        if not result.stdout:
+            return ""
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertEqual("deny", output["permissionDecision"])
+        reason: str = output["permissionDecisionReason"]
+        return reason
 
     def test_deleting_a_skill_still_named_elsewhere_blocks_the_commit(self) -> None:
         self.git("rm", "-rq", ".agents/demo/contract/old")
-        result = self.gate('git commit -m "Remove old"')
-        self.assertEqual(2, result.returncode)
-        self.assertIn("README.md:1:", result.stderr)
-        self.assertNotIn("plugins/demo", result.stderr)
+        reason = self.gate('git commit -m "Remove old"')
+        self.assertIn("README.md:1:", reason)
+        self.assertNotIn("plugins/demo", reason)
 
     def test_renaming_a_skill_in_place_blocks_until_references_migrate(self) -> None:
         self.write(".agents/demo/contract/old/SKILL.md", skill("new"))
         self.git("add", "-A")
-        self.assertEqual(2, self.gate("git commit -m rename").returncode)
+        self.assertTrue(self.gate("git commit -m rename"))
         self.write("README.md", "Use `demo:new` and `demo:old-extra`.\n")
         self.git("add", "-A")
-        self.assertEqual(0, self.gate("git commit -m rename").returncode)
+        self.assertEqual("", self.gate("git commit -m rename"))
 
     def test_commit_all_checks_unstaged_removal(self) -> None:
         (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
-        self.assertEqual(0, self.gate("git commit -m staged-only").returncode)
-        self.assertEqual(2, self.gate("git commit -am all").returncode)
+        self.assertEqual("", self.gate("git commit -m staged-only"))
+        for command in (
+            "git commit -am all",
+            'git commit -m "all of it" -a',
+            "git commit -m x --all",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(self.gate(command))
+
+    def test_commit_directory_follows_chained_moves_and_workdir(self) -> None:
+        (self.root / "sub").mkdir()
+        self.git("rm", "-rq", ".agents/demo/contract/old")
+        name = self.root.name
+        self.assertTrue(self.gate(f"cd .. && cd {name}/sub && git commit -m x"))
+        self.assertTrue(self.gate("git commit -m x", workdir=str(self.root / "sub")))
+
+    def test_only_the_command_is_parsed(self) -> None:
+        self.git("rm", "-rq", ".agents/demo/contract/old")
+        self.assertEqual(
+            "",
+            self.gate("git grep demo:old", description="Find refs before git commit"),
+        )
 
     def test_projects_without_personal_selection_are_not_gated(self) -> None:
         self.write(".agents/plugins.json", json.dumps({"plugins": []}))
         self.git("rm", "-rq", ".agents/demo/contract/old")
-        self.assertEqual(0, self.gate("git commit -m x").returncode)
+        self.assertEqual("", self.gate("git commit -m x"))
 
 
 class SessionContextTests(unittest.TestCase):
-    def test_emits_the_policy_body_as_session_start_context(self) -> None:
+    def context(self, cwd: Path) -> str:
         result = subprocess.run(
             [sys.executable, "-B", str(CONTEXT)],
+            input=json.dumps({"cwd": str(cwd)}),
             capture_output=True,
             text=True,
             check=True,
         )
-        output = json.loads(result.stdout)["hookSpecificOutput"]
+        return result.stdout
+
+    def test_emits_the_policy_body_in_a_selecting_project(self) -> None:
+        output = json.loads(self.context(ROOT))["hookSpecificOutput"]
         self.assertEqual("SessionStart", output["hookEventName"])
         body = (
             (POLICY / "SKILL.md")
@@ -106,3 +135,8 @@ class SessionContextTests(unittest.TestCase):
             .strip()
         )
         self.assertIn(body, output["additionalContext"])
+
+    def test_is_silent_outside_a_selecting_project(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            self.assertEqual("", self.context(Path(directory)))

@@ -1,32 +1,29 @@
-"""Emit the packaged personal ground rules as SessionStart context without changing caller state."""
+"""Emit the packaged personal rules as SessionStart context in a project that selects personal."""
 
-import hashlib
 import json
-from pathlib import Path
+import os
 import sys
+
+from personal_scope import CONTRACT, policy, repository_root, selects_personal
 
 IDENTITY = "personal:rules"
 
 
 def main():
-    if sys.version_info < (3, 9):
-        print(f"{IDENTITY}: Python 3.9 or newer is required.", file=sys.stderr)
-        return 1
-
-    contract = Path(__file__).resolve().parent.parent / "SKILL.md"
     try:
-        source = contract.read_text(encoding="utf-8-sig")
-        if not source.startswith("---\n"):
-            raise ValueError("missing frontmatter")
-        _, body = source.removeprefix("---\n").split("\n---\n", 1)
-        if not body.strip():
-            raise ValueError("missing contract body")
-    except (OSError, UnicodeError, ValueError) as error:
-        print(f"{IDENTITY}: cannot read contract at {contract}: {error}", file=sys.stderr)
+        payload = json.loads(sys.stdin.read() or "{}") if not sys.stdin.isatty() else {}
+    except ValueError:
+        payload = {}
+    cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    root = repository_root(cwd or os.getcwd())
+    if root is None or not selects_personal(root):
+        return 0
+    try:
+        body, digest = policy()
+    except (OSError, UnicodeError, ValueError, IndexError) as error:
+        print(f"{IDENTITY}: cannot read contract at {CONTRACT}: {error}", file=sys.stderr)
         return 1
-
-    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    context = f"{IDENTITY} (source SHA-256 {digest})\nSource: {contract}\n\n{body.strip()}"
+    context = f"{IDENTITY} (source SHA-256 {digest})\nSource: {CONTRACT}\n\n{body}"
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SessionStart", "additionalContext": context
     }}, ensure_ascii=True))
