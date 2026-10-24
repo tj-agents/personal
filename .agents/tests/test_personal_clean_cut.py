@@ -128,6 +128,7 @@ class CleanCutGateTests(unittest.TestCase):
             self.root / ".agents/demo/contract/moved"
         )
         self.assertEqual("", self.gate("git add -A && git commit -m move"))
+        self.assertTrue(self.gate("git commit -am move"))
 
     def test_an_uninspectable_commit_is_denied(self) -> None:
         self.git("rm", "-rq", ".agents/demo/contract/old")

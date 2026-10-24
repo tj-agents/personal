@@ -23,7 +23,7 @@ WORKTREE_FLAGS = set("aoi")
 SHELLS = {"bash", "sh", "zsh", "dash", "pwsh", "powershell", "cmd"}
 VALUE_OPTIONS = {"--message", "--file", "--author", "--date", "--template", "--reuse-message",
                  "--reedit-message", "--fixup", "--squash", "--cleanup", "--trailer"}
-STAGES = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+(?P<verb>add|rm|mv)\b")
+STAGES = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+(?P<verb>add|rm|mv)\b(?P<args>[^;&|\n]*)")
 
 
 class GitError(Exception):
@@ -85,8 +85,15 @@ def commit_target(command, directory):
         directory = resolve(directory, move["path"])
     for option in TARGET.finditer(match.group(1)):
         directory = resolve(directory, option.group(1))
-    staged = {stage["verb"] for stage in STAGES.finditer(command[:match.start()])}
-    return directory, commits_worktree(match["args"]) or "add" in staged, bool(staged & {"rm", "mv"})
+    stages = list(STAGES.finditer(command[:match.start()]))
+    verbs = {stage["verb"] for stage in stages}
+    if any(stage["verb"] == "add" and set(tokens(stage["args"])) & {"-A", "--all", "."} for stage in stages):
+        scope = "all"
+    elif "add" in verbs or commits_worktree(match["args"]):
+        scope = "tracked"
+    else:
+        scope = "index"
+    return directory, scope, bool(verbs & {"rm", "mv"})
 
 
 def git(root, *arguments, accept=(0,)):
@@ -144,10 +151,11 @@ def blobs(root, revisions):
     return bodies
 
 
-def removed_skills(root, include_worktree):
+def removed_skills(root, scope):
     if not git(root, "rev-parse", "--verify", "--quiet", "HEAD", accept=(0, 1)).strip():
         return set()
     owners = packages(root)
+    include_worktree = scope != "index"
     changed = git(root, "diff", "--cached", "--no-renames", "--name-only", "--diff-filter=DM", "HEAD").split("\n")
     if include_worktree:
         changed += git(root, "diff", "--no-renames", "--name-only", "--diff-filter=DM", "HEAD").split("\n")
@@ -157,7 +165,7 @@ def removed_skills(root, include_worktree):
     old = set()
     for path, body in zip(candidates, blobs(root, [f"HEAD:{path}" for path in candidates])):
         old |= qualified(path, body, owners)
-    listing = ["ls-files", "--cached", *(["--others", "--exclude-standard"] if include_worktree else []), "--", ".agents"]
+    listing = ["ls-files", "--cached", *(["--others", "--exclude-standard"] if scope == "all" else []), "--", ".agents"]
     paths = sorted({path for path in git(root, *listing).split("\n") if skill_path(path)})
     current = set()
     if include_worktree:
@@ -173,8 +181,8 @@ def removed_skills(root, include_worktree):
     return old - current
 
 
-def references(root, names, include_worktree):
-    arguments = ["grep", "-n", "-I", "-F", *([] if include_worktree else ["--cached"])]
+def references(root, names, scope):
+    arguments = ["grep", "-n", "-I", "-F", *{"index": ["--cached"], "tracked": [], "all": ["--untracked"]}[scope]]
     for name in sorted(names):
         arguments += ["-e", name]
     arguments += ["--", ".", *(f":(exclude){path}" for path in GENERATED)]
@@ -190,12 +198,12 @@ def deny(reason):
     return 0
 
 
-def check(root, include_worktree, stages_removal):
+def check(root, scope, stages_removal):
     if stages_removal:
         return ("Clean cut: run `git rm`/`git mv` and the commit as separate calls so the gate can see "
                 "what this commit removes.")
-    names = removed_skills(root, include_worktree)
-    hits = references(root, names, include_worktree) if names else []
+    names = removed_skills(root, scope)
+    hits = references(root, names, scope) if names else []
     if not hits:
         return None
     shown = "\n".join(f"  {hit}" for hit in hits[:40])
@@ -218,12 +226,12 @@ def main():
     target = commit_target(command_text(tool_input), start)
     if target is None:
         return 0
-    directory, include_worktree, stages_removal = target
+    directory, scope, stages_removal = target
     root = repository_root(directory)
     if root is None or not selects_personal(root):
         return 0
     try:
-        reason = check(root, include_worktree, stages_removal)
+        reason = check(root, scope, stages_removal)
     except Exception as error:
         reason = (f"Clean cut: the gate could not inspect this commit in {root} ({error}). "
                   "Resolve the error and commit again.")
