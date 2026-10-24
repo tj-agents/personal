@@ -12,7 +12,7 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 ## Skills
 
 - Policies: `personal:rules`.
-- Utilities: `personal:adopt`, `personal:work-item`, `personal:create-work-item`.
+- Utilities: `personal:use`, `personal:work-item`, `personal:create-work-item`.
 - Workflow: `personal:address-work-item`.
 
 ## Adopt a personal project
@@ -20,7 +20,7 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 Explicitly select `personal@tj-agents` through Core's `machine:plugin-selection` tool, then run the
 shipped adoption utility. Its `--selection-tool` option performs both steps together. Use `--mode preview`
 to inspect changes, `--mode write` to apply them and `--mode check` in CI. See the
-[adoption procedure](.agents/personal/utility/adopt/SKILL.md) for the complete command.
+[adoption procedure](.agents/personal/utility/use/SKILL.md) for the complete command.
 
 The mandatory policy is generated into AGENTS.md from one authored body with a source hash. Adoption merges
 distinct CLAUDE.md instructions into AGENTS.md and leaves CLAUDE.md as its exact import pointer. This uses
