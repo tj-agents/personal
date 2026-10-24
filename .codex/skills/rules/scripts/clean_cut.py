@@ -23,7 +23,7 @@ WORKTREE_FLAGS = set("aoi")
 SHELLS = {"bash", "sh", "zsh", "dash", "pwsh", "powershell", "cmd"}
 VALUE_OPTIONS = {"--message", "--file", "--author", "--date", "--template", "--reuse-message",
                  "--reedit-message", "--fixup", "--squash", "--cleanup", "--trailer"}
-STAGES = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+(?:add|rm|mv)\b")
+STAGES = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+(?P<verb>add|rm|mv)\b")
 
 
 class GitError(Exception):
@@ -85,7 +85,7 @@ def commit_target(command, directory):
         directory = resolve(directory, move["path"])
     for option in TARGET.finditer(match.group(1)):
         directory = resolve(directory, option.group(1))
-    return directory, commits_worktree(match["args"]), STAGES.search(command[:match.start()]) is not None
+    return directory, commits_worktree(match["args"]), {stage["verb"] for stage in STAGES.finditer(command[:match.start()])}
 
 
 def git(root, *arguments, accept=(0,)):
@@ -194,7 +194,7 @@ def touches_skills(root):
 
 
 def check(root, include_worktree, chained_staging):
-    if chained_staging and touches_skills(root):
+    if chained_staging & {"rm", "mv"} or (chained_staging and touches_skills(root)):
         return ("Clean cut: this call stages and commits while skills under .agents have changed. Run the "
                 "staging (git add/rm/mv) as its own call, then commit, so the gate inspects exactly what "
                 "the commit contains.")
