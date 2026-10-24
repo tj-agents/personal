@@ -31,7 +31,7 @@ This is native instruction delivery, not a claim of plugin hook execution or tru
 
 Ask Tommy once whether agents may merge without his approval once checks pass, and add
 `--agents-may-merge true|false`. Adoption writes `.github/merge-policy.json`, which
-`github-actions:merge-policy` enforces, or changes only that flag; without the answer it leaves the
+the GitHub Actions merge-policy utility enforces, or changes only that flag; without the answer it leaves the
 policy undeclared and says so.
 
 
