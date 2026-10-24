@@ -117,6 +117,8 @@ class CleanCutGateTests(unittest.TestCase):
         for command in (
             "git rm -r .agents/demo/contract/old && git commit -m x",
             "git mv .agents/demo/contract/old .agents/demo/new && git commit -m x",
+            "git -c core.quotepath=off rm -r .agents/demo && git commit -m x",
+            "git --no-pager rm -r .agents/demo && git commit -m x",
         ):
             with self.subTest(command=command):
                 self.assertIn("as its own call", self.gate(command))
