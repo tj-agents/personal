@@ -14,8 +14,10 @@ RESERVED = {"continuation", "plugins", "tiers", "tests", "hooks"}
 GENERATED = ("plugins", ".claude/skills", ".codex/skills", ".agents/INDEX.md",
              ".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json")
 GIT_OPTIONS = r"""((?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--\S+))*)"""
-COMMIT = re.compile(rf"""\bgit{GIT_OPTIONS}\s+commit\b(?P<args>[^;&|\n]*)""")
-CHDIR = re.compile(r"""(?:^|[;&|\n]\s*)(?:cd|Set-Location|pushd|Push-Location)\s+(?P<path>"[^"]*"|'[^']*'|[^\s;&|]+)""")
+COMMIT = re.compile(rf"""\bgit{GIT_OPTIONS}\s+commit\b(?!-)(?P<args>[^;&|\n]*)""")
+CHDIR = re.compile(r"""(?:^|[;&|\n]\s*)(?:cd|Set-Location|pushd|Push-Location)(?:\s+(?:-Path|-LiteralPath|/d))?\s+(?P<path>"[^"]*"|'[^']*'|[^\s;&|]+)""", re.IGNORECASE)
+DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
+GIT_TIMEOUT = 8
 TARGET = re.compile(r"""-C\s+("[^"]*"|'[^']*'|\S+)""")
 NAME = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 VALUE_FLAGS = set("mFCct")
@@ -46,16 +48,19 @@ def unquote(value):
 
 def tokens(arguments):
     try:
-        return shlex.split(arguments)
+        return shlex.split(arguments), True
     except ValueError:
-        return arguments.split()
+        return arguments.split(), False
 
 
 def commits_worktree(arguments):
-    values = iter(tokens(arguments))
+    words, exact = tokens(arguments)
+    values = iter(words)
     for token in values:
         if token == "--" or not token.startswith("-"):
-            return True
+            if exact:
+                return True
+            continue
         if token.startswith("--"):
             if token in ("--all", "--only", "--include"):
                 return True
@@ -75,22 +80,28 @@ def commits_worktree(arguments):
 
 
 def resolve(directory, value):
-    return directory / Path(os.path.expanduser(unquote(value)))
+    value = os.path.expanduser(unquote(value))
+    if os.name == "nt":
+        value = DRIVE.sub(lambda drive: f"{drive.group(1)}:", value)
+    return directory / Path(value)
 
 
-def commit_target(command, directory):
-    match = COMMIT.search(command)
-    if match is None:
-        return None
-    for move in CHDIR.finditer(command[:match.start()]):
-        directory = resolve(directory, move["path"])
-    for option in TARGET.finditer(match.group(1)):
-        directory = resolve(directory, option.group(1))
-    return directory, commits_worktree(match["args"]), {stage["verb"] for stage in STAGES.finditer(command[:match.start()])}
+def commit_targets(command, start):
+    targets, previous = [], 0
+    for match in COMMIT.finditer(command):
+        directory = start
+        for move in CHDIR.finditer(command[:match.start()]):
+            directory = resolve(directory, move["path"])
+        for option in TARGET.finditer(match.group(1)):
+            directory = resolve(directory, option.group(1))
+        staged = {stage["verb"] for stage in STAGES.finditer(command[previous:match.start()])}
+        targets.append((directory, commits_worktree(match["args"]), staged))
+        previous = match.end()
+    return targets
 
 
 def git(root, *arguments, accept=(0,)):
-    result = subprocess.run(["git", "-C", str(root), *arguments],
+    result = subprocess.run(["git", "-C", str(root), *arguments], timeout=GIT_TIMEOUT,
                             capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode not in accept:
         raise GitError(f"git {arguments[0]} failed: {result.stderr.strip()[:300]}")
@@ -126,7 +137,7 @@ def qualified(path, body, owners):
 def blobs(root, revisions):
     if not revisions:
         return []
-    result = subprocess.run(["git", "-C", str(root), "cat-file", "--batch"], capture_output=True,
+    result = subprocess.run(["git", "-C", str(root), "cat-file", "--batch"], capture_output=True, timeout=GIT_TIMEOUT,
                             input="".join(f"{revision}\n" for revision in revisions).encode("utf-8"))
     if result.returncode:
         raise GitError(f"git cat-file failed: {result.stderr.decode('utf-8', 'replace').strip()[:300]}")
@@ -194,8 +205,12 @@ def touches_skills(root):
     return any(skill_path(line[3:].split(" -> ")[-1].strip('"')) for line in status.splitlines())
 
 
+def has_skills(root):
+    return any(skill_path(path) for path in git(root, "ls-files", "--", ".agents").split("\n"))
+
+
 def check(root, include_worktree, chained_staging):
-    if chained_staging & {"rm", "mv"}:
+    if chained_staging & {"rm", "mv"} and has_skills(root):
         return ("Clean cut: run `git rm`/`git mv` as its own call, then commit, so the gate can inspect "
                 "what the commit removes.")
     if chained_staging and touches_skills(root):
@@ -222,19 +237,18 @@ def main():
         return 0
     tool_input = data["tool_input"]
     start = Path(str(tool_input.get("workdir") or data.get("cwd") or os.getcwd()))
-    target = commit_target(command_text(tool_input), start)
-    if target is None:
-        return 0
-    directory, include_worktree, chained_staging = target
-    root = repository_root(directory)
-    if root is None or not selects_personal(root):
-        return 0
-    try:
-        reason = check(root, include_worktree, chained_staging)
-    except Exception as error:
-        reason = (f"Clean cut: the gate could not inspect this commit in {root} ({error}). "
-                  "Resolve the error and commit again.")
-    return deny(reason) if reason else 0
+    for directory, include_worktree, chained_staging in commit_targets(command_text(tool_input), start):
+        root = repository_root(directory if directory.is_dir() else start)
+        if root is None or not selects_personal(root):
+            continue
+        try:
+            reason = check(root, include_worktree, chained_staging)
+        except Exception as error:
+            reason = (f"Clean cut: the gate could not inspect this commit in {root} ({error}). "
+                      "Resolve the error and commit again.")
+        if reason:
+            return deny(reason)
+    return 0
 
 
 if __name__ == "__main__":

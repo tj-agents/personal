@@ -51,8 +51,8 @@ to the change, with tests that prove behavior rather than restate the implementa
 
 ## 3. Plans
 
-Track work as a GitHub issue or project item. A committed `plans/` document is the detailed
-implementation plan behind one such item and links to it.
+Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
+implementation plan behind one such item and links to it; working plans stay machine-local.
 
 This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
 its marked native instruction block from this body and checks it for drift. A selected plugin or an

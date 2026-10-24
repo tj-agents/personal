@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:b1e069d9eab6788abb8783912f853d5c289a8004f8b4da10b69aa1f8316ab1c3 -->
+<!-- BEGIN personal:rules sha256:f878befe2d5e1e69bc6e5cc2ed10c6e684ce894987ff4a9861c7cc2b802fe802 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -61,8 +61,8 @@ to the change, with tests that prove behavior rather than restate the implementa
 
 ## 3. Plans
 
-Track work as a GitHub issue or project item. A committed `plans/` document is the detailed
-implementation plan behind one such item and links to it.
+Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
+implementation plan behind one such item and links to it; working plans stay machine-local.
 
 This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
 its marked native instruction block from this body and checks it for drift. A selected plugin or an
