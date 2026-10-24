@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -200,6 +201,17 @@ class CleanCutGateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(self.gate(command))
         self.assertTrue(self.gate('git commit -m "C:\\dir\\" -a', tool="PowerShell"))
+        self.assertTrue(self.gate('git commit -m "use <<EOF here"\ngit commit -a -m y'))
+        if os.name == "nt":
+            self.assertTrue(
+                self.gate('git commit -m "C:\\dir\\" -a', tool="exec_command")
+            )
+
+    def test_many_quoted_options_parse_quickly(self) -> None:
+        options = ' -c a="b"' * 40
+        started = time.monotonic()
+        self.assertEqual("", self.gate(f"git{options} status"))
+        self.assertLess(time.monotonic() - started, 5)
 
     def test_variable_directories_must_be_literal(self) -> None:
         self.assertIn("literal path", self.gate("cd $REPO && git commit -m x"))

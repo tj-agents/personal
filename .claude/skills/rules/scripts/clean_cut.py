@@ -15,7 +15,7 @@ from personal_scope import repository_root, selects_personal
 RESERVED = {"continuation", "plugins", "tiers", "tests", "hooks"}
 GENERATED = ("plugins", ".claude/skills", ".codex/skills", ".agents/INDEX.md",
              ".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json")
-QUOTED_WORD = r"""(?:[^\s"']*(?:"[^"]*"|'[^']*'))+[^\s"']*|\S+"""
+QUOTED_WORD = r"""(?:[^\s"']|"[^"]*"|'[^']*')+"""
 GIT_OPTIONS = rf"""((?:\s+(?:-C\s+(?:{QUOTED_WORD})|-c\s+(?:{QUOTED_WORD})|--[^\s=]+(?:=(?:{QUOTED_WORD}))?))*)"""
 COMMIT = re.compile(rf"""\bgit{GIT_OPTIONS}\s+commit\b(?!-)(?P<args>[^;&|\n]*)""")
 STAGES = re.compile(rf"""\bgit{GIT_OPTIONS}\s+(?P<verb>add|rm|mv)\b""")
@@ -39,6 +39,14 @@ deadline = 0.0
 
 class GitError(Exception):
     pass
+
+
+def uses_powershell(data, tool_input):
+    tool = str(data.get("tool_name", "")).lower()
+    value = tool_input.get("command") or tool_input.get("cmd")
+    if isinstance(value, list) and value:
+        return Path(str(value[0])).stem.lower() in ("pwsh", "powershell")
+    return tool == "powershell" or (os.name == "nt" and tool != "bash")
 
 
 def command_text(tool_input):
@@ -91,17 +99,21 @@ def value_end(command, start, escape):
 
 
 def masked(command, escape):
-    chars = list(command)
-    for heredoc in HEREDOC.finditer(command):
-        body, terminator, _ = heredoc_span(command, heredoc)
-        for position in range(body, terminator):
-            if chars[position] != "\n":
+    chars, index = list(command), 0
+    while True:
+        flag, heredoc = MESSAGE.search(command, index), HEREDOC.search(command, index)
+        if flag is None and heredoc is None:
+            return "".join(chars)
+        if heredoc is None or (flag is not None and flag.start() < heredoc.start()):
+            index = value_end(command, flag.end(), escape)
+            for position in range(flag.end(), index):
                 chars[position] = "x"
-    shape = "".join(chars)
-    for flag in MESSAGE.finditer(shape):
-        for position in range(flag.end(), value_end(shape, flag.end(), escape)):
-            chars[position] = "x"
-    return "".join(chars)
+        else:
+            body, terminator, index = heredoc_span(command, heredoc)
+            for position in range(body, terminator):
+                if chars[position] != "\n":
+                    chars[position] = "x"
+            index = max(index, heredoc.end())
 
 
 def unquote(value):
@@ -312,7 +324,7 @@ def main():
     global deadline
     deadline = time.monotonic() + BUDGET_SECONDS
     seen = set()
-    escape = "`" if str(data.get("tool_name", "")).lower() == "powershell" else "\\"
+    escape = "`" if uses_powershell(data, tool_input) else "\\"
     for directory, include_worktree, chained_staging in commit_targets(command_text(tool_input), start, escape):
         if directory is None:
             session = repository_root(start, timeout=max(deadline - time.monotonic(), 0.1))
