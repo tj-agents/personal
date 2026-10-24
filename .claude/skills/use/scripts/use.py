@@ -124,7 +124,7 @@ def ci_caller_removal(root: Path) -> Path | None:
         ) from error
     current = text(path)
     if not current.startswith(CI_CALLER_MARKER):
-        raise ValueError(f"{CI_CALLER}: refusing to remove unrelated workflow; delete the generated personal:adopt CI caller manually")
+        raise ValueError(f"{CI_CALLER}: refusing to remove unrelated workflow; delete the generated personal policy CI caller manually")
     return path
 
 

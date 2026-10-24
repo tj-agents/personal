@@ -1,6 +1,6 @@
 ---
-name: adopt
-description: Adopt or check mandatory personal-project policy through explicit selection and native Claude/Codex instructions.
+name: use
+description: Make a repository one of Tommy's personal projects - select personal@tj-agents, generate its native policy instructions and declare who may merge - or check that it still conforms. Use when scaffolding or setting up a personal project, or when Tommy says to use personal in a repository.
 kind: utility
 domain: personal
 profile: core
@@ -9,12 +9,12 @@ requires: python, machine
 provenance: house
 ---
 
-# Adopt personal project policy
+# Use personal project policy
 
 Use only for a project Tommy explicitly identifies as personal. Never infer scope from its location or
 from every repository on a machine. Preserve unrelated work and use the project's owning delivery branch.
 
-Run `python <skill-directory>/scripts/adopt.py --root <project> --mode write --selection-tool <machine-plugin-selection>/scripts/adopt_plugins.py`.
+Run `python <skill-directory>/scripts/use.py --root <project> --mode write --selection-tool <machine-plugin-selection>/scripts/adopt_plugins.py`.
 Resolve the selection tool from the installed `machine:plugin-selection` skill, which ships it; do not
 assemble or maintain another copy. Preview with `--mode preview`, and use the identical command with
 `--mode check` in CI. Use `python3` on Linux/macOS. Requires Python 3.11 or newer.
@@ -37,7 +37,7 @@ policy undeclared and says so.
 
 ```powershell
 # Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:
-python -B .agents/personal/utility/adopt/scripts/adopt.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/core/.agents/machine/utility/plugin-selection/scripts/adopt_plugins.py
+python -B .agents/personal/utility/use/scripts/use.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/core/.agents/machine/utility/plugin-selection/scripts/adopt_plugins.py
 # Review the preview, then use --mode write; CI uses --mode check.
 # Linux/macOS use python3 and their checkout paths with the same arguments.
 ```
