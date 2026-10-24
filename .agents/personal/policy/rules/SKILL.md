@@ -13,8 +13,8 @@ provenance: house
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
 project's personal scope; a home directory, author name or employer association never establishes it, and
-employer projects stay outside this profile. Before planning or starting work, confirm the task is clear
-against each rule below.
+employer projects stay outside this profile unless the user explicitly extends that scope. Before planning
+or starting work, confirm the task is clear against each rule below.
 
 ## 1. Clean cut
 
@@ -54,5 +54,6 @@ to the change, with tests that prove behavior rather than restate the implementa
 Track work as a GitHub issue or project item. A committed `plans/` document is the detailed
 implementation plan behind one such item and links to it.
 
-This policy is authored once here. SessionStart delivers it in every session of a selecting project, and
-adoption generates its marked native instruction block from this body and checks it for drift.
+This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
+its marked native instruction block from this body and checks it for drift. A selected plugin or an
+`always` tier alone is not proof of loading.

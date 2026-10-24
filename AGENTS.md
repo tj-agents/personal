@@ -18,13 +18,13 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:3ebe53642b00329c58eab1c95aaf009152fc0ce220f4751f058ed2047b1420b0 -->
+<!-- BEGIN personal:rules sha256:b1e069d9eab6788abb8783912f853d5c289a8004f8b4da10b69aa1f8316ab1c3 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
 project's personal scope; a home directory, author name or employer association never establishes it, and
-employer projects stay outside this profile. Before planning or starting work, confirm the task is clear
-against each rule below.
+employer projects stay outside this profile unless the user explicitly extends that scope. Before planning
+or starting work, confirm the task is clear against each rule below.
 
 ## 1. Clean cut
 
@@ -64,6 +64,7 @@ to the change, with tests that prove behavior rather than restate the implementa
 Track work as a GitHub issue or project item. A committed `plans/` document is the detailed
 implementation plan behind one such item and links to it.
 
-This policy is authored once here. SessionStart delivers it in every session of a selecting project, and
-adoption generates its marked native instruction block from this body and checks it for drift.
+This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
+its marked native instruction block from this body and checks it for drift. A selected plugin or an
+`always` tier alone is not proof of loading.
 <!-- END personal:rules -->
