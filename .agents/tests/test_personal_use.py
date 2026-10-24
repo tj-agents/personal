@@ -9,22 +9,22 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / ".agents/personal/utility/adopt/scripts/adopt.py"
-spec = importlib.util.spec_from_file_location("personal_adopt", SCRIPT)
-adopt = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(adopt)
+SCRIPT = ROOT / ".agents/personal/utility/use/scripts/use.py"
+spec = importlib.util.spec_from_file_location("personal_use", SCRIPT)
+use = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(use)
 
 
-class AdoptTests(unittest.TestCase):
+class UseTests(unittest.TestCase):
     def plugins(self, root: Path, value: object) -> None:
         path = root / ".agents/plugins.json"
         path.parent.mkdir(exist_ok=True)
         path.write_text(json.dumps(value), encoding="utf-8")
 
     def generated_workflow(self, root: Path) -> Path:
-        path = root / adopt.CI_CALLER
+        path = root / use.CI_CALLER
         path.parent.mkdir(parents=True)
-        path.write_text(adopt.CI_CALLER_MARKER, encoding="utf-8")
+        path.write_text(use.CI_CALLER_MARKER, encoding="utf-8")
         return path
 
     def test_malformed_selection_stops_before_a_selection_tool_or_local_write(self):
@@ -51,13 +51,13 @@ class AdoptTests(unittest.TestCase):
                 with self.subTest(selection=selection):
                     self.plugins(root, selection)
                     with (
-                        mock.patch.object(adopt, "native_plan") as plan,
-                        mock.patch.object(adopt.subprocess, "run") as run,
+                        mock.patch.object(use, "native_plan") as plan,
+                        mock.patch.object(use.subprocess, "run") as run,
                         self.assertRaisesRegex(
                             ValueError, "invalid personal plugin selection"
                         ),
                     ):
-                        adopt.run(root, "write", root / "selection-tool.py")
+                        use.run(root, "write", root / "selection-tool.py")
                     plan.assert_not_called()
                     run.assert_not_called()
             self.assertFalse((root / "AGENTS.md").exists())
@@ -68,7 +68,7 @@ class AdoptTests(unittest.TestCase):
             root.mkdir()
             path = self.generated_workflow(root)
             external = Path(directory) / "external.yml"
-            external.write_text(adopt.CI_CALLER_MARKER, encoding="utf-8")
+            external.write_text(use.CI_CALLER_MARKER, encoding="utf-8")
             original = Path.resolve
 
             def resolve(value: Path, strict: bool = False) -> Path:
@@ -78,11 +78,11 @@ class AdoptTests(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    adopt.Path, "resolve", autospec=True, side_effect=resolve
+                    use.Path, "resolve", autospec=True, side_effect=resolve
                 ),
                 self.assertRaisesRegex(ValueError, "linked outside"),
             ):
-                adopt.ci_caller_removal(root)
+                use.ci_caller_removal(root)
             self.assertTrue(path.exists())
             self.assertTrue(external.exists())
 
@@ -94,12 +94,12 @@ class AdoptTests(unittest.TestCase):
             external = Path(directory) / "external"
             external.mkdir()
             (external / "check-personal-policy.yml").write_text(
-                adopt.CI_CALLER_MARKER, encoding="utf-8"
+                use.CI_CALLER_MARKER, encoding="utf-8"
             )
             (root / ".github").mkdir()
             (root / ".github/workflows").symlink_to(external, target_is_directory=True)
             with self.assertRaisesRegex(ValueError, "linked outside"):
-                adopt.ci_caller_removal(root)
+                use.ci_caller_removal(root)
 
 
 if __name__ == "__main__":
