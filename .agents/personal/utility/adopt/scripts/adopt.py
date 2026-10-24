@@ -8,7 +8,11 @@ import re
 import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "policy/rules/scripts"))
+RULES = next((parent / ".agents/personal/policy/rules/scripts" for parent in Path(__file__).resolve().parents
+              if (parent / ".agents/personal/policy/rules/scripts/personal_scope.py").is_file()), None)
+if RULES is None:
+    raise SystemExit("Personal adoption failed: the packaged personal:rules policy is missing")
+sys.path.insert(0, str(RULES))
 from personal_scope import policy  # noqa: E402
 
 IDENTITY = "personal@tj-agents"

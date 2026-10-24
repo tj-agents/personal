@@ -10,7 +10,7 @@ CONTRACT = Path(__file__).resolve().parent.parent / "SKILL.md"
 
 
 def policy(contract=CONTRACT):
-    source = contract.read_text(encoding="utf-8").replace("\r\n", "\n")
+    source = contract.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
     if not source.startswith("---\n"):
         raise ValueError("policy is missing frontmatter")
     body = source.split("\n---\n", 1)[1].strip()
