@@ -174,12 +174,14 @@ class CleanCutGateTests(unittest.TestCase):
     def test_shell_and_powershell_shapes_are_parsed(self) -> None:
         (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
         here_string = "git commit -m @'\nDon't git rm this\n'@"
-        for command in (
+        commands = [
             'bash -c "git commit -a -m x"',
-            f'git -C "{self.root}\\" commit -a -m x',
             "git commit -m x <<<'wip'\ngit commit -a -m y",
             here_string + "\ngit commit -a -m y",
-        ):
+        ]
+        if os.name == "nt":
+            commands.append(f'git -C "{self.root}\\" commit -a -m x')
+        for command in commands:
             with self.subTest(command=command):
                 self.assertTrue(self.gate(command))
         for command in (here_string, "git commit -m x > log.txt"):
