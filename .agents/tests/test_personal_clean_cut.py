@@ -164,6 +164,13 @@ class CleanCutGateTests(unittest.TestCase):
         )
         self.assertEqual("", self.gate(message))
 
+    def test_message_text_is_not_parsed_as_commands(self) -> None:
+        body = '\nSplit git rm from it\n\nThen git commit -a separately\nEOF\n)"'
+        self.assertEqual("", self.gate("git commit -m \"$(cat <<'EOF'" + body))
+        (self.root / ".agents/demo/contract/old/SKILL.md").unlink()
+        self.assertTrue(self.gate("git commit -m \"$(cat <<'EOF'" + body + " -a"))
+        self.assertTrue(self.gate("git commit .agents -m \"$(cat <<'EOF'" + body))
+
     def test_chained_removal_outside_skill_repositories_is_allowed(self) -> None:
         self.git("rm", "-rq", ".agents/demo")
         self.git(
