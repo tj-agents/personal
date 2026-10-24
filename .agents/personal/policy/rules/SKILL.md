@@ -22,7 +22,8 @@ Keep one current supported solution. When replacing behavior, remove the superse
 fallback implementations, adapters, configuration formats, compatibility branches and forwarding or
 migration docs. Migrate all known callers, project declarations, installed registrations, generated
 artifacts and live runtime entry points in the same cutover, and coordinate upgrades with the actual
-collaborating developers. A commit that removes or renames a skill while a tracked source still names its
+collaborating developers. Run each migration once during the cutover and delete it; never ship migration
+or cleanup code that runs again later. A commit that removes or renames a skill while a tracked source still names its
 old `<package>:<name>` is blocked until every reference is migrated or deleted.
 
 Verify the entry points people actually use on every supported platform, including Windows and Linux
