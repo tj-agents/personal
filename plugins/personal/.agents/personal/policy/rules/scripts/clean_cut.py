@@ -18,7 +18,9 @@ CHDIR = re.compile(r"""(?:^|[;&|\n]\s*)(?:cd|Set-Location|pushd|Push-Location)\s
 TARGET = re.compile(r"""-C\s+("[^"]*"|'[^']*'|\S+)""")
 NAME = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 VALUE_FLAGS = set("mFCct")
+ATTACHED_VALUE_FLAGS = set("uS")
 WORKTREE_FLAGS = set("aoi")
+SHELLS = {"bash", "sh", "zsh", "dash", "pwsh", "powershell", "cmd"}
 VALUE_OPTIONS = {"--message", "--file", "--author", "--date", "--template", "--reuse-message",
                  "--reedit-message", "--fixup", "--squash", "--cleanup", "--trailer"}
 STAGES = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+(?P<verb>add|rm|mv)\b")
@@ -30,7 +32,11 @@ class GitError(Exception):
 
 def command_text(tool_input):
     value = tool_input.get("command") or tool_input.get("cmd") or ""
-    return "\n".join(map(str, value)) if isinstance(value, list) else str(value)
+    if not isinstance(value, list):
+        return str(value)
+    words = [str(word) for word in value]
+    shell = bool(words) and Path(words[0]).stem.lower() in SHELLS
+    return "\n".join(words) if shell else shlex.join(words)
 
 
 def unquote(value):
@@ -58,6 +64,8 @@ def commits_worktree(arguments):
         for index, flag in enumerate(token[1:], 1):
             if flag in WORKTREE_FLAGS:
                 return True
+            if flag in ATTACHED_VALUE_FLAGS:
+                break
             if flag in VALUE_FLAGS:
                 if index == len(token) - 1:
                     next(values, None)
@@ -149,7 +157,8 @@ def removed_skills(root, include_worktree):
     old = set()
     for path, body in zip(candidates, blobs(root, [f"HEAD:{path}" for path in candidates])):
         old |= qualified(path, body, owners)
-    paths = [path for path in git(root, "ls-files", "--", ".agents").split("\n") if skill_path(path)]
+    listing = ["ls-files", "--cached", *(["--others", "--exclude-standard"] if include_worktree else []), "--", ".agents"]
+    paths = sorted({path for path in git(root, *listing).split("\n") if skill_path(path)})
     current = set()
     if include_worktree:
         for path in paths:
