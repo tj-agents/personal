@@ -35,6 +35,9 @@ TOKEN_MARGIN_SECONDS = 300
 ENROLLMENT_SECONDS = 600
 MAX_ENROLLMENT_BYTES = 32 * 1024
 REQUIRED_OWNERS = ("tomjseery", "tj-agents", "concertable")
+REQUIRED_CAPABILITY_VERSION = 1
+REQUIRED_CAPABILITIES = {REQUIRED_CAPABILITY_VERSION: {"tj-agents": {"repository_creation": "write"}}}
+FORBIDDEN_WRITE_PERMISSIONS = ("administration",)
 WINDOWS = os.name == "nt"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
 GITHUB_URL = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)")
@@ -170,27 +173,75 @@ def api(path: str, bearer: str, method: str = "GET") -> object:
         raise GitHubError(f"GitHub {method} {path} could not be reached") from error
 
 
-def validate_remote_app(record: dict, fetch=api, sign=app_jwt) -> None:
+def validate_remote_app(record: dict, fetch=api, sign=app_jwt) -> dict:
     actual = fetch("/app", sign(record))
     descriptor = app_descriptor()
     if not isinstance(actual, dict) or actual.get("id") != descriptor["id"] or \
             actual.get("client_id") != descriptor["client_id"] or actual.get("slug") != descriptor["slug"] or \
             actual.get("owner", {}).get("login", "").lower() != descriptor["owner"].lower():
         raise IdentityError("the enrolled key does not authenticate the pinned GitHub App")
+    return actual
+
+
+def app_settings_url(descriptor: dict) -> str:
+    return f"https://github.com/settings/apps/{descriptor['slug']}"
+
+
+def installation_settings_url(installation: dict) -> str:
+    account = installation.get("account", {})
+    login = account.get("login", "tj-agents")
+    if installation.get("target_type") == "User":
+        return f"https://github.com/settings/installations/{installation['id']}"
+    return f"https://github.com/organizations/{login}/settings/installations/{installation['id']}"
+
+
+def capability_error(subject: str, permissions: object, required: dict[str, str], url: str) -> None:
+    available = permissions if isinstance(permissions, dict) else {}
+    forbidden = [name for name in FORBIDDEN_WRITE_PERMISSIONS if available.get(name) == "write"]
+    if forbidden:
+        raise IdentityError(f"the {subject} grants forbidden {forbidden[0]}:write; remove it at {url}")
+    for name, level in required.items():
+        if available.get(name) != level:
+            raise IdentityError(f"the {subject} does not grant {name}:{level}; update it at {url}")
+
+
+def validate_app_capabilities(actual: dict) -> None:
+    descriptor = app_descriptor()
+    capability_error("pinned GitHub App", actual.get("permissions"),
+                     REQUIRED_CAPABILITIES[REQUIRED_CAPABILITY_VERSION]["tj-agents"], app_settings_url(descriptor))
+
+
+def remote_installations(record: dict, fetch=api, sign=app_jwt) -> dict[str, dict]:
+    values = fetch("/app/installations", sign(record))
+    if not isinstance(values, list):
+        raise IdentityError("the pinned GitHub App installations response is invalid")
+    known = {}
+    for item in values:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), int) or \
+                not isinstance(item.get("account"), dict) or \
+                not isinstance(item["account"].get("login"), str):
+            raise IdentityError("the pinned GitHub App installations response is invalid")
+        known[item["account"]["login"].lower()] = item
+    return known
 
 
 def missing_required_installations(record: dict, fetch=api, sign=app_jwt) -> list[str]:
-    known = {item["account"]["login"].lower(): item["id"]
-             for item in fetch("/app/installations", sign(record))}
+    known = remote_installations(record, fetch=fetch, sign=sign)
     return [owner for owner in REQUIRED_OWNERS if owner not in known]
 
 
 def verify_ready(record: dict, fetch=api, sign=app_jwt) -> None:
-    validate_remote_app(record, fetch=fetch, sign=sign)
-    missing = missing_required_installations(record, fetch=fetch, sign=sign)
+    actual = validate_remote_app(record, fetch=fetch, sign=sign)
+    validate_app_capabilities(actual)
+    known = remote_installations(record, fetch=fetch, sign=sign)
+    missing = [owner for owner in REQUIRED_OWNERS if owner not in known]
     if missing:
         raise IdentityError("the pinned GitHub App is not installed on: " + ", ".join(missing) +
                             "; install it at https://github.com/apps/tomjseery-bot/installations/new")
+    tj_agents = known["tj-agents"]
+    capability_error("tj-agents App installation", tj_agents.get("permissions"),
+                     REQUIRED_CAPABILITIES[REQUIRED_CAPABILITY_VERSION]["tj-agents"],
+                     installation_settings_url(tj_agents))
 
 
 def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:

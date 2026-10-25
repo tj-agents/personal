@@ -414,6 +414,60 @@ class EnrollmentTests(Sandbox):
         for path in (self.home / "github-app").glob("tomjseery-bot.*"):
             path.unlink()
 
+    def readiness_fetch(self, app_permissions, tj_agents_permissions):
+        calls = []
+
+        def fetch(path, bearer, method="GET"):
+            calls.append((method, path))
+            if path == "/app":
+                return {**{key: value for key, value in RECORD.items() if key != "key"},
+                        "owner": {"login": RECORD["owner"]}, "permissions": app_permissions}
+            self.assertEqual("/app/installations", path)
+            return [
+                {"id": 7, "account": {"login": "tj-agents"}, "target_type": "Organization",
+                 "permissions": tj_agents_permissions},
+                {"id": 8, "account": {"login": "tomjseery"}, "target_type": "User", "permissions": {}},
+                {"id": 9, "account": {"login": "concertable"}, "target_type": "Organization", "permissions": {}},
+            ]
+
+        return fetch, calls
+
+    def test_readiness_reports_the_app_settings_page_for_a_missing_declaration(self):
+        fetch, calls = self.readiness_fetch({}, {"repository_creation": "write"})
+        with self.assertRaisesRegex(bot.IdentityError,
+                                    r"pinned GitHub App does not grant repository_creation:write; update it at "
+                                    r"https://github.com/settings/apps/tomjseery-bot"):
+            bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
+        self.assertEqual([("GET", "/app")], calls)
+
+    def test_readiness_reports_the_tj_agents_installation_settings_page_pending_acceptance(self):
+        fetch, calls = self.readiness_fetch({"repository_creation": "write"}, {})
+        with self.assertRaisesRegex(bot.IdentityError,
+                                    r"tj-agents App installation does not grant repository_creation:write; update it at "
+                                    r"https://github.com/organizations/tj-agents/settings/installations/7"):
+            bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
+        self.assertEqual([("GET", "/app"), ("GET", "/app/installations")], calls)
+
+    def test_readiness_accepts_the_declared_and_accepted_creation_capability(self):
+        fetch, calls = self.readiness_fetch({"repository_creation": "write"}, {"repository_creation": "write"})
+        bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
+        self.assertEqual([("GET", "/app"), ("GET", "/app/installations")], calls)
+
+    def test_readiness_rejects_administration_write_on_the_app_or_tj_agents_installation(self):
+        cases = (
+            ("App", {"repository_creation": "write", "administration": "write"},
+             {"repository_creation": "write"}, "settings/apps/tomjseery-bot"),
+            ("installation", {"repository_creation": "write"},
+             {"repository_creation": "write", "administration": "write"},
+             "organizations/tj-agents/settings/installations/7"),
+        )
+        for subject, app_permissions, installation_permissions, url in cases:
+            with self.subTest(subject=subject):
+                fetch, _ = self.readiness_fetch(app_permissions, installation_permissions)
+                with self.assertRaisesRegex(bot.IdentityError,
+                                            rf"grants forbidden administration:write; remove it at https://github.com/{url}"):
+                    bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
+
     def test_invalid_or_wrong_app_key_never_creates_an_enrollment_record(self):
         self.remove_enrollment()
         with self.assertRaises(bot.IdentityError):
