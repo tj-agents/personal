@@ -17,7 +17,7 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 
 ## Adopt a personal project
 
-Explicitly select `personal@tj-agents` through Core's `machine:plugin-selection` tool, then run the
+Explicitly select `personal@tj-agents` through `agent:plugins`, then run the
 shipped adoption utility. Its `--selection-tool` option performs both steps together. Use `--mode preview`
 to inspect changes, `--mode write` to apply them and `--mode check` in CI. See the
 [adoption procedure](.agents/personal/utility/use/SKILL.md) for the complete command.
@@ -61,6 +61,10 @@ creates the protected local credential record; no JSON assembly or copying keys 
 The plugin declares this setup step in its harness manifest for Core's setup and sync entry points.
 Initial enrollment requires Tommy's authenticated GitHub key issuance through the local browser wizard;
 ordinary setup and verification never prompt. See the [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md).
+
+Readiness also requires `repository_creation:write` on the App and its `tj-agents` installation. Setup fails
+closed if that creation capability is removed, or if `administration:write` is granted; it reports the specific
+App or installation settings page for Tommy to correct and never changes GitHub permissions itself.
 
 ## Authoring and verification
 
