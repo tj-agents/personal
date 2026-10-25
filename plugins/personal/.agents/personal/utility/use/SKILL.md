@@ -14,12 +14,12 @@ provenance: house
 Use only for a project Tommy explicitly identifies as personal. Never infer scope from its location or
 from every repository on a machine. Preserve unrelated work and use the project's owning delivery branch.
 
-Run `python <skill-directory>/scripts/use.py --root <project> --mode write --selection-tool <machine-plugin-selection>/scripts/adopt_plugins.py`.
-Resolve the selection tool from the installed `machine:plugin-selection` skill, which ships it; do not
+Run `python <skill-directory>/scripts/use.py --root <project> --mode write --selection-tool <agent-plugins>/scripts/adopt_plugins.py`.
+Resolve the selection tool from the installed `agent:plugins` skill, which ships it; do not
 assemble or maintain another copy. Preview with `--mode preview`, and use the identical command with
 `--mode check` in CI. Use `python3` on Linux/macOS. Requires Python 3.11 or newer.
 
-The Core tool owns plugin declarations and host settings. This command selects `personal@tj-agents`,
+The `agent:plugins` tool owns plugin declarations and host settings. This command selects `personal@tj-agents`,
 generates the mandatory native instruction block in AGENTS.md, merges distinct CLAUDE.md instructions into
 AGENTS.md once each, and leaves CLAUDE.md as the exact `@AGENTS.md` pointer; `@./AGENTS.md` is the same
 pointer, and any other Claude-only `@path` import is refused rather than copied in as plain text. It also
@@ -37,7 +37,7 @@ policy undeclared and says so.
 
 ```powershell
 # Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:
-python -B .agents/personal/utility/use/scripts/use.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/core/.agents/machine/utility/plugin-selection/scripts/adopt_plugins.py
+python -B .agents/personal/utility/use/scripts/use.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/agent/.agents/agent/utility/plugins/scripts/adopt_plugins.py
 # Review the preview, then use --mode write; CI uses --mode check.
 # Linux/macOS use python3 and their checkout paths with the same arguments.
 ```

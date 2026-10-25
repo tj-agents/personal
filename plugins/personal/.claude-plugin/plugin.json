@@ -14,6 +14,6 @@
   "dependencies": [
     "base@tj-agents",
     "engineering@tj-agents",
-    "machine@tj-agents"
+    "agent@tj-agents"
   ]
 }
