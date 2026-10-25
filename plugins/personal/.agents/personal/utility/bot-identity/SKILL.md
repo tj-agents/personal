@@ -35,7 +35,7 @@ setup. The key enrollment is retained, but setup does not claim readiness or alt
 three installations verify.
 
 Readiness also requires `repository_creation:write` on the App and its `tj-agents` installation, so agents can
-create repositories there. It deliberately rejects `administration:write`: creating repositories does not need
+create repositories there. It deliberately rejects `administration` write access: creating repositories does not need
 authority to administer, delete, or transfer existing repositories. A failed check identifies the exact App or
 `tj-agents` installation settings page for Tommy to correct; setup never changes GitHub permissions itself.
 

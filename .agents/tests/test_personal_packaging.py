@@ -22,7 +22,7 @@ EXTERNAL_SKILLS = {
         "address-mistake",
         "feature",
     },
-    "machine": {"plugin-selection"},
+    "agent": {"plugins"},
     "workflow": {"run"},
 }
 
