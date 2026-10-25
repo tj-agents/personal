@@ -14,8 +14,8 @@ provenance: house
 Agents act on the pinned existing `tomjseery-bot` GitHub App (ID `5397553`) recorded in
 `~/.agents-state/github-app/tomjseery-bot.json`, with its private key beside it, in tomjseery, tj-agents and
 Concertable. GitHub never lets
-an author approve its own PR, so a ruleset needing one approval of the latest push is satisfied only by
-Tommy. Infonetica never gets the App; there agents keep Tommy's credentials.
+an author approve its own PR. [github-actions:merge-policy](https://github.com/tj-agents/github-actions/blob/main/.agents/github-actions/utility/merge-policy/SKILL.md)
+owns Tommy's human approval requirement. Infonetica never gets the App; there agents keep Tommy's credentials.
 
 Tommy runs setup once per machine because it edits his host settings. A machine without a valid enrollment fails
 closed with an exact onboarding action; normal setup and checks never open a browser. With Tommy present, use the
