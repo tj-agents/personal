@@ -14,8 +14,8 @@ provenance: house
 Use only for a project Tommy explicitly identifies as personal. Never infer scope from its location or
 from every repository on a machine. Preserve unrelated work and use the project's owning delivery branch.
 
-Run `python <skill-directory>/scripts/use.py --root <project> --mode write --selection-tool <machine-plugin-selection>/scripts/adopt_plugins.py`.
-Resolve the selection tool from the installed `machine:plugin-selection` skill, which ships it; do not
+Run `python <skill-directory>/scripts/use.py --root <project> --mode write --selection-tool <agent-plugins>/scripts/adopt_plugins.py`.
+Resolve the selection tool from the installed `agent:plugins` skill, which ships it; do not
 assemble or maintain another copy. Preview with `--mode preview`, and use the identical command with
 `--mode check` in CI. Use `python3` on Linux/macOS. Requires Python 3.11 or newer.
 

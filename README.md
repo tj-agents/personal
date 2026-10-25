@@ -17,7 +17,7 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 
 ## Adopt a personal project
 
-Explicitly select `personal@tj-agents` through Core's `machine:plugin-selection` tool, then run the
+Explicitly select `personal@tj-agents` through `agent:plugins`, then run the
 shipped adoption utility. Its `--selection-tool` option performs both steps together. Use `--mode preview`
 to inspect changes, `--mode write` to apply them and `--mode check` in CI. See the
 [adoption procedure](.agents/personal/utility/use/SKILL.md) for the complete command.
