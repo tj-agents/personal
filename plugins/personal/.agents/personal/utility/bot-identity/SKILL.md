@@ -11,16 +11,28 @@ provenance: house
 
 # Bot identity
 
-Agents act on GitHub as the App recorded in `~/.agents-state/github-app/<slug>.json` (with its private key
-beside it) in every account the App is installed on: tomjseery, tj-agents and Concertable. GitHub never lets
+Agents act on the pinned existing `tomjseery-bot` GitHub App (ID `5397553`) recorded in
+`~/.agents-state/github-app/tomjseery-bot.json`, with its private key beside it, in tomjseery, tj-agents and
+Concertable. GitHub never lets
 an author approve its own PR, so a ruleset needing one approval of the latest push is satisfied only by
 Tommy. Infonetica never gets the App; there agents keep Tommy's credentials.
 
-Run once per machine, after the App record exists; Tommy runs it, because it edits his host settings:
+Tommy runs setup once per machine because it edits his host settings. A machine without a valid enrollment fails
+closed with an exact onboarding action; normal setup and checks never open a browser. With Tommy present, use the
+explicit local-browser wizard: it identifies the pinned existing App, accepts one newly generated App PEM, verifies
+it against GitHub before storing protected local state, and never prints the key or token. The original downloaded
+PEM remains in the browser/OS download location; remove it there after successful enrollment.
 
 ```text
-python -B <skill-directory>/scripts/bot_identity.py setup     # python3 on Linux/macOS
+python -B <skill-directory>/scripts/bot_identity.py setup --onboard  # python3 on Linux/macOS
+python -B <skill-directory>/scripts/bot_identity.py setup
+python -B <skill-directory>/scripts/bot_identity.py setup --check
 ```
+
+If the wizard reports a missing account, Tommy installs the same App at
+`https://github.com/apps/tomjseery-bot/installations/new` for tomjseery, tj-agents and Concertable, then re-runs
+setup. The key enrollment is retained, but setup does not claim readiness or alter agent host settings until all
+three installations verify.
 
 It installs a `gh` wrapper in `~/.agents-state/bin/bot-identity/` (`gh.exe` on Windows, so PowerShell and
 programs pass arguments intact) and gives agent sessions only (Claude `env`, Codex `shell_environment_policy.set`):
@@ -30,8 +42,9 @@ snapshot, so re-run setup after changing it. Tommy's own terminals are unchanged
 the user PATH. It also denies the GitHub MCP write tools, which hold Tommy's token.
 
 For an agent, git takes the account from the remote URL, and `gh` from `-R`/`--repo`/`--owner`, GitHub URLs,
-`repos|orgs|users/<owner>` API paths, `gh repo` arguments and the checkout's `origin`. If any has the App, it gets a one-hour installation
-token, cached until five minutes before expiry; a failed mint stops the command. If all are other accounts, such
+`repos|orgs|users/<owner>` API paths, `gh repo` arguments and the checkout's `origin`. Only the three named accounts
+can receive an App token; a missing installation for one stops the command and never falls back to Tommy. If all
+are other accounts, such
 as Infonetica, the call uses Tommy's own gh login or git helpers: an agent can act as Tommy there, and that
 token also works in the App's accounts. A command naming no account runs unauthenticated, and agents may run only
 `gh auth status`. `token --owner <account>` prints a token. Restart Claude and Codex after setup.

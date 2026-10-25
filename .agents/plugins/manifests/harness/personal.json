@@ -10,6 +10,9 @@
     ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
+    "setup": {
+      "script": ".agents/personal/utility/bot-identity/scripts/bot_identity.py"
+    },
     "hooks": [
       {
         "path": ".agents/personal/policy/rules/scripts/clean_cut.py",

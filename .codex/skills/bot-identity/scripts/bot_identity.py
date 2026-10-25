@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 import io
 import json
@@ -21,14 +22,19 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
+import webbrowser
 import zipfile
+import stat
 
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
-APP_ENV = "BOT_IDENTITY_APP"
 UNAUTHENTICATED = "bot-identity-unauthenticated"
 TIMEOUT_SECONDS = 30
 TOKEN_MARGIN_SECONDS = 300
+ENROLLMENT_SECONDS = 600
+MAX_ENROLLMENT_BYTES = 32 * 1024
+REQUIRED_OWNERS = ("tomjseery", "tj-agents", "concertable")
 WINDOWS = os.name == "nt"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
 GITHUB_URL = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)")
@@ -54,21 +60,84 @@ class IdentityError(Exception):
     pass
 
 
+class GitHubError(IdentityError):
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
 def store() -> Path:
     return Path.home() / ".agents-state" / "github-app"
+
+
+def descriptor_path() -> Path:
+    return Path(__file__).with_name("tomjseery-bot.json")
+
+
+def app_descriptor() -> dict:
+    try:
+        value = json.loads(descriptor_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise IdentityError("the bundled GitHub App descriptor is unavailable") from error
+    required = {"id", "client_id", "slug", "owner"}
+    if set(value) != required or not isinstance(value["id"], int) or any(
+        not isinstance(value[key], str) or not value[key] for key in required - {"id"}
+    ):
+        raise IdentityError("the bundled GitHub App descriptor is invalid")
+    return value
 
 
 def gh_config_directory() -> Path:
     return store() / "gh-agent"
 
 
+def is_reparse(path: Path) -> bool:
+    try:
+        return path.is_symlink() or bool(os.lstat(path).st_file_attributes & 0x400)
+    except FileNotFoundError:
+        return False
+    except AttributeError:
+        return path.is_symlink()
+
+
+def safe_existing_file(path: Path) -> None:
+    if not path.is_file() or is_reparse(path):
+        raise IdentityError("the local GitHub App enrollment is unsafe or incomplete")
+
+
+def require_private_permissions(path: Path, directory: bool = False) -> None:
+    """Read-only private-store validation for setup --check."""
+    if WINDOWS:
+        protect(path, directory=directory, check=True)
+        return
+    expected = 0o700 if directory else 0o600
+    if stat.S_IMODE(path.stat().st_mode) != expected:
+        raise IdentityError("the local GitHub App enrollment permissions are unsafe")
+
+
 def app_record() -> dict:
-    named = os.environ.get(APP_ENV)
-    records = [store() / f"{named}.json"] if named else sorted(store().glob("*.json"))
-    records = [path for path in records if path.is_file()]
-    if len(records) != 1:
-        raise IdentityError(f"expected one GitHub App record in {store()}, found {len(records)}; set {APP_ENV}")
-    return json.loads(records[0].read_text(encoding="utf-8"))
+    descriptor = app_descriptor()
+    if is_reparse(store()):
+        raise IdentityError("the GitHub App enrollment directory is unsafe")
+    path = store() / f"{descriptor['slug']}.json"
+    if not path.exists():
+        raise IdentityError("enrollment required: run `bot_identity.py setup --onboard` with Tommy present")
+    safe_existing_file(path)
+    require_private_permissions(store(), directory=True)
+    require_private_permissions(path)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise IdentityError("the local GitHub App enrollment is invalid") from error
+    if any(record.get(key) != value for key, value in descriptor.items()):
+        raise IdentityError("the local GitHub App enrollment does not match the pinned App")
+    key = Path(record.get("key", ""))
+    if not key.is_absolute() or key.parent != store() or key.name != f"{descriptor['slug']}.pem":
+        raise IdentityError("the local GitHub App key location is invalid")
+    safe_existing_file(key)
+    require_private_permissions(key)
+    record["key"] = str(key)
+    return record
 
 
 def b64(data: bytes) -> str:
@@ -85,7 +154,7 @@ def app_jwt(record: dict, now: float | None = None, run=subprocess.run) -> str:
     result = run([openssl, "dgst", "-sha256", "-sign", record["key"]], input=signing.encode(), capture_output=True,
                  timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
     if result.returncode:
-        raise IdentityError(f"openssl could not sign with {record['key']}")
+        raise IdentityError("openssl could not sign with the enrolled GitHub App key")
     return f"{signing}.{b64(result.stdout)}"
 
 
@@ -95,17 +164,314 @@ def api(path: str, bearer: str, method: str = "GET") -> object:
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             return json.load(response)
+    except urllib.error.HTTPError as error:
+        raise GitHubError(f"GitHub {method} {path} failed (HTTP {error.code})", error.code) from error
     except OSError as error:
-        raise IdentityError(f"GitHub {method} {path} failed: {error}") from error
+        raise GitHubError(f"GitHub {method} {path} could not be reached") from error
+
+
+def validate_remote_app(record: dict, fetch=api, sign=app_jwt) -> None:
+    actual = fetch("/app", sign(record))
+    descriptor = app_descriptor()
+    if not isinstance(actual, dict) or actual.get("id") != descriptor["id"] or \
+            actual.get("client_id") != descriptor["client_id"] or actual.get("slug") != descriptor["slug"] or \
+            actual.get("owner", {}).get("login", "").lower() != descriptor["owner"].lower():
+        raise IdentityError("the enrolled key does not authenticate the pinned GitHub App")
+
+
+def missing_required_installations(record: dict, fetch=api, sign=app_jwt) -> list[str]:
+    known = {item["account"]["login"].lower(): item["id"]
+             for item in fetch("/app/installations", sign(record))}
+    return [owner for owner in REQUIRED_OWNERS if owner not in known]
+
+
+def verify_ready(record: dict, fetch=api, sign=app_jwt) -> None:
+    validate_remote_app(record, fetch=fetch, sign=sign)
+    missing = missing_required_installations(record, fetch=fetch, sign=sign)
+    if missing:
+        raise IdentityError("the pinned GitHub App is not installed on: " + ", ".join(missing) +
+                            "; install it at https://github.com/apps/tomjseery-bot/installations/new")
+
+
+def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
+    """Verify a newly generated key before atomically making it the local enrollment."""
+    if not key.startswith(b"-----BEGIN ") or b"PRIVATE KEY-----" not in key or len(key) > MAX_ENROLLMENT_BYTES:
+        raise IdentityError("the selected file is not a supported GitHub App private key")
+    descriptor = app_descriptor()
+    directory = secure_store()
+    candidate = directory / ".candidate.pem"
+    if candidate.exists() or is_reparse(candidate):
+        candidate.unlink(missing_ok=True)
+    write_key(candidate, key)
+    record = {**descriptor, "key": str(candidate)}
+    try:
+        validate_remote_app(record, fetch=fetch, sign=sign)
+        destination = directory / f"{descriptor['slug']}.pem"
+        if is_reparse(destination):
+            raise IdentityError("the local GitHub App key location is unsafe")
+        os.replace(candidate, destination)
+        protect(destination)
+        record["key"] = str(destination)
+        write_private(directory / f"{descriptor['slug']}.json", record)
+        return record
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
+def enrollment_page(port: int, nonce: str) -> bytes:
+    descriptor = app_descriptor()
+    endpoint = f"/enroll/{nonce}"
+    return f"""<!doctype html><meta charset=utf-8><title>GitHub App enrollment</title>
+<h1>Enroll this machine for {descriptor['slug']}</h1>
+<p>This connects only to the existing GitHub App <strong>{descriptor['owner']}/{descriptor['slug']}</strong>
+(App ID {descriptor['id']}). Your browser keeps the downloaded PEM; remove it yourself through your browser or OS after success.</p>
+<p>Create a new private key at <a href=\"https://github.com/settings/apps/tomjseery-bot\">GitHub App settings</a>, then select that PEM file.</p>
+<input id=key type=file accept=\".pem,application/x-pem-file\"><button id=enroll>Enroll key</button>
+<button id=verify>Verify required installations</button><pre id=result></pre>
+<script>const endpoint={endpoint!r}, state={nonce!r}, result=document.getElementById('result');
+async function post(body) {{ let r=await fetch(endpoint,{{method:'POST',headers:{{'X-Bot-Identity-State':state}},body}}); result.textContent=await r.text(); }}
+document.getElementById('enroll').onclick=async()=>{{let f=document.getElementById('key').files[0];if(!f){{result.textContent='Select the newly downloaded PEM file.';return}};await post(await f.arrayBuffer())}};
+document.getElementById('verify').onclick=()=>post('');</script>""".encode("utf-8")
+
+
+def onboard(open_browser=webbrowser.open, fetch=api, sign=app_jwt, clock=time.monotonic) -> None:
+    import secrets
+    nonce = secrets.token_urlsafe(32)
+
+    class EnrollmentHandler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(5)
+
+        def allowed(self) -> bool:
+            return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
+
+        def reply(self, code: int, text: str, content_type: str = "text/plain; charset=utf-8") -> None:
+            payload = text.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self) -> None:
+            if not self.allowed() or self.path != f"/enroll/{nonce}":
+                self.reply(404, "Not found")
+                return
+            payload = enrollment_page(self.server.server_port, nonce)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_POST(self) -> None:
+            origin = f"http://127.0.0.1:{self.server.server_port}"
+            if not self.allowed() or self.path != f"/enroll/{nonce}" or \
+                    self.headers.get("Origin") != origin or self.headers.get("X-Bot-Identity-State") != nonce:
+                self.reply(403, "Enrollment request rejected")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "-1"))
+            except ValueError:
+                length = -1
+            if length < 0 or length > MAX_ENROLLMENT_BYTES:
+                self.reply(413, "Enrollment upload rejected")
+                return
+            key = self.rfile.read(length)
+            try:
+                if key:
+                    persist_enrollment(key, fetch=fetch, sign=sign)
+                missing = missing_required_installations(app_record(), fetch=fetch, sign=sign)
+                if missing:
+                    self.reply(200, "Key enrolled. Install the App for " + ", ".join(missing) +
+                               " at https://github.com/apps/tomjseery-bot/installations/new, then rerun setup.")
+                    self.server.finished = True
+                else:
+                    self.reply(200, "Enrollment verified. Return to the terminal to finish setup.")
+                    self.server.finished = True
+            except IdentityError:
+                self.reply(400, "Enrollment could not be verified. Check the connection and that the selected key belongs to this App, then retry.")
+
+    server = HTTPServer(("127.0.0.1", 0), EnrollmentHandler)
+    server.timeout = 1
+    server.finished = False
+    url = f"http://127.0.0.1:{server.server_port}/enroll/{nonce}"
+    print("Opening a local GitHub App enrollment page. It expires in 10 minutes.")
+    print(url)
+    open_browser(url)
+    deadline = clock() + ENROLLMENT_SECONDS
+    try:
+        while clock() < deadline and not server.finished:
+            server.handle_request()
+    finally:
+        server.server_close()
+    if not server.finished:
+        raise IdentityError("GitHub App enrollment did not complete within 10 minutes")
+
+
+def protect(path: Path, directory: bool = False, *, check: bool = False) -> None:
+    """Apply private local-state permissions without ever putting secret content in a command."""
+    if WINDOWS:
+        import ctypes
+        from ctypes import wintypes
+        advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        advapi.OpenProcessToken.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE))
+        advapi.OpenProcessToken.restype = wintypes.BOOL
+        advapi.GetTokenInformation.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                                ctypes.POINTER(wintypes.DWORD))
+        advapi.GetTokenInformation.restype = wintypes.BOOL
+        advapi.ConvertSidToStringSidW.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR))
+        advapi.ConvertSidToStringSidW.restype = wintypes.BOOL
+        advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
+            wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD))
+        advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+        advapi.SetFileSecurityW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p)
+        advapi.SetFileSecurityW.restype = wintypes.BOOL
+        advapi.GetFileSecurityW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                           ctypes.POINTER(wintypes.DWORD))
+        advapi.GetFileSecurityW.restype = wintypes.BOOL
+        advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
+            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR),
+            ctypes.POINTER(wintypes.DWORD))
+        advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+        kernel.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.CloseHandle.restype = wintypes.BOOL
+        kernel.LocalFree.argtypes = (ctypes.c_void_p,)
+        kernel.LocalFree.restype = ctypes.c_void_p
+        token = wintypes.HANDLE()
+        if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 8, ctypes.byref(token)):
+            raise IdentityError("could not identify the Windows user for GitHub App enrollment")
+        try:
+            size = wintypes.DWORD()
+            advapi.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
+            if not size.value:
+                raise IdentityError("could not identify the Windows user for GitHub App enrollment")
+            class SID_AND_ATTRIBUTES(ctypes.Structure):
+                _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
+            buffer = ctypes.create_string_buffer(size.value)
+            if not advapi.GetTokenInformation(token, 1, buffer, size.value, ctypes.byref(size)):
+                raise IdentityError("could not identify the Windows user for GitHub App enrollment")
+            sid = ctypes.cast(buffer, ctypes.POINTER(SID_AND_ATTRIBUTES)).contents.Sid
+            sid_text = wintypes.LPWSTR()
+            if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(sid_text)):
+                raise IdentityError("could not identify the Windows user for GitHub App enrollment")
+            try:
+                inherit = "OICI" if directory else ""
+                sddl = f"D:P(A;{inherit};FA;;;SY)(A;{inherit};FA;;;{sid_text.value})"
+                if check:
+                    needed = wintypes.DWORD()
+                    advapi.GetFileSecurityW(str(path), 4, None, 0, ctypes.byref(needed))
+                    actual = ctypes.create_string_buffer(needed.value)
+                    if not needed.value or not advapi.GetFileSecurityW(
+                            str(path), 4, actual, needed.value, ctypes.byref(needed)):
+                        raise IdentityError("could not inspect the local GitHub App permissions")
+                    rendered = wintypes.LPWSTR()
+                    if not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                            actual, 1, 4, ctypes.byref(rendered), None):
+                        raise IdentityError("could not inspect the local GitHub App permissions")
+                    try:
+                        value = rendered.value
+                        if "P" not in value.split("(", 1)[0][2:] or sorted(value.split("(")[1:]) != sorted(sddl.split("(")[1:]):
+                            raise IdentityError("the local GitHub App enrollment permissions are unsafe")
+                    finally:
+                        kernel.LocalFree(rendered)
+                    return
+                security = ctypes.c_void_p()
+                if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                        sddl, 1, ctypes.byref(security), None):
+                    raise IdentityError("could not protect the local GitHub App enrollment")
+                try:
+                    # DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
+                    if not advapi.SetFileSecurityW(str(path), 0x80000004, security):
+                        raise IdentityError("could not protect the local GitHub App enrollment")
+                finally:
+                    kernel.LocalFree(security)
+            finally:
+                kernel.LocalFree(sid_text)
+        finally:
+            kernel.CloseHandle(token)
+    else:
+        path.chmod(0o700 if directory else 0o600)
+
+
+def private_parent(directory: Path) -> None:
+    parent = directory.parent
+    if parent.exists() and is_reparse(parent):
+        raise IdentityError("the GitHub App enrollment directory is unsafe")
+    parent.mkdir(parents=True, exist_ok=True)
+    if is_reparse(parent):
+        raise IdentityError("the GitHub App enrollment directory is unsafe")
+
+
+def secure_store() -> Path:
+    directory = store()
+    private_parent(directory)
+    if directory.exists() and is_reparse(directory):
+        raise IdentityError("the GitHub App enrollment directory is unsafe")
+    directory.mkdir(parents=True, exist_ok=True)
+    protect(directory, directory=True)
+    return directory
+
+
+def private_temporary(path: Path) -> int:
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        protect(path)
+    except Exception:
+        os.close(fd)
+        path.unlink(missing_ok=True)
+        raise
+    return fd
 
 
 def write_private(path: Path, value: dict) -> None:
+    directory = secure_store()
+    try:
+        path.relative_to(directory)
+    except ValueError as error:
+        raise IdentityError("refusing to write outside the GitHub App enrollment directory") from error
+    if is_reparse(path):
+        raise IdentityError("refusing to write through an unsafe GitHub App enrollment path")
     path.parent.mkdir(parents=True, exist_ok=True)
+    if is_reparse(path.parent):
+        raise IdentityError("refusing to write through an unsafe GitHub App enrollment path")
+    protect(path.parent, directory=True)
     temporary = path.with_name(path.name + ".next")
-    temporary.write_text(json.dumps(value), encoding="utf-8")
-    if not WINDOWS:
-        temporary.chmod(0o600)
-    os.replace(temporary, path)
+    if temporary.exists() or is_reparse(temporary):
+        temporary.unlink(missing_ok=True)
+    descriptor = private_temporary(temporary)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(value, output)
+        os.replace(temporary, path)
+        protect(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_key(path: Path, value: bytes) -> None:
+    directory = secure_store()
+    if path.parent != directory or is_reparse(path):
+        raise IdentityError("refusing to write through an unsafe GitHub App enrollment path")
+    temporary = path.with_name(path.name + ".next")
+    if temporary.exists() or is_reparse(temporary):
+        temporary.unlink(missing_ok=True)
+    fd = private_temporary(temporary)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(value)
+        os.replace(temporary, path)
+        protect(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def installations(record: dict, refresh: bool = False, fetch=api, sign=app_jwt) -> dict[str, int]:
@@ -126,6 +492,8 @@ def installed(owners: list[str], record: dict, fetch=api, sign=app_jwt) -> dict[
 
 
 def installation_token(owner: str, record: dict, now: float | None = None, fetch=api, sign=app_jwt) -> str | None:
+    if owner.lower() not in REQUIRED_OWNERS:
+        raise IdentityError("the GitHub App is not authorized for that account")
     installation = installed([owner], record, fetch=fetch, sign=sign).get(owner.lower())
     if installation is None:
         return None
@@ -200,7 +568,11 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     if not owners:
         return environment
     record = app_record()
-    covered = installed(owners, record)
+    protected = [owner for owner in owners if owner.lower() in REQUIRED_OWNERS]
+    covered = installed(protected, record) if protected else {}
+    missing = [owner for owner in protected if owner.lower() not in covered]
+    if missing:
+        raise IdentityError("the pinned GitHub App is not installed on " + ", ".join(missing))
     app_owner = next((owner for owner in owners if owner.lower() in covered), None)
     if app_owner:
         token = installation_token(app_owner, record)
@@ -246,7 +618,9 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout, run=subprocess.
         return 0
     try:
         record = app_record()
-        if installed([owner], record):
+        if owner.lower() in REQUIRED_OWNERS:
+            if not installed([owner], record):
+                return 0
             token = installation_token(owner, record)
             if token:
                 out.write(f"username=x-access-token\npassword={token}\n")
@@ -336,7 +710,7 @@ def windows_executable(script: Path) -> bytes:
             f"runpy.run_path({str(script)!r}, run_name='__main__')\n")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as payload:
-        payload.writestr("__main__.py", main)
+        payload.writestr(zipfile.ZipInfo("__main__.py", (1980, 1, 1, 0, 0, 0)), main)
     return script_launcher() + f'#!"{sys.executable}" -B\n'.encode() + archive.getvalue()
 
 
@@ -345,6 +719,7 @@ def install_shims(source: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     script = directory / source.name
     shutil.copyfile(source, script)
+    shutil.copyfile(descriptor_path(), script.with_name("tomjseery-bot.json"))
     if WINDOWS:
         (directory / "gh.exe").write_bytes(windows_executable(script))
         for retired in ("gh", "gh.cmd"):
@@ -380,8 +755,55 @@ def remove_user_path(directory: Path) -> bool:
     return True
 
 
-def setup() -> None:
-    app_record()
+def installed_script() -> Path:
+    return shim_directory() / Path(__file__).name
+
+
+def verify_host_setup() -> None:
+    source = Path(__file__).resolve()
+    script = installed_script()
+    descriptor = script.with_name("tomjseery-bot.json")
+    for path, expected in ((script, source.read_bytes()),
+                           (descriptor, source.with_name("tomjseery-bot.json").read_bytes())):
+        safe_existing_file(path)
+        if path.read_bytes() != expected:
+            raise IdentityError("the installed GitHub App wrapper is stale; run setup")
+    launcher = shim_directory() / ("gh.exe" if WINDOWS else "gh")
+    safe_existing_file(launcher)
+    expected_launcher = windows_executable(script) if WINDOWS else \
+        f"#!/bin/sh\nexec \"{Path(sys.executable).as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n".encode()
+    if launcher.read_bytes() != expected_launcher:
+        raise IdentityError("the installed GitHub App wrapper is stale; run setup")
+    environment = agent_environment(script, os.environ.get("PATH", ""))
+    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+    codex = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    try:
+        claude_env = json.loads(claude.read_text(encoding="utf-8-sig"))["env"]
+        import tomllib
+        codex_env = tomllib.loads(codex.read_text(encoding="utf-8-sig"))["shell_environment_policy"]["set"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise IdentityError("agent host settings are missing; run setup") from error
+    for settings in (claude_env, codex_env):
+        if any(settings.get(key) != value for key, value in environment.items()) or any(
+                (key.startswith("GIT_CONFIG_") or key in MANAGED) and key not in environment for key in settings):
+            raise IdentityError("agent host settings are stale; run setup")
+
+
+def setup(check: bool = False, onboard_key: bool = False) -> None:
+    if onboard_key:
+        try:
+            candidate = app_record()
+            validate_remote_app(candidate)
+        except IdentityError as error:
+            if isinstance(error, GitHubError) and error.status != 401:
+                raise
+            onboard()
+    record = app_record()
+    verify_ready(record)
+    if check:
+        verify_host_setup()
+        print("bot_identity: ready")
+        return
     script = install_shims(Path(__file__).resolve())
     gh_config_directory().mkdir(parents=True, exist_ok=True)
     environment = agent_environment(script, os.environ.get("PATH", ""))
@@ -404,13 +826,18 @@ def main(argv: list[str] | None = None) -> int:
         commands = parser.add_subparsers(dest="command", required=True)
         commands.add_parser("token").add_argument("--owner", required=True)
         commands.add_parser("credential").add_argument("operation")
-        commands.add_parser("setup")
+        setup_command = commands.add_parser("setup")
+        setup_flags = setup_command.add_mutually_exclusive_group()
+        setup_flags.add_argument("--check", action="store_true")
+        setup_flags.add_argument("--onboard", action="store_true")
         arguments = parser.parse_args(argv)
         if arguments.command == "credential":
             return credential(arguments.operation)
         if arguments.command == "setup":
-            setup()
+            setup(check=arguments.check, onboard_key=arguments.onboard)
             return 0
+        if arguments.owner.lower() not in REQUIRED_OWNERS:
+            raise IdentityError("the GitHub App is not authorized for that account")
         token = installation_token(arguments.owner, app_record())
         if not token:
             raise IdentityError(f"the GitHub App is not installed on {arguments.owner}")

@@ -53,6 +53,15 @@ existing item after reconciling its identity and repair owner; Workflow owns the
 mapped Engineering operation owns bounded software delivery. The address helper records factual updates and
 closure evidence. A missing or different provider blocks the operation without adopting another queue.
 
+## Agent GitHub identity
+
+`personal:bot-identity` enrolls each trusted machine into the existing `tomjseery-bot` App.
+Its published descriptor contains only public identity metadata. Setup verifies a newly issued key and
+creates the protected local credential record; no JSON assembly or copying keys between machines is needed.
+The plugin declares this setup step in its harness manifest for Core's setup and sync entry points.
+Initial enrollment requires Tommy's authenticated GitHub key issuance through the local browser wizard;
+ordinary setup and verification never prompt. See the [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md).
+
 ## Authoring and verification
 
 ```powershell

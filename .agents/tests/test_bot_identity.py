@@ -3,13 +3,17 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import contextlib
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +22,8 @@ spec = importlib.util.spec_from_file_location("bot_identity", SCRIPT)
 bot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bot)
 
-RECORD = {"slug": "test-bot", "client_id": "Iv1", "key": "unused.pem"}
+RECORD = {"id": 5397553, "slug": "tomjseery-bot", "client_id": "Iv23liYRkDvGiQXwwzls", "owner": "tomjseery",
+          "key": "unused.pem"}
 INSTALLED = {"tj-agents": 7, "tomjseery": 8}
 ARGV_RECORDER = "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
 
@@ -62,7 +67,12 @@ class Sandbox(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         (self.home / "github-app").mkdir()
-        (self.home / "github-app" / "test-bot.json").write_text(json.dumps(RECORD), encoding="utf-8")
+        record = {**RECORD, "key": str(self.home / "github-app" / "tomjseery-bot.pem")}
+        (self.home / "github-app" / "tomjseery-bot.pem").write_text("unused", encoding="utf-8")
+        (self.home / "github-app" / "tomjseery-bot.json").write_text(json.dumps(record), encoding="utf-8")
+        bot.protect(self.home / "github-app", directory=True)
+        bot.protect(self.home / "github-app" / "tomjseery-bot.pem")
+        bot.protect(self.home / "github-app" / "tomjseery-bot.json")
 
     def patch_environment(self, values):
         patcher = mock.patch.object(os, "environ", {**os.environ, **values})
@@ -78,7 +88,8 @@ class IdentityTests(Sandbox):
         github = FakeGitHub()
         self.assertEqual("ghs_2", self.token("TJ-Agents", github))
         self.assertEqual("ghs_2", self.token("tj-agents", github))
-        self.assertIsNone(self.token("Infonetica", github))
+        with self.assertRaises(bot.IdentityError):
+            self.token("Infonetica", github)
         self.assertEqual(1, sum(method == "POST" for method, _ in github.calls))
 
     def test_an_expiring_token_is_reissued(self):
@@ -144,7 +155,7 @@ class CredentialTests(Sandbox):
                 self.assertEqual(("", []), self.ask(request))
 
     def test_a_missing_app_record_fails_closed(self):
-        (self.home / "github-app" / "test-bot.json").unlink()
+        (self.home / "github-app" / "tomjseery-bot.json").unlink()
         with mock.patch.object(bot, "tommy_credential") as tommy:
             out = io.StringIO()
             bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=Infonetica/x\n\n"), out)
@@ -332,7 +343,8 @@ class ShimTests(Sandbox):
     @unittest.skipUnless(os.name == "nt", "Windows launcher")
     def test_windows_gh_exe_passes_every_argument_through(self):
         self.install()
-        self.assertEqual(["bot_identity.py", "gh.exe"], sorted(path.name for path in bot.shim_directory().iterdir()))
+        self.assertEqual(["bot_identity.py", "gh.exe", "tomjseery-bot.json"],
+                         sorted(path.name for path in bot.shim_directory().iterdir()))
         result = subprocess.run([str(bot.shim_directory() / "gh.exe"), *self.ARGUMENTS], capture_output=True,
                                 text=True, timeout=60, check=True)
         self.assertEqual(["gh", *self.ARGUMENTS], json.loads(result.stdout))
@@ -395,6 +407,175 @@ class SettingsTests(unittest.TestCase):
             self.assertTrue(bot.remove_user_path(shim))
             self.assertFalse(bot.remove_user_path(shim))
         self.assertEqual("export A=1\nexport B=2\n", profile.read_text(encoding="utf-8"))
+
+
+class EnrollmentTests(Sandbox):
+    def remove_enrollment(self):
+        for path in (self.home / "github-app").glob("tomjseery-bot.*"):
+            path.unlink()
+
+    def test_invalid_or_wrong_app_key_never_creates_an_enrollment_record(self):
+        self.remove_enrollment()
+        with self.assertRaises(bot.IdentityError):
+            bot.persist_enrollment(b"not a PEM")
+        self.assertFalse((self.home / "github-app" / "tomjseery-bot.json").exists())
+
+        def wrong_app(path, bearer, method="GET"):
+            return {"id": 1, "client_id": "wrong", "slug": "wrong", "owner": {"login": "wrong"}}
+
+        pem = b"-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n"
+        with self.assertRaises(bot.IdentityError):
+            bot.persist_enrollment(pem, fetch=wrong_app, sign=lambda record: "jwt")
+        self.assertFalse((self.home / "github-app" / "tomjseery-bot.json").exists())
+        self.assertFalse((self.home / "github-app" / ".candidate.pem").exists())
+
+    def test_missing_protected_installation_fails_closed_without_tommy_fallback(self):
+        self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+        with mock.patch.object(bot, "installed", return_value={}), \
+                mock.patch.object(bot, "tommy_environment") as tommy:
+            with self.assertRaises(bot.IdentityError):
+                bot.agent_gh_environment(["pr", "list", "-R", "tomjseery/notes"], None)
+        tommy.assert_not_called()
+
+    def test_failed_readiness_does_not_mutate_agent_hosts(self):
+        with mock.patch.object(bot, "verify_ready", side_effect=bot.IdentityError("missing installation")), \
+                mock.patch.object(bot, "install_shims") as install, \
+                mock.patch.object(bot, "update_claude") as claude, \
+                mock.patch.object(bot, "update_codex") as codex:
+            with self.assertRaises(bot.IdentityError):
+                bot.setup()
+        install.assert_not_called()
+        claude.assert_not_called()
+        codex.assert_not_called()
+
+    def test_check_is_read_only_and_setup_flags_are_exclusive(self):
+        with mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "verify_host_setup"), \
+                mock.patch.object(bot, "install_shims") as install:
+            with contextlib.redirect_stdout(io.StringIO()):
+                bot.setup(check=True)
+        install.assert_not_called()
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            bot.main(["setup", "--check", "--onboard"])
+
+    def test_private_key_write_is_private_on_posix(self):
+        if os.name == "nt":
+            self.skipTest("Windows ACL exercised by protect() during the Windows suite")
+        path = self.home / "github-app" / "tomjseery-bot.pem"
+        bot.write_key(path, b"private")
+        self.assertEqual(0o600, path.stat().st_mode & 0o777)
+        self.assertEqual(0o700, path.parent.stat().st_mode & 0o777)
+        path.chmod(0o644)
+        with self.assertRaises(bot.IdentityError):
+            bot.require_private_permissions(path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows ACL")
+    def test_private_key_write_applies_a_private_windows_acl(self):
+        path = self.home / "github-app" / "tomjseery-bot.pem"
+        bot.write_key(path, b"private")
+        bot.require_private_permissions(path)
+        acl = subprocess.run(["icacls", str(path)], text=True, capture_output=True, check=True).stdout
+        self.assertIn("SYSTEM:", acl)
+        self.assertNotIn("BUILTIN\\Users", acl)
+
+    def test_check_rejects_broadened_secret_permissions(self):
+        path = self.home / "github-app" / "tomjseery-bot.pem"
+        bot.require_private_permissions(path)
+        if bot.WINDOWS:
+            subprocess.run(["icacls", str(path), "/grant", "*S-1-5-32-544:(R)"],
+                           capture_output=True, check=True)
+        else:
+            path.chmod(0o644)
+        with self.assertRaisesRegex(bot.IdentityError, "permissions are unsafe"):
+            bot.require_private_permissions(path)
+
+    def test_only_revoked_credentials_restart_onboarding_after_a_github_failure(self):
+        for status, starts in ((401, True), (403, False), (None, False)):
+            with self.subTest(status=status), \
+                    mock.patch.object(bot, "validate_remote_app", side_effect=bot.GitHubError("failed", status)), \
+                    mock.patch.object(bot, "onboard") as onboard, \
+                    mock.patch.object(bot, "verify_ready", side_effect=bot.IdentityError("stop before settings")):
+                with self.assertRaises(bot.IdentityError):
+                    bot.setup(onboard_key=True)
+                self.assertEqual(starts, onboard.called)
+
+    def test_loopback_enrollment_rejects_host_origin_state_and_large_uploads(self):
+        url, started, errors = [], threading.Event(), []
+        elapsed = [0]
+
+        def opened(value):
+            url.append(value)
+            started.set()
+            return True
+
+        def serve():
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    bot.onboard(open_browser=opened, clock=lambda: elapsed[0])
+            except bot.IdentityError as error:
+                errors.append(str(error))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            thread = threading.Thread(target=serve)
+            thread.start()
+            self.assertTrue(started.wait(2))
+            endpoint = url[0]
+            nonce = endpoint.rsplit("/", 1)[1]
+            cases = (
+                urllib.request.Request(endpoint, headers={"Host": "evil.example"}),
+                urllib.request.Request(endpoint, data=b"x", method="POST", headers={
+                    "Origin": "http://evil.example", "X-Bot-Identity-State": nonce}),
+                urllib.request.Request(endpoint, data=b"", method="POST", headers={
+                    "Origin": endpoint.split("/enroll/", 1)[0], "X-Bot-Identity-State": "wrong"}),
+                urllib.request.Request(endpoint, data=b"", method="POST", headers={
+                    "Origin": endpoint.split("/enroll/", 1)[0], "X-Bot-Identity-State": nonce,
+                    "Content-Length": str(bot.MAX_ENROLLMENT_BYTES + 1)}),
+            )
+            for request, expected in zip(cases, (404, 403, 403, 413)):
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    urllib.request.urlopen(request, timeout=2)
+                self.assertEqual(expected, raised.exception.code)
+                raised.exception.close()
+            elapsed[0] = bot.ENROLLMENT_SECONDS + 1
+            thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(errors)
+
+
+class FreshSetupTests(unittest.TestCase):
+    def test_setup_and_fresh_wrapper_use_the_bot_without_touching_human_settings(self):
+        with tempfile.TemporaryDirectory(prefix="bot setup ü ") as temporary:
+            home = Path(temporary)
+            real = home / "real gh"
+            real.mkdir()
+            script = real / "fake-gh.py"
+            script.write_text("import os\nprint('BOT' if os.environ.get('GH_TOKEN') == 'fixture-token' else 'WRONG')\n",
+                              encoding="utf-8")
+            launcher = real / ("gh.exe" if bot.WINDOWS else "gh")
+            if bot.WINDOWS:
+                launcher.write_bytes(bot.windows_executable(script))
+            else:
+                launcher.write_text(f'#!{sys.executable}\n' + script.read_text(encoding="utf-8"), encoding="utf-8")
+                launcher.chmod(0o755)
+            environment = {**without_agent_settings(os.environ), "HOME": str(home), "USERPROFILE": str(home),
+                           "CLAUDE_CONFIG_DIR": str(home / "claude"), "CODEX_HOME": str(home / "codex"),
+                           "PATH": os.pathsep.join([str(real), os.environ["PATH"]])}
+            with mock.patch.dict(os.environ, environment, clear=True):
+                key = bot.store() / "tomjseery-bot.pem"
+                bot.write_key(key, b"unused fixture key")
+                bot.write_private(bot.store() / "tomjseery-bot.json", {**RECORD, "key": str(key)})
+                with mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "remove_user_path"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    bot.setup()
+                    bot.setup(check=True)
+                bot.write_private(bot.store() / "tokens/tomjseery-bot-installations.json", INSTALLED)
+                bot.write_private(bot.store() / "tokens/tomjseery-bot-tomjseery.json",
+                                  {"token": "fixture-token", "expires": 4102444800})
+                settings = json.loads((home / "claude/settings.json").read_text(encoding="utf-8"))["env"]
+                result = subprocess.run([str(bot.shim_directory() / launcher.name), "api", "repos/tomjseery/smoke"],
+                                        cwd=home, env={**environment, **settings}, capture_output=True,
+                                        text=True, timeout=30, check=True)
+                self.assertEqual("BOT", result.stdout.strip())
+                self.assertNotIn("TJ_AGENT", os.environ)
 
 
 def bot_toml(text):
