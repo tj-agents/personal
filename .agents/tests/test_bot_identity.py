@@ -567,6 +567,18 @@ class FreshSetupTests(unittest.TestCase):
                         contextlib.redirect_stdout(io.StringIO()):
                     bot.setup()
                     bot.setup(check=True)
+                    claude = home / "claude/settings.json"
+                    settings = json.loads(claude.read_text(encoding="utf-8"))
+                    settings["permissions"]["deny"].remove(bot.MCP_DENY[0])
+                    claude.write_text(json.dumps(settings), encoding="utf-8")
+                    with self.assertRaisesRegex(bot.IdentityError, "write restrictions are missing"):
+                        bot.setup(check=True)
+                    del settings["permissions"]
+                    claude.write_text(json.dumps(settings), encoding="utf-8")
+                    with self.assertRaisesRegex(bot.IdentityError, "host settings are missing"):
+                        bot.setup(check=True)
+                    bot.setup()
+                    bot.setup(check=True)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-installations.json", INSTALLED)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-tomjseery.json",
                                   {"token": "fixture-token", "expires": 4102444800})

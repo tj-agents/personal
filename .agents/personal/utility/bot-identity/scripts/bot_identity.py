@@ -778,11 +778,15 @@ def verify_host_setup() -> None:
     claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
     codex = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
     try:
-        claude_env = json.loads(claude.read_text(encoding="utf-8-sig"))["env"]
+        claude_settings = json.loads(claude.read_text(encoding="utf-8-sig"))
+        claude_env = claude_settings["env"]
+        claude_denials = claude_settings["permissions"]["deny"]
         import tomllib
         codex_env = tomllib.loads(codex.read_text(encoding="utf-8-sig"))["shell_environment_policy"]["set"]
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise IdentityError("agent host settings are missing; run setup") from error
+    if not isinstance(claude_denials, list) or any(rule not in claude_denials for rule in MCP_DENY):
+        raise IdentityError("agent host write restrictions are missing; run setup")
     for settings in (claude_env, codex_env):
         if any(settings.get(key) != value for key, value in environment.items()) or any(
                 (key.startswith("GIT_CONFIG_") or key in MANAGED) and key not in environment for key in settings):
