@@ -366,29 +366,37 @@ def protect(path: Path, directory: bool = False, *, check: bool = False) -> None
             try:
                 inherit = "OICI" if directory else ""
                 sddl = f"D:P(A;{inherit};FA;;;SY)(A;{inherit};FA;;;{sid_text.value})"
-                if check:
-                    needed = wintypes.DWORD()
-                    advapi.GetFileSecurityW(str(path), 4, None, 0, ctypes.byref(needed))
-                    actual = ctypes.create_string_buffer(needed.value)
-                    if not needed.value or not advapi.GetFileSecurityW(
-                            str(path), 4, actual, needed.value, ctypes.byref(needed)):
-                        raise IdentityError("could not inspect the local GitHub App permissions")
-                    rendered = wintypes.LPWSTR()
-                    if not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                            actual, 1, 4, ctypes.byref(rendered), None):
-                        raise IdentityError("could not inspect the local GitHub App permissions")
-                    try:
-                        value = rendered.value
-                        if "P" not in value.split("(", 1)[0][2:] or sorted(value.split("(")[1:]) != sorted(sddl.split("(")[1:]):
-                            raise IdentityError("the local GitHub App enrollment permissions are unsafe")
-                    finally:
-                        kernel.LocalFree(rendered)
-                    return
                 security = ctypes.c_void_p()
                 if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
                         sddl, 1, ctypes.byref(security), None):
                     raise IdentityError("could not protect the local GitHub App enrollment")
                 try:
+                    if check:
+                        needed = wintypes.DWORD()
+                        advapi.GetFileSecurityW(str(path), 4, None, 0, ctypes.byref(needed))
+                        actual = ctypes.create_string_buffer(needed.value)
+                        if not needed.value or not advapi.GetFileSecurityW(
+                                str(path), 4, actual, needed.value, ctypes.byref(needed)):
+                            raise IdentityError("could not inspect the local GitHub App permissions")
+                        expected_rendered = wintypes.LPWSTR()
+                        actual_rendered = wintypes.LPWSTR()
+                        try:
+                            if not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                                    security, 1, 4, ctypes.byref(expected_rendered), None) or \
+                                    not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                                            actual, 1, 4, ctypes.byref(actual_rendered), None):
+                                raise IdentityError("could not inspect the local GitHub App permissions")
+                            expected = expected_rendered.value
+                            value = actual_rendered.value
+                            if "P" not in value.split("(", 1)[0][2:] or \
+                                    sorted(value.split("(")[1:]) != sorted(expected.split("(")[1:]):
+                                raise IdentityError("the local GitHub App enrollment permissions are unsafe")
+                        finally:
+                            if expected_rendered:
+                                kernel.LocalFree(expected_rendered)
+                            if actual_rendered:
+                                kernel.LocalFree(actual_rendered)
+                        return
                     # DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
                     if not advapi.SetFileSecurityW(str(path), 0x80000004, security):
                         raise IdentityError("could not protect the local GitHub App enrollment")
