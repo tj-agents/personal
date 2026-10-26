@@ -10,7 +10,9 @@
   },
   "enabledPlugins": {
     "agent-store@tj-agents": true,
+    "agent@tj-agents": true,
     "base@tj-agents": true,
+    "cli@tj-agents": true,
     "engineering@tj-agents": true,
     "github-actions@tj-agents": true,
     "machine@tj-agents": true,
