@@ -700,9 +700,8 @@ def agent_path(path: str) -> str:
     for entry in path.split(os.pathsep):
         if not entry or is_shim(entry):
             continue
-        key = os.path.normcase(os.path.normpath(entry))
-        if key not in seen:
-            seen.add(key)
+        if entry not in seen:
+            seen.add(entry)
             entries.append(entry)
     return os.pathsep.join(entries)
 
