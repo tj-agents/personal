@@ -5,7 +5,7 @@ kind: convention
 domain: personal
 profile: core
 applicability: material Tommy revises or rehearses
-requires: docs
+requires: personal
 provenance: house
 ---
 
