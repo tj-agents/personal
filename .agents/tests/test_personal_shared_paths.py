@@ -1,8 +1,38 @@
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        ".claude/skills/bot-identity/scripts/bot_identity.py",
+        ".codex/skills/bot-identity/scripts/bot_identity.py",
+        "plugins/personal/skills/bot-identity/scripts/bot_identity.py",
+        "plugins/personal/.agents/personal/utility/bot-identity/scripts/bot_identity.py",
+    ],
+)
+def test_generated_entry_imports_its_bundled_library_without_site_packages(
+    entry: str,
+    tmp_path: Path,
+) -> None:
+    script = Path(__file__).resolve().parents[2] / entry
+
+    result = subprocess.run(
+        [sys.executable, "-E", "-S", "-B", str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=True,
+    )
+
+    assert "usage:" in result.stdout
 
 
 @pytest.fixture
