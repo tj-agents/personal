@@ -318,6 +318,23 @@ class AgentEnvironmentTests(Sandbox):
         windows = self.settings(True, "/usr/bin")
         self.assertEqual(windows["PATH"], windows["Path"])
 
+    def test_repeated_path_entries_keep_their_first_search_position(self):
+        shim = str(bot.shim_directory())
+        path = os.pathsep.join(["/shell", "/shell", shim, "/tools", "/shell", "/tools"])
+        self.assertEqual(os.pathsep.join([shim, "/shell", "/tools"]), bot.agent_path(path))
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink parent traversal")
+    def test_symlink_parent_paths_do_not_hide_a_later_executable(self):
+        tools, child = self.home / "tools", self.home / "other" / "child"
+        tools.mkdir()
+        child.mkdir(parents=True)
+        (tools / "link").symlink_to(child, target_is_directory=True)
+        executable = tools / "gh"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        path = bot.agent_path(os.pathsep.join([str(tools / "link" / ".."), str(tools)]))
+        self.assertEqual(executable, Path(shutil.which("gh", path=path)))
+
     def test_the_agent_path_resolves_gh_to_the_wrapper_before_the_real_gh(self):
         shim, real = bot.shim_directory(), self.home / "real"
         name = "gh.exe" if bot.WINDOWS else "gh"
@@ -621,6 +638,16 @@ class FreshSetupTests(unittest.TestCase):
                         contextlib.redirect_stdout(io.StringIO()):
                     bot.setup()
                     bot.setup(check=True)
+                    original_path = os.environ["PATH"]
+                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(real), original_path])}):
+                        bot.setup(check=True)
+                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(home / "new tools"), original_path])}):
+                        with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
+                            bot.setup(check=True)
+                    entries = original_path.split(os.pathsep)
+                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([*entries[1:], entries[0]])}):
+                        with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
+                            bot.setup(check=True)
                     claude = home / "claude/settings.json"
                     settings = json.loads(claude.read_text(encoding="utf-8"))
                     settings["permissions"]["deny"].remove(bot.MCP_DENY[0])
