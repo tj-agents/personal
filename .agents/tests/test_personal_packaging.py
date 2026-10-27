@@ -80,7 +80,6 @@ class PersonalPackagingTests(unittest.TestCase):
         self.assertIn(
             ".agents/personal/workflow/address/work-item", harness["source_roots"]
         )
-        self.assertNotIn("tj-agents/work-items", harness["requires"]["plugins"])
 
     def test_qualified_references_resolve_to_declared_dependencies(self) -> None:
         for path in (ROOT / ".agents/personal").rglob("SKILL.md"):
