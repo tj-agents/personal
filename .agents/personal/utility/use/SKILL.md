@@ -5,7 +5,7 @@ kind: utility
 domain: personal
 profile: core
 applicability: explicitly adopted personal projects
-requires: python, machine
+requires: python, agent
 provenance: house
 ---
 
