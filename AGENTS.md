@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:7158879d94163338547def1bb7c9fd6ad030b7e49e60d7e7e1e4c13c0142efae -->
+<!-- BEGIN personal:rules sha256:eee7a719bb90e67aaa81ac101a45836dd099bc745fee61216c99ec7d6075f12d -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -33,8 +33,8 @@ fallback implementations, adapters, configuration formats, compatibility branche
 migration docs. Migrate all known callers, project declarations, installed registrations, generated
 artifacts and live runtime entry points in the same cutover, and coordinate upgrades with the actual
 collaborating developers. Run each migration once during the cutover and delete it; never ship migration
-or cleanup code that runs again later. A commit that removes or renames a skill while a tracked source still names its
-old `<package>:<name>` is blocked until every reference is migrated or deleted.
+or cleanup code that runs again later. CI fails a commit that removes or renames a skill while a tracked source
+still names its old `<package>:<name>`.
 
 Verify the entry points people actually use on every supported platform, including Windows and Linux
 launch paths where supported. Source edits, successful generation, passing unit tests and version commands
