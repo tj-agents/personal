@@ -13,22 +13,6 @@
     "setup": {
       "script": ".agents/personal/utility/bot-identity/scripts/bot_identity.py"
     },
-    "hooks": [
-      {
-        "path": ".agents/personal/policy/rules/scripts/clean_cut.py",
-        "hosts": [
-          "claude",
-          "codex"
-        ]
-      },
-      {
-        "path": ".agents/personal/policy/rules/scripts/session-context.py",
-        "hosts": [
-          "claude",
-          "codex"
-        ]
-      }
-    ],
     "permissions": {
       "claude_allow": [],
       "codex_prefix_rules": []
