@@ -43,7 +43,8 @@
       "tj-agents/personal",
       "tj-agents/base",
       "tj-agents/engineering",
-      "tj-agents/agent"
+      "tj-agents/agent",
+      "tj-agents/docs"
     ]
   }
 }
