@@ -930,6 +930,9 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.version_info < (3, 12):
+        print("bot_identity requires Python 3.12 or newer", file=sys.stderr)
+        return 2
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         if argv[:1] == ["gh"]:
