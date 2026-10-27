@@ -76,6 +76,11 @@ App or installation settings page for Tommy to correct and never changes GitHub 
 ```powershell
 pwsh .agents/sync-generated.ps1
 pwsh .agents/sync-generated.ps1 -Check
+uv sync --locked
+uv run pytest
 ```
+
+Run authored Python scripts with `uv run python` so they use the declared dependencies. Generated
+repository-local skills and installed plugin entry points carry their libraries beside their scripts.
 
 The layout, the vendored generator and CI come from [Template](https://github.com/tj-agents/template).
