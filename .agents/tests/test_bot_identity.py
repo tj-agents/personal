@@ -25,7 +25,10 @@ spec.loader.exec_module(bot)
 RECORD = {"id": 5397553, "slug": "tomjseery-bot", "client_id": "Iv23liYRkDvGiQXwwzls", "owner": "tomjseery",
           "key": "unused.pem"}
 INSTALLED = {"tj-agents": 7, "tomjseery": 8}
-ARGV_RECORDER = "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+ARGV_RECORDER = ("import json, sys, tj_cli\nfrom pathlib import Path\nfrom tj_cli.paths import prepend\n"
+                 "assert Path(tj_cli.__file__).parent == Path(__file__).parent / 'tj_cli'\n"
+                 "assert prepend(('tools', 'tools'), 'wrapper') == ('wrapper', 'tools')\n"
+                 "print(json.dumps(sys.argv[1:]))\n")
 
 
 def without_agent_settings(environment):
@@ -360,7 +363,7 @@ class ShimTests(Sandbox):
     @unittest.skipUnless(os.name == "nt", "Windows launcher")
     def test_windows_gh_exe_passes_every_argument_through(self):
         self.install()
-        self.assertEqual(["bot_identity.py", "gh.exe", "tomjseery-bot.json"],
+        self.assertEqual(["bot_identity.py", "gh.exe", "tj_cli", "tomjseery-bot.json"],
                          sorted(path.name for path in bot.shim_directory().iterdir()))
         result = subprocess.run([str(bot.shim_directory() / "gh.exe"), *self.ARGUMENTS], capture_output=True,
                                 text=True, timeout=60, check=True)
@@ -630,7 +633,7 @@ class FreshSetupTests(unittest.TestCase):
             environment = {**without_agent_settings(os.environ), "HOME": str(home), "USERPROFILE": str(home),
                            "CLAUDE_CONFIG_DIR": str(home / "claude"), "CODEX_HOME": str(home / "codex"),
                            "PATH": os.pathsep.join([str(real), os.environ["PATH"]])}
-            with mock.patch.dict(os.environ, environment, clear=True):
+            with mock.patch.object(os, "environ", environment):
                 key = bot.store() / "tomjseery-bot.pem"
                 bot.write_key(key, b"unused fixture key")
                 bot.write_private(bot.store() / "tomjseery-bot.json", {**RECORD, "key": str(key)})
@@ -639,13 +642,13 @@ class FreshSetupTests(unittest.TestCase):
                     bot.setup()
                     bot.setup(check=True)
                     original_path = os.environ["PATH"]
-                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(real), original_path])}):
+                    with mock.patch.object(os, "environ", {**os.environ, "PATH": os.pathsep.join([str(real), original_path])}):
                         bot.setup(check=True)
-                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(home / "new tools"), original_path])}):
+                    with mock.patch.object(os, "environ", {**os.environ, "PATH": os.pathsep.join([str(home / "new tools"), original_path])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
                             bot.setup(check=True)
                     entries = original_path.split(os.pathsep)
-                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([*entries[1:], entries[0]])}):
+                    with mock.patch.object(os, "environ", {**os.environ, "PATH": os.pathsep.join([*entries[1:], entries[0]])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
                             bot.setup(check=True)
                     claude = home / "claude/settings.json"
