@@ -11,6 +11,8 @@ provenance: house
 
 # Revision pages
 
+Owns the structure of material Tommy revises and rehearses.
+
 A revision page is reread and rehearsed out loud, not read once. Lead with a summary a reader can stop at,
 number the sections, and put parallel items in tables.
 
