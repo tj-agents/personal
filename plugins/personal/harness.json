@@ -20,13 +20,6 @@
           "claude",
           "codex"
         ]
-      },
-      {
-        "path": ".agents/personal/policy/rules/scripts/session-context.py",
-        "hosts": [
-          "claude",
-          "codex"
-        ]
       }
     ],
     "permissions": {
