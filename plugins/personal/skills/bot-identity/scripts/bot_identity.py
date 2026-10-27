@@ -695,8 +695,16 @@ def helper_command(script: Path) -> str:
 
 
 def agent_path(path: str) -> str:
-    return os.pathsep.join([str(shim_directory()), *(entry for entry in path.split(os.pathsep)
-                                                     if entry and not is_shim(entry))])
+    entries = [str(shim_directory())]
+    seen = set()
+    for entry in path.split(os.pathsep):
+        if not entry or is_shim(entry):
+            continue
+        key = os.path.normcase(os.path.normpath(entry))
+        if key not in seen:
+            seen.add(key)
+            entries.append(entry)
+    return os.pathsep.join(entries)
 
 
 def agent_environment(script: Path, path: str) -> dict[str, str]:
