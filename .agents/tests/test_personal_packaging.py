@@ -12,6 +12,7 @@ EXPECTED_SKILLS = {
     "address-work-item",
     "bot-identity",
     "create-work-item",
+    "revision",
     "rules",
     "work-item",
 }
