@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:7158879d94163338547def1bb7c9fd6ad030b7e49e60d7e7e1e4c13c0142efae -->
+<!-- BEGIN personal:rules sha256:e15f69a3c591113eec7ca0efa3aaf09cb1baff278e3171f86c466f0405785658 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -65,7 +65,7 @@ to the change, with tests that prove behavior rather than restate the implementa
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.
 
-This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
-its marked native instruction block from this body and checks it for drift. A selected plugin or an
+This policy is authored once here. Adoption generates its marked native instruction block in AGENTS.md,
+makes CLAUDE.md import AGENTS.md and checks the generated block for drift. A selected plugin or an
 `always` tier alone is not proof of loading.
 <!-- END personal:rules -->
