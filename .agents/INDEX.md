@@ -4,6 +4,7 @@ Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; a skill's n
 
 ## personal
 
+- `revision` — convention — core — `.agents/personal/convention/revision/SKILL.md`
 - `rules` — policy — core — `.agents/personal/policy/rules/SKILL.md`
 - `bot-identity` — utility — core — `.agents/personal/utility/bot-identity/SKILL.md`
 - `create-work-item` — utility — core — `.agents/personal/utility/create/work-item/SKILL.md`

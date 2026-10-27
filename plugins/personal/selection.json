@@ -10,6 +10,7 @@
       "address-work-item",
       "bot-identity",
       "create-work-item",
+      "revision",
       "rules",
       "use",
       "work-item"
@@ -62,6 +63,20 @@
       ]
     },
     {
+      "name": "revision",
+      "kind": "convention",
+      "profile": "core",
+      "applicability": [
+        "material Tommy revises or rehearses"
+      ],
+      "requires": [
+        "personal"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
       "name": "rules",
       "kind": "policy",
       "profile": "core",
@@ -84,7 +99,7 @@
       ],
       "requires": [
         "python",
-        "machine"
+        "agent"
       ],
       "provenance": [
         "house"
