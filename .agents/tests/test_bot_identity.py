@@ -323,6 +323,18 @@ class AgentEnvironmentTests(Sandbox):
         path = os.pathsep.join(["/shell", "/shell", shim, "/tools", "/shell", "/tools"])
         self.assertEqual(os.pathsep.join([shim, "/shell", "/tools"]), bot.agent_path(path))
 
+    @unittest.skipIf(os.name == "nt", "POSIX symlink parent traversal")
+    def test_symlink_parent_paths_do_not_hide_a_later_executable(self):
+        tools, child = self.home / "tools", self.home / "other" / "child"
+        tools.mkdir()
+        child.mkdir(parents=True)
+        (tools / "link").symlink_to(child, target_is_directory=True)
+        executable = tools / "gh"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        path = bot.agent_path(os.pathsep.join([str(tools / "link" / ".."), str(tools)]))
+        self.assertEqual(executable, Path(shutil.which("gh", path=path)))
+
     def test_the_agent_path_resolves_gh_to_the_wrapper_before_the_real_gh(self):
         shim, real = bot.shim_directory(), self.home / "real"
         name = "gh.exe" if bot.WINDOWS else "gh"
