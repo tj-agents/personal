@@ -63,6 +63,10 @@ The plugin declares this setup step in its harness manifest for Core's setup and
 Initial enrollment requires Tommy's authenticated GitHub key issuance through the local browser wizard;
 ordinary setup and verification never prompt. See the [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md).
 
+The wrapper requires Python 3.12 or newer. CLI owns its shared PATH implementation in `tj_cli.paths`;
+the locked `tj-cli` library ships with the plugin and setup copies it into the managed wrapper directory.
+Neither the installed wrapper nor setup needs a CLI source checkout or a manual package installation.
+
 Readiness also requires `repository_creation:write` on the App and its `tj-agents` installation. Setup fails
 closed if that creation capability is removed, or if `administration:write` is granted; it reports the specific
 App or installation settings page for Tommy to correct and never changes GitHub permissions itself.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run agent GitHub access as Tommy's GitHub App in personal repositories (Python 3.11+, needs openssl).
+"""Run agent GitHub access as Tommy's GitHub App in personal repositories (Python 3.12+, needs openssl).
 
 `token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
 the real gh, and `setup` installs the wrapper and the agent-only settings for Claude and Codex.
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from importlib.resources import files
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 import io
@@ -26,6 +27,8 @@ import urllib.error
 import webbrowser
 import zipfile
 import stat
+
+from tj_cli.paths import prepend
 
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
@@ -695,15 +698,8 @@ def helper_command(script: Path) -> str:
 
 
 def agent_path(path: str) -> str:
-    entries = [str(shim_directory())]
-    seen = set()
-    for entry in path.split(os.pathsep):
-        if not entry or is_shim(entry):
-            continue
-        if entry not in seen:
-            seen.add(entry)
-            entries.append(entry)
-    return os.pathsep.join(entries)
+    entries = (entry for entry in path.split(os.pathsep) if entry and not is_shim(entry))
+    return os.pathsep.join(prepend(entries, str(shim_directory())))
 
 
 def agent_environment(script: Path, path: str) -> dict[str, str]:
@@ -772,7 +768,8 @@ def script_launcher() -> bytes:
 
 
 def windows_executable(script: Path) -> bytes:
-    main = (f"import runpy, sys\nsys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
+    main = (f"import runpy, sys\nsys.path.insert(0, {str(script.parent)!r})\n"
+            f"sys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
             f"runpy.run_path({str(script)!r}, run_name='__main__')\n")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as payload:
@@ -780,9 +777,52 @@ def windows_executable(script: Path) -> bytes:
     return script_launcher() + f'#!"{sys.executable}" -B\n'.encode() + archive.getvalue()
 
 
+def package_contents(directory: Path) -> dict[Path, bytes]:
+    if not directory.is_dir() or is_reparse(directory):
+        raise IdentityError("the shared CLI package is missing or unsafe; run setup")
+    contents = {}
+    for path in sorted(directory.rglob("*")):
+        if is_reparse(path):
+            raise IdentityError("the shared CLI package contains a link; run setup")
+        relative = path.relative_to(directory)
+        if "__pycache__" in relative.parts or path.suffix == ".pyc":
+            continue
+        if path.is_file():
+            contents[relative] = path.read_bytes()
+    return contents
+
+
+def cli_package_contents() -> dict[Path, bytes]:
+    directory = files("tj_cli")
+    if not isinstance(directory, Path):
+        raise IdentityError("the shared CLI package must be a shipped filesystem package")
+    return package_contents(directory)
+
+
+def install_cli_package(directory: Path) -> None:
+    expected = cli_package_contents()
+    current = package_contents(directory) if directory.exists() else {}
+    if is_reparse(directory):
+        raise IdentityError("the installed shared CLI package is unsafe")
+    for relative, content in expected.items():
+        target = directory / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    for relative in current.keys() - expected.keys():
+        (directory / relative).unlink()
+    for cached in directory.rglob("*.pyc"):
+        cached.unlink()
+    for child in sorted(directory.rglob("*"), key=lambda path: len(path.parts), reverse=True):
+        if child.is_dir() and not any(child.iterdir()):
+            child.rmdir()
+
+
 def install_shims(source: Path) -> Path:
     directory = shim_directory()
+    if is_reparse(directory):
+        raise IdentityError("the GitHub App wrapper directory is unsafe")
     directory.mkdir(parents=True, exist_ok=True)
+    install_cli_package(directory / "tj_cli")
     script = directory / source.name
     shutil.copyfile(source, script)
     shutil.copyfile(descriptor_path(), script.with_name("tomjseery-bot.json"))
@@ -829,6 +869,8 @@ def verify_host_setup() -> None:
     source = Path(__file__).resolve()
     script = installed_script()
     descriptor = script.with_name("tomjseery-bot.json")
+    if package_contents(shim_directory() / "tj_cli") != cli_package_contents():
+        raise IdentityError("the installed shared CLI package is stale; run setup")
     for path, expected in ((script, source.read_bytes()),
                            (descriptor, source.with_name("tomjseery-bot.json").read_bytes())):
         safe_existing_file(path)
