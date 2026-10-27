@@ -5,7 +5,7 @@ kind: convention
 domain: personal
 profile: core
 applicability: material Tommy revises or rehearses
-requires: personal
+requires: docs
 provenance: house
 ---
 
@@ -13,8 +13,8 @@ provenance: house
 
 Owns the structure of material Tommy revises and rehearses.
 
-A revision page is reread and rehearsed out loud, not read once. Lead with a summary a reader can stop at,
-number the sections, and put parallel items in tables.
+A revision page is reread and rehearsed out loud, not read once. Lay it out with `docs:layout`; this
+adds what revising needs.
 
 ## One page per topic
 

@@ -25,6 +25,7 @@ EXTERNAL_SKILLS = {
     },
     "agent": {"plugins"},
     "workflow": {"run"},
+    "docs": {"layout"},
 }
 
 
