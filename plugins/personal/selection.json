@@ -3,7 +3,8 @@
   "dependencies": [
     "tj-agents/base",
     "tj-agents/engineering",
-    "tj-agents/agent"
+    "tj-agents/agent",
+    "tj-agents/docs"
   ],
   "profiles": {
     "core": [
@@ -70,7 +71,7 @@
         "material Tommy revises or rehearses"
       ],
       "requires": [
-        "personal"
+        "docs"
       ],
       "provenance": [
         "house"
