@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 -B \"${PLUGIN_ROOT}/.agents/personal/policy/rules/scripts/session-context.py\"",
-            "commandWindows": "python -B \"${PLUGIN_ROOT}/.agents/personal/policy/rules/scripts/session-context.py\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "hooks": [

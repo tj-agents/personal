@@ -10,7 +10,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / ".agents/personal/policy/rules"
 GATE = POLICY / "scripts/clean_cut.py"
-CONTEXT = POLICY / "scripts/session-context.py"
 
 
 def skill(name: str) -> str:
@@ -243,31 +242,3 @@ class CleanCutGateTests(unittest.TestCase):
         self.write(".agents/plugins.json", json.dumps({"plugins": []}))
         self.git("rm", "-rq", ".agents/demo/contract/old")
         self.assertEqual("", self.gate("git commit -m x"))
-
-
-class SessionContextTests(unittest.TestCase):
-    def context(self, cwd: Path) -> str:
-        result = subprocess.run(
-            [sys.executable, "-B", str(CONTEXT)],
-            input=json.dumps({"cwd": str(cwd)}),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout
-
-    def test_emits_the_policy_body_in_a_selecting_project(self) -> None:
-        output = json.loads(self.context(ROOT))["hookSpecificOutput"]
-        self.assertEqual("SessionStart", output["hookEventName"])
-        body = (
-            (POLICY / "SKILL.md")
-            .read_text(encoding="utf-8")
-            .split("\n---\n", 1)[1]
-            .strip()
-        )
-        self.assertIn(body, output["additionalContext"])
-
-    def test_is_silent_outside_a_selecting_project(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
-            self.assertEqual("", self.context(Path(directory)))
