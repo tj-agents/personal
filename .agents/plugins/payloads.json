@@ -4,6 +4,10 @@
       "personal"
     ]
   },
+  "resources": [
+    {"plugin": "personal", "distribution": "tj-cli", "destination": ".agents/personal/utility/bot-identity/scripts"},
+    {"plugin": "personal", "distribution": "tj-cli", "destination": "skills/bot-identity/scripts"}
+  ],
   "dependencies": {
     "personal": [
       "tj-agents/engineering",
