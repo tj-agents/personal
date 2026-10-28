@@ -644,27 +644,32 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
 
 def approval_requested(arguments: list[str]) -> bool:
     index = 0
-    while index < len(arguments):
-        flag, equals, _ = arguments[index].partition("=")
-        if flag in ("-R", "--repo", "--hostname"):
-            index += 1 if equals else 2
-        elif arguments[index].startswith("-R"):
-            index += 1
-        else:
-            break
-    if arguments[index:index + 2] != ["pr", "review"]:
-        return False
-    index += 2
+    commands = []
     while index < len(arguments):
         argument = arguments[index]
         if argument == "--":
             break
-        if argument in ("--approve", "--approve=true", "-a", "-a=true"):
+        if commands == ["pr", "review"] and argument in ("--approve", "--approve=true"):
             return True
         flag, equals, _ = argument.partition("=")
-        if flag in ("--body", "--body-file", "--repo", "--hostname", "-b", "-F", "-R"):
+        if flag in ("--body", "--body-file", "--repo", "--hostname"):
             index += 1 if equals else 2
+        elif argument.startswith("-") and not argument.startswith("--"):
+            consumes_next = False
+            for offset, short in enumerate(argument[1:], start=1):
+                if short in ("b", "F", "R"):
+                    consumes_next = offset == len(argument) - 1
+                    break
+                if short == "a" and commands == ["pr", "review"]:
+                    if argument[offset + 1:] != "=false":
+                        return True
+                    break
+            index += 2 if consumes_next else 1
         else:
+            if not argument.startswith("-") and len(commands) < 2:
+                commands.append(argument)
+                if commands != ["pr", "review"][:len(commands)]:
+                    return False
             index += 1
     return False
 
