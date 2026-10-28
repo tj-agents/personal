@@ -270,7 +270,7 @@ class GhWrapperTests(Sandbox):
                          *(f"{flag}={value}" for flag in ("--approve", "-a")
                            for value in ("0", "f", "F", "false", "FALSE", "False"))):
             with self.subTest(argument=argument):
-                self.assertFalse(bot.approval_requested(["pr", "review", "5", argument]))
+                self.assertFalse(bot.review_approval(["pr", "review", "5", argument])[0])
 
     def test_every_gh_true_spelling_is_refused_before_credentials(self):
         for flag in ("--approve", "-a"):
