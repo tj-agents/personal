@@ -252,6 +252,9 @@ class GhWrapperTests(Sandbox):
         for arguments, checkout in (
             (("pr", "review", "5", "-a"), "tj-agents"),
             (("--repo", "tj-agents/core", "pr", "review", "5", "--approve"), None),
+            (("pr", "-R", "tj-agents/core", "review", "5", "--approve"), None),
+            (("pr", "review", "5", "-abhello", "-R", "tj-agents/core"), None),
+            (("pr", "review", "5", "-a=true"), "tj-agents"),
         ):
             with self.subTest(arguments=arguments), \
                     mock.patch.object(bot, "app_record", side_effect=AssertionError("credentials read")):
@@ -261,6 +264,11 @@ class GhWrapperTests(Sandbox):
 
     def test_a_review_body_is_not_an_approval_flag(self):
         self.environment("pr", "review", "5", "--comment", "--body", "--approve", checkout="tj-agents")
+
+    def test_attached_review_body_and_false_flags_are_not_approvals(self):
+        for argument in ("-bapprove", "-b-a", "--body=--approve", "--approve=false", "-a=false"):
+            with self.subTest(argument=argument):
+                self.assertFalse(bot.approval_requested(["pr", "review", "5", argument]))
 
     def test_uncovered_account_approval_is_not_changed(self):
         self.assertNotIn("TJ_AGENT", environment)

@@ -25,6 +25,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "BLE", "C4", "SIM", "PTH", "P
 strict = true
 warn_unreachable = true
 files = [
+    ".agents/tests/test_approval_handoff.py",
     ".agents/tests/test_personal_packaging.py",
     ".agents/personal/utility/bot-identity/scripts/prepare_approval.py",
 ]

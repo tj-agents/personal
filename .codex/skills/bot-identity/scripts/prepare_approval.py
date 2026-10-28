@@ -7,13 +7,20 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
+from enum import StrEnum
 from pathlib import Path
+from typing import assert_never
 
 import bot_identity
 
 PULL_REQUEST = re.compile(
     r"https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?"
 )
+
+
+class Shell(StrEnum):
+    BASH = "bash"
+    POWERSHELL = "powershell"
 
 
 def approval_targets(values: Sequence[str]) -> list[str]:
@@ -38,11 +45,11 @@ def powershell_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def approval_command(values: Sequence[str], gh: str, shell: str) -> str:
+def approval_command(values: Sequence[str], gh: str, shell: Shell) -> str:
     targets = approval_targets(values)
     if any(character in gh for character in "\r\n\x00"):
         raise bot_identity.IdentityError("the gh executable path must fit on one line")
-    if shell == "bash":
+    if shell is Shell.BASH:
         body = (
             f"g={shlex.quote(Path(gh).as_posix())}; "
             'GH_TOKEN=$("$g" auth token --user tomjseery) || exit; export GH_TOKEN; '
@@ -53,7 +60,7 @@ def approval_command(values: Sequence[str], gh: str, shell: str) -> str:
             "!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR bash -c "
             + shlex.quote(body)
         )
-    if shell == "powershell":
+    if shell is Shell.POWERSHELL:
         pulls = ",".join(powershell_literal(target) for target in targets)
         return (
             "!& { Remove-Item Env:GH_TOKEN,Env:GITHUB_TOKEN,Env:GH_CONFIG_DIR "
@@ -65,12 +72,12 @@ def approval_command(values: Sequence[str], gh: str, shell: str) -> str:
             "& $g pr review --approve $p; "
             "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } }"
         )
-    raise bot_identity.IdentityError("supported shells are bash and powershell")
+    assert_never(shell)
 
 
 def prepare_approval(
     values: Sequence[str],
-    shell: str,
+    shell: Shell,
     clipboard_script: Path,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
@@ -109,20 +116,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Copy Tommy's PR approval command to his clipboard."
     )
-    parser.add_argument("--shell", choices=("bash", "powershell"), required=True)
+    parser.add_argument("--shell", type=Shell, choices=list(Shell), required=True)
     parser.add_argument("--clipboard-script", type=Path, required=True)
     parser.add_argument("pull_requests", nargs="+")
     arguments = parser.parse_args(argv)
     try:
-        print(
-            prepare_approval(
-                arguments.pull_requests, arguments.shell, arguments.clipboard_script
-            )
+        receipt = prepare_approval(
+            arguments.pull_requests, arguments.shell, arguments.clipboard_script
         )
-        return 0
     except (bot_identity.IdentityError, OSError, subprocess.SubprocessError) as error:
         print(f"prepare-approval: {error}", file=sys.stderr)
         return 2
+    else:
+        print(receipt)
+        return 0
 
 
 if __name__ == "__main__":
