@@ -642,46 +642,56 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     return environment if arguments[:1] == ["auth"] else tommy_environment()
 
 
-def approval_requested(arguments: list[str]) -> bool:
+def review_approval(arguments: list[str]) -> tuple[bool, list[str]]:
     index = 0
     commands = []
+    approving = False
+    repositories = []
     while index < len(arguments):
         argument = arguments[index]
+        following = arguments[index + 1] if index + 1 < len(arguments) else ""
         if argument == "--":
             break
         flag, equals, value = argument.partition("=")
         if commands == ["pr", "review"] and flag == "--approve":
             if not equals or value in ("1", "t", "T", "true", "TRUE", "True"):
-                return True
+                approving = True
         if flag in ("--body", "--body-file", "--repo", "--hostname"):
+            if flag == "--repo":
+                repositories.append(value if equals else following)
             index += 1 if equals else 2
         elif argument.startswith("-") and not argument.startswith("--"):
             consumes_next = False
             for offset, short in enumerate(argument[1:], start=1):
                 if short in ("b", "F", "R"):
                     consumes_next = offset == len(argument) - 1
+                    if short == "R":
+                        repositories.append(following if consumes_next else argument[offset + 1:].removeprefix("="))
                     break
                 if short == "a" and commands == ["pr", "review"]:
                     suffix = argument[offset + 1:]
                     if not suffix.startswith("=") or suffix[1:] in ("1", "t", "T", "true", "TRUE", "True"):
-                        return True
-                    break
+                        approving = True
+                    if suffix.startswith("="):
+                        break
             index += 2 if consumes_next else 1
         else:
             if not argument.startswith("-") and len(commands) < 2:
                 commands.append(argument)
                 if commands != ["pr", "review"][:len(commands)]:
-                    return False
+                    return False, []
             index += 1
-    return False
+    owners = [repository.rstrip("/").split("/")[-2] for repository in repositories if "/" in repository]
+    return approving, owners
 
 
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
     checkout_owner = checkout()
-    owners = owners_from_arguments(arguments) + ([checkout_owner] if checkout_owner else [])
-    if approval_requested(arguments) and any(owner.lower() in REQUIRED_OWNERS for owner in owners):
+    approving, review_owners = review_approval(arguments)
+    owners = owners_from_arguments(arguments) + review_owners + ([checkout_owner] if checkout_owner else [])
+    if approving and any(owner.lower() in REQUIRED_OWNERS for owner in owners):
         raise IdentityError("Tommy must approve these PRs; use personal:bot-identity's prepare_approval.py "
                             "to put his command on the clipboard")
     environment = agent_gh_environment(arguments, checkout_owner)

@@ -265,6 +265,9 @@ class GhWrapperTests(Sandbox):
             (("pr", "-R", "tj-agents/core", "review", "5", "--approve"), None),
             (("pr", "review", "5", "-abhello", "-R", "tj-agents/core"), None),
             (("pr", "review", "5", "-a=true"), "tj-agents"),
+            (("pr", "review", "5", "-aRtj-agents/core"), "Infonetica"),
+            (("pr", "review", "5", "-aR", "tj-agents/core"), "Infonetica"),
+            (("pr", "review", "5", "--approve", "-Rgithub.com/tj-agents/core"), "Infonetica"),
         ):
             with self.subTest(arguments=arguments), \
                     mock.patch.object(bot, "app_record", side_effect=AssertionError("credentials read")):
@@ -280,7 +283,7 @@ class GhWrapperTests(Sandbox):
                          *(f"{flag}={value}" for flag in ("--approve", "-a")
                            for value in ("0", "f", "F", "false", "FALSE", "False"))):
             with self.subTest(argument=argument):
-                self.assertFalse(bot.approval_requested(["pr", "review", "5", argument]))
+                self.assertFalse(bot.review_approval(["pr", "review", "5", argument])[0])
 
     def test_every_gh_true_spelling_is_refused_before_credentials(self):
         for flag in ("--approve", "-a"):

@@ -61,7 +61,7 @@ clipboard. Preparation never authenticates or approves. Tommy alone invokes the 
 as `tomjseery`; agents never execute it.
 
 ```text
-python -B '<skill-directory>/scripts/prepare_approval.py' --shell powershell --clipboard-script '<cli:clip-directory>/scripts/copy_draft.py' https://github.com/tj-agents/core/pull/123
+python -B '<skill-directory>/scripts/prepare_approval.py' --shell powershell --clipboard-script '<clip-skill-directory>/scripts/copy_draft.py' https://github.com/tj-agents/core/pull/123
 ```
 
 This is environment containment, not an OS boundary: an agent can still read Tommy's stores directly
