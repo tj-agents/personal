@@ -11,7 +11,11 @@ package = false
 dev = ["mypy>=2.4.0", "pytest>=9.1.1", "ruff>=0.17.1"]
 
 [tool.ruff]
-include = [".agents/tests/test_personal_*.py"]
+include = [
+    ".agents/tests/test_personal_*.py",
+    ".agents/personal/utility/bot-identity/scripts/prepare_approval.py",
+    ".agents/tests/test_approval_handoff.py",
+]
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -20,7 +24,14 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "BLE", "C4", "SIM", "PTH", "P
 [tool.mypy]
 strict = true
 warn_unreachable = true
-files = [".agents/tests/test_personal_packaging.py"]
+files = [
+    ".agents/tests/test_personal_packaging.py",
+    ".agents/personal/utility/bot-identity/scripts/prepare_approval.py",
+]
+
+[[tool.mypy.overrides]]
+module = "bot_identity"
+follow_imports = "silent"
 
 [tool.pytest]
 strict = true

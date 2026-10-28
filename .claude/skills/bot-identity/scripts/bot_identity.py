@@ -642,10 +642,42 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     return environment if arguments[:1] == ["auth"] else tommy_environment()
 
 
+def approval_requested(arguments: list[str]) -> bool:
+    index = 0
+    while index < len(arguments):
+        flag, equals, _ = arguments[index].partition("=")
+        if flag in ("-R", "--repo", "--hostname"):
+            index += 1 if equals else 2
+        elif arguments[index].startswith("-R"):
+            index += 1
+        else:
+            break
+    if arguments[index:index + 2] != ["pr", "review"]:
+        return False
+    index += 2
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            break
+        if argument in ("--approve", "--approve=true", "-a", "-a=true"):
+            return True
+        flag, equals, _ = argument.partition("=")
+        if flag in ("--body", "--body-file", "--repo", "--hostname", "-b", "-F", "-R"):
+            index += 1 if equals else 2
+        else:
+            index += 1
+    return False
+
+
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
-    environment = agent_gh_environment(arguments, checkout())
+    checkout_owner = checkout()
+    owners = owners_from_arguments(arguments) + ([checkout_owner] if checkout_owner else [])
+    if approval_requested(arguments) and any(owner.lower() in REQUIRED_OWNERS for owner in owners):
+        raise IdentityError("Tommy must approve these PRs; use personal:bot-identity's prepare_approval.py "
+                            "to put his command on the clipboard")
+    environment = agent_gh_environment(arguments, checkout_owner)
     return run([real_gh(), *arguments], env=environment, check=False).returncode
 
 
