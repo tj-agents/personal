@@ -276,9 +276,20 @@ class GhWrapperTests(Sandbox):
         self.environment("pr", "review", "5", "--comment", "--body", "--approve", checkout="tj-agents")
 
     def test_attached_review_body_and_false_flags_are_not_approvals(self):
-        for argument in ("-bapprove", "-b-a", "--body=--approve", "--approve=false", "-a=false"):
+        for argument in ("-bapprove", "-b-a", "--body=--approve",
+                         *(f"{flag}={value}" for flag in ("--approve", "-a")
+                           for value in ("0", "f", "F", "false", "FALSE", "False"))):
             with self.subTest(argument=argument):
                 self.assertFalse(bot.approval_requested(["pr", "review", "5", argument]))
+
+    def test_every_gh_true_spelling_is_refused_before_credentials(self):
+        for flag in ("--approve", "-a"):
+            for value in ("1", "t", "T", "true", "TRUE", "True"):
+                with self.subTest(flag=flag, value=value), \
+                        mock.patch.object(bot, "app_record", side_effect=AssertionError("credentials read")):
+                    self.refused("pr", "review", "5", f"{flag}={value}", checkout="tj-agents")
+        self.installed.assert_not_called()
+        self.installation_token.assert_not_called()
 
     def test_uncovered_account_approval_is_not_changed(self):
         environment = self.environment("pr", "review", "5", "--approve", checkout="Infonetica")

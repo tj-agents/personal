@@ -649,9 +649,10 @@ def approval_requested(arguments: list[str]) -> bool:
         argument = arguments[index]
         if argument == "--":
             break
-        if commands == ["pr", "review"] and argument in ("--approve", "--approve=true"):
-            return True
-        flag, equals, _ = argument.partition("=")
+        flag, equals, value = argument.partition("=")
+        if commands == ["pr", "review"] and flag == "--approve":
+            if not equals or value in ("1", "t", "T", "true", "TRUE", "True"):
+                return True
         if flag in ("--body", "--body-file", "--repo", "--hostname"):
             index += 1 if equals else 2
         elif argument.startswith("-") and not argument.startswith("--"):
@@ -661,7 +662,8 @@ def approval_requested(arguments: list[str]) -> bool:
                     consumes_next = offset == len(argument) - 1
                     break
                 if short == "a" and commands == ["pr", "review"]:
-                    if argument[offset + 1:] != "=false":
+                    suffix = argument[offset + 1:]
+                    if not suffix.startswith("=") or suffix[1:] in ("1", "t", "T", "true", "TRUE", "True"):
                         return True
                     break
             index += 2 if consumes_next else 1
