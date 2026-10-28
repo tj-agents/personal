@@ -688,6 +688,14 @@ class FreshSetupTests(unittest.TestCase):
                                         cwd=home, env={**environment, **settings}, capture_output=True,
                                         text=True, timeout=30, check=True)
                 self.assertEqual("BOT", result.stdout.strip())
+                approval = subprocess.run(
+                    [str(bot.shim_directory() / launcher.name), "pr", "review", "--approve",
+                     "https://github.com/tj-agents/core/pull/527"],
+                    cwd=home, env={**environment, **settings}, capture_output=True,
+                    text=True, timeout=30, check=False)
+                self.assertEqual(2, approval.returncode)
+                self.assertEqual("", approval.stdout)
+                self.assertIn("prepare_approval.py", approval.stderr)
                 self.assertNotIn("TJ_AGENT", os.environ)
 
 
