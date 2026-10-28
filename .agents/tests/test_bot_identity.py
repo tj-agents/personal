@@ -245,8 +245,25 @@ class GhWrapperTests(Sandbox):
         self.assertEqual(str(bot.gh_config_directory()), environment["GH_CONFIG_DIR"])
 
     def test_naming_an_installed_account_wins_over_an_uncovered_checkout(self):
-        environment = self.environment("pr", "review", "--approve", "https://github.com/tomjseery/notes/pull/2",
+        environment = self.environment("pr", "view", "https://github.com/tomjseery/notes/pull/2",
         self.assertEqual("ghs_tomjseery", environment["GH_TOKEN"])
+
+    def test_agent_approval_is_refused_before_any_credential_acquisition(self):
+        for arguments, checkout in (
+            (("pr", "review", "5", "-a"), "tj-agents"),
+            (("--repo", "tj-agents/core", "pr", "review", "5", "--approve"), None),
+        ):
+            with self.subTest(arguments=arguments), \
+                    mock.patch.object(bot, "app_record", side_effect=AssertionError("credentials read")):
+                self.refused(*arguments, checkout=checkout)
+        self.installed.assert_not_called()
+        self.installation_token.assert_not_called()
+
+    def test_a_review_body_is_not_an_approval_flag(self):
+        self.environment("pr", "review", "5", "--comment", "--body", "--approve", checkout="tj-agents")
+
+    def test_uncovered_account_approval_is_not_changed(self):
+        self.assertNotIn("TJ_AGENT", environment)
 
     def test_an_installed_checkout_wins_over_an_uncovered_flag(self):
         self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
@@ -272,8 +289,9 @@ class GhWrapperTests(Sandbox):
 
     def test_tommys_own_terminal_runs_the_real_gh_untouched(self):
         del os.environ["TJ_AGENT"]
-        self.assertEqual(0, bot.run_gh(["pr", "list"], run=self.gh, checkout=lambda: "tj-agents"))
-        self.assertEqual([(["real-gh", "pr", "list"], None)], self.gh.calls)
+        arguments = ["pr", "review", "5", "--approve"]
+        self.assertEqual(0, bot.run_gh(arguments, run=self.gh, checkout=lambda: "tj-agents"))
+        self.assertEqual([(["real-gh", *arguments], None)], self.gh.calls)
 
 
 class AgentEnvironmentTests(Sandbox):
@@ -618,7 +636,7 @@ class FreshSetupTests(unittest.TestCase):
             environment = {**without_agent_settings(os.environ), "HOME": str(home), "USERPROFILE": str(home),
                            "CLAUDE_CONFIG_DIR": str(home / "claude"), "CODEX_HOME": str(home / "codex"),
                            "PATH": os.pathsep.join([str(real), os.environ["PATH"]])}
-            with mock.patch.dict(os.environ, environment, clear=True):
+            with mock.patch.object(os, "environ", environment):
                 key = bot.store() / "tomjseery-bot.pem"
                 bot.write_key(key, b"unused fixture key")
                 bot.write_private(bot.store() / "tomjseery-bot.json", {**RECORD, "key": str(key)})
