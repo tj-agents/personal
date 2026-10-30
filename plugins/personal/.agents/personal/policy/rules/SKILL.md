@@ -1,6 +1,6 @@
 ---
 name: rules
-description: Mandatory rules for work in an explicitly adopted personal project — clean cuts, proportionate implementation, plans and PR approval handoffs.
+description: Mandatory rules for work in an explicitly adopted personal project — clean cuts, proportionate implementation and plans.
 kind: policy
 domain: personal
 profile: core
@@ -54,18 +54,6 @@ to the change, with tests that prove behavior rather than restate the implementa
 
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.
-
-## 4. PR approval handoff
-
-Before reporting PRs for Tommy's approval, select `personal:bot-identity`. Include one runnable Bash
-command covering every PR handed over for approval in that response, including when there is only one.
-`personal:bot-identity` owns the command and authentication procedure. Tommy executes the human approvals;
-agents never execute them.
-
-```text
-Input: hand over agent PRs 38 and 33 for Tommy's approval.
-Output: select personal:bot-identity, link both PRs and include one runnable Bash command approving both.
-```
 
 This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
 its marked native instruction block from this body and checks it for drift. A selected plugin or an
