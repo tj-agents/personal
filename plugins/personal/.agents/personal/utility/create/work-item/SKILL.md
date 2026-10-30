@@ -14,10 +14,9 @@ provenance: house
 This is the recording intent: it classifies and creates one record. It does not start, assign or track
 execution.
 
-Before selecting `--root`, identify the affected system, intended outcome and responsible source
-repository from its actual source and instructions. Use that repository's primary checkout and GitHub
-origin, even when the observation arose elsewhere. If scope is unclear, ask which system and outcome
-the user means before choosing a tracker. Keep employer-owned evidence within its authorized provider.
+Before selecting `--root`, apply
+[Workflow's repository selection](https://github.com/tj-agents/core/blob/main/.agents/workflow/resources/problem-records.md#repository-selection).
+Use the selected source repository's primary checkout and verified GitHub origin for `--root`.
 Read any identified existing item and reconcile its owner and history before creation. A wrong-repository
 item calls for a deliberate transfer or linked reconciliation, not a duplicate submission.
 
@@ -47,9 +46,8 @@ Record only. Do not begin implementation; an existing item belongs to `personal:
 Retain the request ID after an uncertain response and reconcile it before another submission.
 
 ```text
-While adding a CLI feature, a shared Workflow recording failure is reported.
-Verify Core owns the policy and selects Personal, then use Core as --root.
-If an issue already exists in CLI, reconcile that identity and its history before any creation.
-Record the issue under existing personal authority and continue the CLI feature.
-An employer observation retains its employer provider and required creation decision.
+Workflow's repository selection identifies Core for an incidental recording failure.
+Core's primary checkout selects Personal; use that checkout as --root.
+Reconcile the identified existing issue before creating anything.
+Under personal recording authority, capture a new observation and continue the active feature.
 ```
