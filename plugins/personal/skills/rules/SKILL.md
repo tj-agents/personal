@@ -1,6 +1,6 @@
 ---
 name: rules
-description: Mandatory rules for work in an explicitly adopted personal project — clean cuts, proportionate implementation, plans and PR approval handoffs.
+description: Mandatory rules for work in an explicitly adopted personal project — clean cuts, proportionate implementation and plans.
 kind: policy
 domain: personal
 profile: core
