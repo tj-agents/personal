@@ -25,8 +25,10 @@ configure or replace a provider while recording. Creation places the issue on th
 boards; report a returned `boards.error` rather than retrying the issue.
 
 Within authorized personal work, record noticed or reported incidental problems without requiring a
-request to implement them. Honor explicit limits on recording. Preserve the active goal and next action
-under `workflow:session`; creation supplies no repair, priority or handoff decision.
+request to implement them. Honor explicit limits on recording. [Workflow's incidental-problems
+decision](https://github.com/tj-agents/core/blob/main/.agents/workflow/resources/problem-records.md#incidental-problems)
+owns active-goal, priority, repair and handoff routing; creation supplies only the Personal recording
+operation.
 
 Classify the supplied facts once: faulty behavior is `bug`; an observed agent or process error is
 `mistake`; a deliberate deferral is `debt`; changed product behavior is `feature`; concrete work with a
