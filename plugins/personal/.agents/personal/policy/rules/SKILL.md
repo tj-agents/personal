@@ -1,6 +1,6 @@
 ---
 name: rules
-description: The personal rules to settle before planning or starting any work in an explicitly adopted personal project — clean cuts, proportionate implementation and where plans live.
+description: The personal rules to settle before planning or starting any work in an explicitly adopted personal project — clean cuts, proportionate implementation, where plans live and machine-agnostic behaviour.
 kind: policy
 domain: personal
 profile: core
@@ -54,6 +54,14 @@ to the change, with tests that prove behavior rather than restate the implementa
 
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.
+
+## 4. Machine-agnostic
+
+Everything works the same on any machine from a fresh clone plus the remote service. Nothing a run depends
+on (scripts, tools, setup, configuration, records, agent memory or the source of truth for secrets) exists
+only on one machine; `~/.agents-state`, agent memory directories and other local folders are disposable
+caches. Prefer organisation-level configuration so a new repository needs no setup. Working
+plans (rule 3) are scratch, never a dependency.
 
 This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
 its marked native instruction block from this body and checks it for drift. A selected plugin or an

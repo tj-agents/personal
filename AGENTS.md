@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:eee7a719bb90e67aaa81ac101a45836dd099bc745fee61216c99ec7d6075f12d -->
+<!-- BEGIN personal:rules sha256:61e5d19998e4145ab66771b214070c070a8dbb541cf46dd3595d215ea1b62930 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -64,6 +64,14 @@ to the change, with tests that prove behavior rather than restate the implementa
 
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.
+
+## 4. Machine-agnostic
+
+Everything works the same on any machine from a fresh clone plus the remote service. Nothing a run depends
+on (scripts, tools, setup, configuration, records, agent memory or the source of truth for secrets) exists
+only on one machine; `~/.agents-state`, agent memory directories and other local folders are disposable
+caches. Prefer organisation-level configuration so a new repository needs no setup. Working
+plans (rule 3) are scratch, never a dependency.
 
 This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
 its marked native instruction block from this body and checks it for drift. A selected plugin or an
