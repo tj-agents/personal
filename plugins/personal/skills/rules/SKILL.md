@@ -1,6 +1,6 @@
 ---
 name: rules
-description: The personal rules to settle before planning or starting any work in an explicitly adopted personal project — clean cuts, proportionate implementation and where plans live.
+description: The personal rules to settle before planning or starting any work in an explicitly adopted personal project — clean cuts, proportionate implementation, where plans live and how PRs reach approval.
 kind: policy
 domain: personal
 profile: core
