@@ -1,6 +1,6 @@
 ---
 name: rules
-description: The personal rules to settle before planning or starting any work in an explicitly adopted personal project — clean cuts, proportionate implementation and where plans live.
+description: Mandatory rules for work in an explicitly adopted personal project — clean cuts, proportionate implementation, plans and PR approval handoffs.
 kind: policy
 domain: personal
 profile: core
