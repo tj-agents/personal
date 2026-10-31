@@ -630,7 +630,7 @@ class FreshSetupTests(unittest.TestCase):
             environment = {**without_agent_settings(os.environ), "HOME": str(home), "USERPROFILE": str(home),
                            "CLAUDE_CONFIG_DIR": str(home / "claude"), "CODEX_HOME": str(home / "codex"),
                            "PATH": os.pathsep.join([str(real), os.environ["PATH"]])}
-            with mock.patch.dict(os.environ, environment, clear=True):
+            with mock.patch.object(os, "environ", environment):
                 key = bot.store() / "tomjseery-bot.pem"
                 bot.write_key(key, b"unused fixture key")
                 bot.write_private(bot.store() / "tomjseery-bot.json", {**RECORD, "key": str(key)})
@@ -669,6 +669,9 @@ class FreshSetupTests(unittest.TestCase):
                                         text=True, timeout=30, check=True)
                 self.assertEqual("BOT", result.stdout.strip())
                 self.assertNotIn("TJ_AGENT", os.environ)
+        repository = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
+                                    capture_output=True, text=True, timeout=30, check=True)
+        self.assertEqual(ROOT.resolve(), Path(repository.stdout.strip()).resolve())
 
 
 def bot_toml(text):

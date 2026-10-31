@@ -1,6 +1,6 @@
 ---
 name: create-work-item
-description: Classify and record one personal GitHub work item without starting implementation. Use when a personal bug, mistake, debt, feature, Story or task must be captured.
+description: Classify and record one personal GitHub work item or append recurrence evidence to its existing identity without starting implementation. Use when a personal bug, mistake, debt, feature, Story or task must be captured.
 kind: utility
 domain: personal
 profile: core
@@ -11,8 +11,8 @@ provenance: house
 
 # Create a personal work item
 
-This is the recording intent: it classifies and creates one record. It does not start, assign or track
-execution.
+This is the recording intent: it classifies and creates one record, or appends material recurrence
+evidence to an existing record. It does not start, assign or track execution.
 
 The source primary checkout's `personal@tj-agents` selection selects this provider. Never adopt,
 configure or replace a provider while recording. Creation places the issue on the repository and owner
@@ -32,5 +32,14 @@ python -B <skill-directory>/scripts/create_work_item.py preview --input facts.js
 python -B <skill-directory>/scripts/create_work_item.py create --root . --input facts.json --request-id UNIQUE-STABLE-ID
 ```
 
-Record only. Do not begin implementation; an existing item belongs to `personal:address-work-item`.
-Retain the request ID after an uncertain response and reconcile it before another submission.
+For an existing item, append material new recurrence facts, the known cause and current repair state
+with a stable request ID, then read the comments back through `personal:work-item` to verify persistence:
+
+```text
+python -B <skill-directory>/scripts/create_work_item.py note --root . --item owner/repository#42 --request-id UNIQUE-STABLE-ID --text-file recurrence.txt
+```
+
+Preserve the item's identity and repair owner. Recording does not enter execution;
+`personal:address-work-item` owns an authorized request to implement its repair.
+Retain the request ID after an uncertain response and reconcile with the same command and
+`--reconcile-only` before another submission.

@@ -1,6 +1,6 @@
 ---
 name: create-work-item
-description: Classify and record one personal GitHub work item without starting implementation. Use when a personal bug, mistake, debt, feature, Story or task must be captured.
+description: Classify and record one personal GitHub work item or append recurrence evidence to its existing identity without starting implementation. Use when a personal bug, mistake, debt, feature, Story or task must be captured.
 kind: utility
 domain: personal
 profile: core
