@@ -105,6 +105,17 @@ class PersonalPackagingTests(unittest.TestCase):
                 / "create-work-item"
                 / "scripts"
                 / "create_work_item.py",
+                "note",
+                "--help",
+            ),
+            (
+                ROOT
+                / "plugins"
+                / "personal"
+                / "skills"
+                / "create-work-item"
+                / "scripts"
+                / "create_work_item.py",
                 "template",
                 "--kind",
                 "story",
