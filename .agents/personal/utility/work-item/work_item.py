@@ -21,7 +21,7 @@ def parser():
     provider = commands.add_parser("provider")
     provider.add_argument("--root", required=True)
     from github_tracker import add_commands
-    add_commands(commands, ("create", "read", "list", "state"))
+    add_commands(commands, ("create", "read", "list", "state", "note"))
     return result
 
 

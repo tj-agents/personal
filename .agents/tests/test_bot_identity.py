@@ -669,8 +669,9 @@ class FreshSetupTests(unittest.TestCase):
                                         text=True, timeout=30, check=True)
                 self.assertEqual("BOT", result.stdout.strip())
                 self.assertNotIn("TJ_AGENT", os.environ)
-        subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
-                       capture_output=True, text=True, timeout=30, check=True)
+        repository = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
+                                    capture_output=True, text=True, timeout=30, check=True)
+        self.assertEqual(ROOT.resolve(), Path(repository.stdout.strip()).resolve())
 
 
 def bot_toml(text):
