@@ -9,7 +9,7 @@ bootstrap()
 from tj_personal_work_items.records import KINDS, ItemError, schema_for, skeleton, read_input, render, validate
 
 
-def parser():
+def parser(extra_commands=()):
     result = argparse.ArgumentParser(description="Deterministic, explicitly selected work-item tools")
     commands = result.add_subparsers(dest="command", required=True)
     for name in ("schema", "template"):
@@ -21,7 +21,7 @@ def parser():
     provider = commands.add_parser("provider")
     provider.add_argument("--root", required=True)
     from github_tracker import add_commands
-    add_commands(commands, ("create", "read", "list", "state", "note"))
+    add_commands(commands, ("create", "read", "list", "state") + extra_commands)
     return result
 
 
@@ -42,11 +42,11 @@ def run(arguments):
     return {"title": item["title"], "body": render(item)}
 
 
-def main():
+def main(extra_commands=()):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     try:
-        output = run(parser().parse_args())
+        output = run(parser(extra_commands).parse_args())
         print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
         return 0
     except (ItemError, OSError, UnicodeError) as error:

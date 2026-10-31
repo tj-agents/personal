@@ -95,6 +95,22 @@ class PersonalPackagingTests(unittest.TestCase):
                     self.assertIn(namespace, EXTERNAL_SKILLS, str(path))
                     self.assertIn(name, EXTERNAL_SKILLS[namespace], str(path))
 
+    def test_inspection_entry_rejects_recurrence_mutation(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(ROOT / "plugins/personal/skills/work-item/work_item.py"),
+                "note",
+                "--help",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("invalid choice: 'note'", result.stderr)
+
     def test_published_create_and_address_wrappers_resolve_their_siblings(self) -> None:
         commands = (
             (
