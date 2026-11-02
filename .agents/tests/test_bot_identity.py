@@ -75,6 +75,9 @@ class Sandbox(unittest.TestCase):
         bot.protect(self.home / "github-app", directory=True)
         bot.protect(self.home / "github-app" / "tomjseery-bot.pem")
         bot.protect(self.home / "github-app" / "tomjseery-bot.json")
+        scope = mock.patch.object(bot, "personal_checkout", return_value=self.home)
+        scope.start()
+        self.addCleanup(scope.stop)
 
     def patch_environment(self, values):
         patcher = mock.patch.object(os, "environ", {**os.environ, **values})
@@ -160,9 +163,15 @@ class CredentialTests(Sandbox):
         (self.home / "github-app" / "tomjseery-bot.json").unlink()
         with mock.patch.object(bot, "tommy_credential") as tommy:
             out = io.StringIO()
-            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=Infonetica/x\n\n"), out)
+            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=tj-agents/x\n\n"), out)
         self.assertEqual("", out.getvalue())
         tommy.assert_not_called()
+
+    def test_a_work_target_does_not_require_personal_enrollment(self):
+        (self.home / "github-app" / "tomjseery-bot.json").unlink()
+        answer, calls = self.ask("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n")
+        self.assertEqual("username=tomjseery\npassword=gho_tommy\n", answer)
+        self.assertEqual(1, len(calls))
 
     def test_other_accounts_use_tommys_own_helpers_without_agent_settings(self):
         self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
@@ -259,9 +268,39 @@ class GhWrapperTests(Sandbox):
                                        checkout="Infonetica")
         self.assertEqual("ghs_tomjseery", environment["GH_TOKEN"])
 
-    def test_an_installed_checkout_wins_over_an_uncovered_flag(self):
+    def test_an_explicit_work_target_overrides_a_personal_checkout(self):
         environment = self.environment("issue", "list", "-R", "Infonetica/cris", checkout="tj-agents")
-        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installed.assert_not_called()
+
+    def test_gh_repo_target_overrides_the_checkout(self):
+        self.patch_environment({"GH_REPO": "Infonetica/cris"})
+        environment = self.environment("issue", "list", checkout="tj-agents")
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installed.assert_not_called()
+
+    def test_mixed_explicit_owners_are_rejected_before_minting(self):
+        self.refused("pr", "view", "https://github.com/tj-agents/core/pull/1", "-R", "Infonetica/cris")
+        self.installation_token.assert_not_called()
+
+    def test_an_unselected_checkout_never_mints_a_personal_token(self):
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            environment = self.environment("issue", "list", "-R", "tj-agents/infonetica", checkout="tj-agents")
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installation_token.assert_not_called()
+
+    def test_an_unselected_checkout_retains_employer_authentication_and_unrelated_git_config(self):
+        index = int(os.environ["GIT_CONFIG_COUNT"])
+        self.patch_environment({"GH_TOKEN": "employer-fixture", "GITHUB_TOKEN": "other-fixture",
+                                f"GIT_CONFIG_KEY_{index}": "core.autocrlf",
+                                f"GIT_CONFIG_VALUE_{index}": "false", "GIT_CONFIG_COUNT": str(index + 1)})
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            environment = self.environment("api", "repos/tj-agents/infonetica")
+        self.assertEqual("employer-fixture", environment["GH_TOKEN"])
+        self.assertEqual("other-fixture", environment["GITHUB_TOKEN"])
+        self.assertEqual("1", environment["GIT_CONFIG_COUNT"])
+        self.assertEqual("core.autocrlf", environment["GIT_CONFIG_KEY_0"])
+        self.assertNotIn(str(bot.shim_directory()), environment["PATH"].split(os.pathsep))
 
     def test_uncovered_accounts_fall_through_to_tommys_own_gh(self):
         environment = self.environment("pr", "list", checkout="Infonetica")
@@ -680,6 +719,14 @@ class FreshSetupTests(unittest.TestCase):
     def test_setup_and_fresh_wrapper_use_the_bot_without_touching_human_settings(self):
         with tempfile.TemporaryDirectory(prefix="bot setup ü ") as temporary:
             home = Path(temporary)
+            project = home / "personal project"
+            project.mkdir()
+            subprocess.run(["git", "init", str(project)], capture_output=True, check=True)
+            (project / ".agents").mkdir()
+            (project / ".agents/plugins.json").write_text(json.dumps({
+                "plugins": ["personal@tj-agents"],
+                "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
+            }), encoding="utf-8")
             real = home / "real gh"
             real.mkdir()
             script = real / "fake-gh.py"
@@ -700,39 +747,59 @@ class FreshSetupTests(unittest.TestCase):
                 bot.write_private(bot.store() / "tomjseery-bot.json", {**RECORD, "key": str(key)})
                 with mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "remove_user_path"), \
                         contextlib.redirect_stdout(io.StringIO()):
-                    bot.setup()
-                    bot.setup(check=True)
+                    bot.setup(root=project)
+                    bot.setup(check=True, root=project)
                     original_path = os.environ["PATH"]
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(real), original_path])}):
-                        bot.setup(check=True)
+                        bot.setup(check=True, root=project)
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(home / "new tools"), original_path])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True)
+                            bot.setup(check=True, root=project)
                     entries = original_path.split(os.pathsep)
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([*entries[1:], entries[0]])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True)
-                    claude = home / "claude/settings.json"
+                            bot.setup(check=True, root=project)
+                    claude = project / ".claude/settings.local.json"
                     settings = json.loads(claude.read_text(encoding="utf-8"))
                     settings["permissions"]["deny"].remove(bot.MCP_DENY[0])
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "write restrictions are missing"):
-                        bot.setup(check=True)
+                        bot.setup(check=True, root=project)
                     del settings["permissions"]
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "host settings are missing"):
-                        bot.setup(check=True)
-                    bot.setup()
-                    bot.setup(check=True)
+                        bot.setup(check=True, root=project)
+                    bot.setup(root=project)
+                    bot.setup(check=True, root=project)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-installations.json", INSTALLED)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-tomjseery.json",
                                   {"token": "fixture-token", "expires": 4102444800})
-                settings = json.loads((home / "claude/settings.json").read_text(encoding="utf-8"))["env"]
+                settings = json.loads((project / ".claude/settings.local.json").read_text(encoding="utf-8"))["env"]
                 result = subprocess.run([str(bot.shim_directory() / launcher.name), "api", "repos/tomjseery/smoke"],
-                                        cwd=home, env={**environment, **settings}, capture_output=True,
+                                        cwd=project, env={**environment, **settings}, capture_output=True,
                                         text=True, timeout=30, check=True)
                 self.assertEqual("BOT", result.stdout.strip())
                 self.assertNotIn("TJ_AGENT", os.environ)
+                self.assertFalse((home / "claude/settings.json").exists())
+                self.assertFalse((home / "codex/config.toml").exists())
+
+
+class ScopeTests(unittest.TestCase):
+    def test_setup_refuses_work_and_unselected_projects_before_reading_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            subprocess.run(["git", "init", str(project)], capture_output=True, check=True)
+            (project / ".agents").mkdir()
+            for plugins in ([], ["work@tj-agents"], ["personal@tj-agents", "infonetica@tj-agents"]):
+                with self.subTest(plugins=plugins):
+                    (project / ".agents/plugins.json").write_text(json.dumps({
+                        "plugins": plugins,
+                        "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
+                    }), encoding="utf-8")
+                    with mock.patch.object(bot, "app_record") as record:
+                        with self.assertRaisesRegex(bot.IdentityError, "explicitly adopted personal"):
+                            bot.setup(root=project)
+                    record.assert_not_called()
         repository = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
                                     capture_output=True, text=True, timeout=30, check=True)
         self.assertEqual(ROOT.resolve(), Path(repository.stdout.strip()).resolve())
