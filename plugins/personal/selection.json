@@ -4,36 +4,19 @@
     "tj-agents/base",
     "tj-agents/engineering",
     "tj-agents/agent",
-    "tj-agents/docs"
+    "tj-agents/docs",
+    "tj-agents/github"
   ],
   "profiles": {
     "core": [
-      "address-work-item",
       "bot-identity",
-      "create-work-item",
       "revision",
       "rules",
-      "use",
-      "work-item"
+      "use"
     ]
   },
   "compatibilitySkillAliases": {},
   "skills": [
-    {
-      "name": "address-work-item",
-      "kind": "workflow",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "python"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
     {
       "name": "bot-identity",
       "kind": "utility",
@@ -42,21 +25,6 @@
         "Tommy's machines; GitHub accounts where the App is installed"
       ],
       "requires": [
-        "python"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "create-work-item",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
         "python"
       ],
       "provenance": [
@@ -101,21 +69,6 @@
       "requires": [
         "python",
         "agent"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "work-item",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal GitHub repositories"
-      ],
-      "requires": [
-        "engineering",
-        "python"
       ],
       "provenance": [
         "house"
