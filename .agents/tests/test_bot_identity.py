@@ -305,6 +305,33 @@ class GhWrapperTests(Sandbox):
         self.refused("api", "repos/tj-agents/personal", "--hostname", "example.test")
         self.installation_token.assert_not_called()
 
+    def test_command_specific_booleans_preserve_the_explicit_work_target(self):
+        for command, flags in (("merge", ("-m", "-r", "-s")), ("review", ("-a", "-r", "-c")),
+                               ("checkout", ("-f",))):
+            for flag in flags:
+                with self.subTest(command=command, flag=flag):
+                    environment = self.environment("pr", command, flag,
+                                                   "https://github.com/Infonetica/cris/pull/5", checkout="tj-agents")
+                    self.assertNotIn("GH_TOKEN", environment)
+        self.installation_token.assert_not_called()
+
+    def test_api_preview_values_preserve_the_explicit_personal_target(self):
+        for flag in ("--preview", "-p"):
+            with self.subTest(flag=flag):
+                environment = self.environment("api", flag, "nebula", "repos/tj-agents/personal",
+                                               checkout="Infonetica")
+                self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_hostname_text_in_a_payload_cannot_override_the_actual_host(self):
+        self.refused("api", "repos/tj-agents/personal", "--hostname", "enterprise.example",
+                     "-f", "--hostname=github.com")
+        self.installation_token.assert_not_called()
+
+    def test_hostname_text_in_a_payload_is_not_an_option(self):
+        environment = self.environment("issue", "create", "--title", "--hostname", "--body",
+                                       "--hostname=example.test", checkout="tj-agents")
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
     def test_gh_repo_target_overrides_the_checkout(self):
         self.patch_environment({"GH_REPO": "Infonetica/cris"})
         environment = self.environment("issue", "list", checkout="tj-agents")

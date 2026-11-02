@@ -52,8 +52,34 @@ PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "-
                   "--assignee", "-l", "--label", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-R",
                   "--repo", "-T", "--template", "--recover")
 OWNER_FLAGS = ("-R", "--repo", "--owner")
-PAYLOAD_FLAGS = (*PR_VALUE_FLAGS, "-f", "--field", "--raw-field", "--input", "--header", "--jq", "-q",
-                 "--search", "--hostname", "-X", "--method", "--cache", "--json", "--limit", "-L")
+PAYLOAD_FLAGS = (*[flag for flag in PR_VALUE_FLAGS if flag.startswith("--")], "--field", "--raw-field",
+                 "--input", "--header", "--jq", "--search", "--method", "--cache", "--json", "--limit",
+                 "--preview", "--branch", "--subject", "--author-email", "--match-head-commit", "--description",
+                 "--homepage", "--gitignore", "--license", "--remote", "--source", "--team", "--color",
+                 "--comment", "--reason",
+                 "--add-assignee", "--add-label", "--add-project", "--add-reviewer", "--remove-assignee",
+                 "--remove-label", "--remove-project", "--remove-reviewer")
+SHORT_PAYLOAD_FLAGS = {
+    ("api",): ("-F", "-f", "-H", "-q", "-X", "-p", "-t"),
+    ("pr", "create"): ("-a", "-B", "-b", "-F", "-H", "-l", "-m", "-p", "-r", "-T", "-t"),
+    ("pr", "edit"): ("-B", "-b", "-F", "-m", "-t"),
+    ("pr", "merge"): ("-A", "-b", "-F", "-t"),
+    ("pr", "review"): ("-b", "-F"),
+    ("pr", "checkout"): ("-b",),
+    ("pr", "comment"): ("-b", "-F"),
+    ("pr", "close"): ("-c",),
+    ("pr", "reopen"): ("-c",),
+    ("pr", "view"): ("-q", "-t"),
+    ("issue", "create"): ("-a", "-b", "-F", "-l", "-m", "-p", "-T", "-t"),
+    ("issue", "edit"): ("-b", "-F", "-m", "-t"),
+    ("issue", "comment"): ("-b", "-F"),
+    ("issue", "close"): ("-c", "-r"),
+    ("issue", "reopen"): ("-c",),
+    ("issue", "view"): ("-q", "-t"),
+    ("repo", "create"): ("-d", "-g", "-h", "-l", "-r", "-s", "-t", "-p"),
+    ("repo", "edit"): ("-d", "-h"),
+    ("repo", "view"): ("-q", "-t"),
+}
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
@@ -578,16 +604,22 @@ def installation_token(owner: str, record: dict, now: float | None = None, fetch
     return issued["token"]
 
 
-def owners_from_arguments(arguments: list[str]) -> list[str]:
+def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
     owners, positional = [], []
+    hostname = None
+    command = tuple(arguments[:1] if arguments[:1] == ["api"] else arguments[:2])
+    payload_flags = (*PAYLOAD_FLAGS, *SHORT_PAYLOAD_FLAGS.get(command, ()))
     remaining = iter(arguments)
     for argument in remaining:
         flag, equals, inline = argument.partition("=")
-        if flag in OWNER_FLAGS:
+        if flag == "--hostname":
+            hostname = inline if equals else next(remaining, "")
+            continue
+        elif flag in OWNER_FLAGS:
             value = inline if equals else next(remaining, "")
         elif argument.startswith("-R") and len(argument) > 2:
             value = argument[2:]
-        elif flag in PAYLOAD_FLAGS:
+        elif flag in payload_flags:
             if not equals:
                 next(remaining, None)
             continue
@@ -601,15 +633,20 @@ def owners_from_arguments(arguments: list[str]) -> list[str]:
     if arguments[:1] == ["api"]:
         targets = positional[1:2]
         owners += [match.group(1) for argument in targets for match in API_PATH.finditer(argument)]
-    elif arguments[:1] == ["repo"] or (arguments[:1] in (["pr"], ["issue"])
-                                       and arguments[1:2] != ["create"]):
+    elif arguments[:1] == ["repo"]:
+        targets = positional[2:3]
+    elif arguments[:1] in (["pr"], ["issue"]) and arguments[1:2] != ["create"]:
         targets = positional[2:]
     else:
         targets = []
     owners += [match.group(1) for argument in targets for match in GITHUB_URL.finditer(argument)]
     if arguments[:1] == ["repo"]:
         owners += [argument.split("/")[0] for argument in targets if REPOSITORY.fullmatch(argument)]
-    return owners
+    return owners, hostname
+
+
+def owners_from_arguments(arguments: list[str]) -> list[str]:
+    return argument_context(arguments)[0]
 
 
 def owner_from_checkout(run=subprocess.run) -> str | None:
@@ -698,7 +735,8 @@ def personal_checkout(root: Path | None = None) -> Path:
 def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> dict[str, str]:
     if arguments[:1] == ["auth"] and arguments[1:2] != ["status"]:
         raise IdentityError("agents may run only `gh auth status`")
-    owners = (owners_from_arguments(arguments)
+    explicit_owners, hostname = argument_context(arguments)
+    owners = (explicit_owners
               or owners_from_arguments(["-R", os.environ.get("GH_REPO", "")])
               or ([checkout_owner] if checkout_owner else []))
     if len({owner.lower() for owner in owners}) > 1:
@@ -709,12 +747,7 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     protected = [owner for owner in owners if owner.lower() in REQUIRED_OWNERS]
     if not protected:
         return environment if arguments[:1] == ["auth"] else tommy_environment()
-    hostname = os.environ.get("GH_HOST") or "github.com"
-    for index, argument in enumerate(arguments):
-        if argument == "--hostname":
-            hostname = arguments[index + 1] if index + 1 < len(arguments) else ""
-        elif argument.startswith("--hostname="):
-            hostname = argument.partition("=")[2]
+    hostname = hostname if hostname is not None else os.environ.get("GH_HOST") or "github.com"
     if hostname.lower() != "github.com":
         raise IdentityError("the Personal GitHub App is authorized only for github.com")
     record = app_record()
