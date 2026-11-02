@@ -112,6 +112,7 @@ class IdentityTests(Sandbox):
                  ("pr", "view", "-R", "https://github.com/Concertable/b2b"): ["Concertable"],
                  ("pr", "view", "-R", "github.com/Concertable/b2b"): ["Concertable"],
                  ("pr", "review", "--approve", "https://github.com/tj-agents/core/pull/5"): ["tj-agents"],
+                 ("pr", "view", "--json", "title", "https://github.com/Infonetica/cris/pull/5"): ["Infonetica"],
                  ("repo", "delete", "tomjseery/notes", "--yes"): ["tomjseery"],
                  ("project", "list", "--owner", "tj-agents"): ["tj-agents"],
                  ("api", "graphql"): []}
@@ -273,6 +274,37 @@ class GhWrapperTests(Sandbox):
         self.assertNotIn("GH_TOKEN", environment)
         self.installed.assert_not_called()
 
+    def test_payload_urls_do_not_change_the_target_identity(self):
+        cases = (
+            ("issue", "create", "--title", "Fixture", "--body", "See https://github.com/cli/cli/issues/1"),
+            ("issue", "create", "--body=https://github.com/cli/cli/issues/1", "-R", "tj-agents/personal"),
+            ("api", "repos/tj-agents/personal/issues", "-f", "body=https://github.com/cli/cli/issues/1"),
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                environment = self.environment(*arguments, checkout="tj-agents")
+                self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_a_personal_token_is_removed_when_a_gh_child_enters_work_scope(self):
+        personal = self.environment("api", "repos/tj-agents/personal")
+        self.patch_environment(personal)
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            work = self.environment("api", "repos/Infonetica/cris")
+        self.assertNotIn("GH_TOKEN", work)
+        self.assertNotIn(bot.TOKEN_FINGERPRINT, work)
+
+    def test_an_employer_token_replacing_an_inherited_personal_token_is_preserved(self):
+        self.patch_environment(self.environment("api", "repos/tj-agents/personal"))
+        self.patch_environment({"GH_TOKEN": "employer-replacement-fixture"})
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            work = self.environment("api", "repos/Infonetica/cris")
+        self.assertEqual("employer-replacement-fixture", work["GH_TOKEN"])
+        self.assertNotIn(bot.TOKEN_FINGERPRINT, work)
+
+    def test_a_personal_token_is_not_sent_to_a_different_host(self):
+        self.refused("api", "repos/tj-agents/personal", "--hostname", "example.test")
+        self.installation_token.assert_not_called()
+
     def test_gh_repo_target_overrides_the_checkout(self):
         self.patch_environment({"GH_REPO": "Infonetica/cris"})
         environment = self.environment("issue", "list", checkout="tj-agents")
@@ -343,6 +375,13 @@ class ApprovalHandoffTests(GhWrapperTests):
         out, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
         self.assertEqual(self.CORE + "\n", out)
         self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
+        self.assertIn(bot.approval_command([self.CORE]), err)
+
+    def test_a_payload_url_preserves_bot_authentication_and_the_approval_handoff(self):
+        out, err = self.hand_over("pr", "create", "--title", "Fixture", "--body",
+                                  "See https://github.com/cli/cli/issues/1", stdout=self.CORE + "\n")
+        self.assertEqual(self.CORE + "\n", out)
+        self.assertEqual("ghs_tj-agents", self.gh.calls[0][1]["GH_TOKEN"])
         self.assertIn(bot.approval_command([self.CORE]), err)
 
     def test_a_readied_pr_is_looked_up_with_its_selector_and_handed_over(self):

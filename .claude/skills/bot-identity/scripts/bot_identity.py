@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 import io
@@ -30,6 +31,7 @@ import stat
 
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
+TOKEN_FINGERPRINT = "TJ_BOT_TOKEN_SHA256"
 UNAUTHENTICATED = "bot-identity-unauthenticated"
 TIMEOUT_SECONDS = 30
 TOKEN_MARGIN_SECONDS = 300
@@ -50,6 +52,8 @@ PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "-
                   "--assignee", "-l", "--label", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-R",
                   "--repo", "-T", "--template", "--recover")
 OWNER_FLAGS = ("-R", "--repo", "--owner")
+PAYLOAD_FLAGS = (*PR_VALUE_FLAGS, "-f", "--field", "--raw-field", "--input", "--header", "--jq", "-q",
+                 "--search", "--hostname", "-X", "--method", "--cache", "--json", "--limit", "-L")
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
@@ -575,21 +579,36 @@ def installation_token(owner: str, record: dict, now: float | None = None, fetch
 
 
 def owners_from_arguments(arguments: list[str]) -> list[str]:
-    owners = [match.group(1) for argument in arguments for match in GITHUB_URL.finditer(argument)]
-    for index, argument in enumerate(arguments):
+    owners, positional = [], []
+    remaining = iter(arguments)
+    for argument in remaining:
         flag, equals, inline = argument.partition("=")
         if flag in OWNER_FLAGS:
-            value = inline if equals else (arguments[index + 1] if index + 1 < len(arguments) else "")
+            value = inline if equals else next(remaining, "")
         elif argument.startswith("-R") and len(argument) > 2:
             value = argument[2:]
-        else:
+        elif flag in PAYLOAD_FLAGS:
+            if not equals:
+                next(remaining, None)
             continue
-        if value and not GITHUB_URL.search(value):
-            owners.append(value.split("/")[0])
+        else:
+            if not argument.startswith("-"):
+                positional.append(argument)
+            continue
+        if value:
+            match = GITHUB_URL.search(value)
+            owners.append(match.group(1) if match else value.split("/")[0])
     if arguments[:1] == ["api"]:
-        owners += [match.group(1) for argument in arguments[1:] for match in API_PATH.finditer(argument)]
+        targets = positional[1:2]
+        owners += [match.group(1) for argument in targets for match in API_PATH.finditer(argument)]
+    elif arguments[:1] == ["repo"] or (arguments[:1] in (["pr"], ["issue"])
+                                       and arguments[1:2] != ["create"]):
+        targets = positional[2:]
+    else:
+        targets = []
+    owners += [match.group(1) for argument in targets for match in GITHUB_URL.finditer(argument)]
     if arguments[:1] == ["repo"]:
-        owners += [argument.split("/")[0] for argument in arguments[2:] if REPOSITORY.fullmatch(argument)]
+        owners += [argument.split("/")[0] for argument in targets if REPOSITORY.fullmatch(argument)]
     return owners
 
 
@@ -606,7 +625,9 @@ def owner_from_checkout(run=subprocess.run) -> str | None:
 def tommy_environment() -> dict[str, str]:
     environment = dict(os.environ)
     environment.pop(AGENT_FLAG, None)
-    if environment.get("GH_TOKEN") == UNAUTHENTICATED:
+    issued = environment.pop(TOKEN_FINGERPRINT, None)
+    token = environment.get("GH_TOKEN", "")
+    if token == UNAUTHENTICATED or (issued and issued == hashlib.sha256(token.encode()).hexdigest()):
         environment.pop("GH_TOKEN")
     if environment.get("GH_CONFIG_DIR") == str(gh_config_directory()):
         environment.pop("GH_CONFIG_DIR")
@@ -688,6 +709,14 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     protected = [owner for owner in owners if owner.lower() in REQUIRED_OWNERS]
     if not protected:
         return environment if arguments[:1] == ["auth"] else tommy_environment()
+    hostname = os.environ.get("GH_HOST") or "github.com"
+    for index, argument in enumerate(arguments):
+        if argument == "--hostname":
+            hostname = arguments[index + 1] if index + 1 < len(arguments) else ""
+        elif argument.startswith("--hostname="):
+            hostname = argument.partition("=")[2]
+    if hostname.lower() != "github.com":
+        raise IdentityError("the Personal GitHub App is authorized only for github.com")
     record = app_record()
     covered = installed(protected, record) if protected else {}
     missing = [owner for owner in protected if owner.lower() not in covered]
@@ -699,6 +728,7 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
         if not token:
             raise IdentityError(f"could not get an installation token for {app_owner}")
         environment["GH_TOKEN"] = token
+        environment[TOKEN_FINGERPRINT] = hashlib.sha256(token.encode()).hexdigest()
         return environment
     return environment if arguments[:1] == ["auth"] else tommy_environment()
 
