@@ -329,6 +329,10 @@ class ApprovalHandoffTests(GhWrapperTests):
                 self.assertEqual("", err)
                 self.assertEqual(1, len(self.gh.calls))
 
+    def test_flag_spellings_given_as_values_still_hand_the_pr_over(self):
+        _, err = self.hand_over("pr", "create", "--title", "--draft", "-b", "-w", stdout=self.CORE)
+        self.assertIn(bot.approval_command([self.CORE]), err)
+
     def test_an_unresolved_url_still_points_at_the_command_builder(self):
         _, err = self.hand_over("pr", "create", stdout="")
         self.assertIn("approval <url>", err)

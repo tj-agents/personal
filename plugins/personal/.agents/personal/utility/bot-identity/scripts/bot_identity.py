@@ -46,6 +46,9 @@ API_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([A-Za-z0-9-]+)")
 REPOSITORY = re.compile(r"([A-Za-z0-9-]+)/[\w.-]+")
 PULL_REQUEST = re.compile(r"https://github\.com/([A-Za-z0-9-]+)/[\w.-]+/pull/\d+")
 UNREVIEWABLE_CREATE = ("-d", "--draft", "-w", "--web", "--dry-run")
+PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "--base", "-H", "--head", "-a",
+                  "--assignee", "-l", "--label", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-R",
+                  "--repo", "-T", "--template", "--recover")
 OWNER_FLAGS = ("-R", "--repo", "--owner")
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
@@ -658,8 +661,18 @@ def approval_command(urls: list[str]) -> str:
     return f"!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR bash -c '{body}'"
 
 
+def option_names(arguments: list[str]) -> set[str]:
+    names, rest = set(), iter(arguments)
+    for argument in rest:
+        if argument in PR_VALUE_FLAGS:
+            next(rest, None)
+        elif argument.startswith("-"):
+            names.add(argument.partition("=")[0])
+    return names
+
+
 def awaits_approval(arguments: list[str]) -> bool:
-    flags = {argument.partition("=")[0] for argument in arguments[2:]}
+    flags = option_names(arguments[2:])
     if arguments[:2] == ["pr", "create"]:
         return not flags & set(UNREVIEWABLE_CREATE)
     return arguments[:2] == ["pr", "ready"] and "--undo" not in flags
@@ -698,7 +711,8 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
     if not (app and awaits_approval(arguments)):
         return run([real_gh(), *arguments], env=environment, check=False).returncode
     if arguments[1] == "create":
-        result = run([real_gh(), *arguments], env=environment, check=False, stdout=subprocess.PIPE, text=True)
+        result = run([real_gh(), *arguments], env=environment, check=False, stdout=subprocess.PIPE,
+                     encoding="utf-8", errors="replace")
         output = result.stdout or ""
         sys.stdout.write(output)
         sys.stdout.flush()
@@ -706,7 +720,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
         result = run([real_gh(), *arguments], env=environment, check=False)
         view = [real_gh(), "pr", "view", *ready_selector(arguments), "--json", "url", "--jq", ".url"]
         output = "" if result.returncode else run(view, env=environment, check=False, stdout=subprocess.PIPE,
-                                                    text=True).stdout or ""
+                                                    encoding="utf-8", errors="replace").stdout or ""
     if result.returncode == 0:
         hand_over(output)
     return result.returncode

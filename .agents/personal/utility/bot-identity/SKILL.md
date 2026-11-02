@@ -56,7 +56,7 @@ token also works in the App's accounts. A command naming no account runs unauthe
 
 Every PR handed to Tommy for approval carries the `!` command he invokes in the agent terminal. It bypasses the
 wrapper and approves each PR as `tomjseery`, stopping at the first failure; an agent never runs it. After a
-successful non-draft `gh pr create` or `gh pr ready` in the App's accounts, the wrapper prints that PR's filled
+successful `gh pr create` (not draft, `--web` or `--dry-run`) or `gh pr ready` in the App's accounts, the wrapper prints that PR's filled
 command on stderr in every repository, whatever plugins it selects. For several PRs in one reply, give one command
 from `approval <url>...`, which refuses PRs outside the App's accounts:
 
