@@ -54,12 +54,12 @@ PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "-
 OWNER_FLAGS = ("-R", "--repo", "--owner")
 PAYLOAD_FLAGS = (*[flag for flag in PR_VALUE_FLAGS if flag.startswith("--")], "--field", "--raw-field",
                  "--input", "--header", "--jq", "--search", "--method", "--cache", "--json", "--limit",
+                 "-q", "-t",
                  "--preview", "--branch", "--subject", "--author-email", "--match-head-commit", "--description",
-                 "--homepage", "--gitignore", "--license", "--remote", "--source", "--team", "--color",
-                 "--comment", "--reason",
+                 "--homepage", "--gitignore", "--license", "--source", "--team", "--color", "--reason",
                  "--add-assignee", "--add-label", "--add-project", "--add-reviewer", "--remove-assignee",
                  "--remove-label", "--remove-project", "--remove-reviewer")
-SHORT_PAYLOAD_FLAGS = {
+COMMAND_PAYLOAD_FLAGS = {
     ("api",): ("-F", "-f", "-H", "-q", "-X", "-p", "-t"),
     ("pr", "create"): ("-a", "-B", "-b", "-F", "-H", "-l", "-m", "-p", "-r", "-T", "-t"),
     ("pr", "edit"): ("-B", "-b", "-F", "-m", "-t"),
@@ -67,16 +67,21 @@ SHORT_PAYLOAD_FLAGS = {
     ("pr", "review"): ("-b", "-F"),
     ("pr", "checkout"): ("-b",),
     ("pr", "comment"): ("-b", "-F"),
-    ("pr", "close"): ("-c",),
-    ("pr", "reopen"): ("-c",),
+    ("pr", "close"): ("-c", "--comment"),
+    ("pr", "reopen"): ("-c", "--comment"),
     ("pr", "view"): ("-q", "-t"),
+    ("pr", "list"): ("-a", "-A", "-B", "-H", "-l", "-L", "-S", "-s", "-q", "-t"),
+    ("pr", "checks"): ("-q", "-t"),
     ("issue", "create"): ("-a", "-b", "-F", "-l", "-m", "-p", "-T", "-t"),
     ("issue", "edit"): ("-b", "-F", "-m", "-t"),
     ("issue", "comment"): ("-b", "-F"),
-    ("issue", "close"): ("-c", "-r"),
-    ("issue", "reopen"): ("-c",),
+    ("issue", "close"): ("-c", "-r", "--comment"),
+    ("issue", "reopen"): ("-c", "--comment"),
     ("issue", "view"): ("-q", "-t"),
-    ("repo", "create"): ("-d", "-g", "-h", "-l", "-r", "-s", "-t", "-p"),
+    ("issue", "list"): ("-a", "-A", "-l", "-L", "-S", "-s", "-m", "-q", "-t"),
+    ("repo", "create"): ("-d", "-g", "-h", "-l", "-r", "-s", "-t", "-p", "--remote"),
+    ("repo", "clone"): ("-u", "--upstream-remote-name"),
+    ("repo", "fork"): ("--remote-name", "--org", "--fork-name"),
     ("repo", "edit"): ("-d", "-h"),
     ("repo", "view"): ("-q", "-t"),
 }
@@ -604,11 +609,19 @@ def installation_token(owner: str, record: dict, now: float | None = None, fetch
     return issued["token"]
 
 
+def normalized_arguments(arguments: list[str]) -> list[str]:
+    aliases = {("pr", "new"): "create", ("issue", "new"): "create", ("pr", "co"): "checkout",
+               ("pr", "ls"): "list", ("issue", "ls"): "list", ("repo", "ls"): "list"}
+    replacement = aliases.get(tuple(arguments[:2]))
+    return [arguments[0], replacement, *arguments[2:]] if replacement else arguments
+
+
 def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
+    arguments = normalized_arguments(arguments)
     owners, positional = [], []
     hostname = None
     command = tuple(arguments[:1] if arguments[:1] == ["api"] else arguments[:2])
-    payload_flags = (*PAYLOAD_FLAGS, *SHORT_PAYLOAD_FLAGS.get(command, ()))
+    payload_flags = (*PAYLOAD_FLAGS, *COMMAND_PAYLOAD_FLAGS.get(command, ()))
     remaining = iter(arguments)
     for argument in remaining:
         flag, equals, inline = argument.partition("=")
@@ -790,6 +803,7 @@ def option_names(arguments: list[str]) -> set[str]:
 
 
 def awaits_approval(arguments: list[str]) -> bool:
+    arguments = normalized_arguments(arguments)
     flags = option_names(arguments[2:])
     if arguments[:2] == ["pr", "create"]:
         return not flags & set(UNREVIEWABLE_CREATE)
@@ -832,7 +846,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
     app = environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
     if not (app and awaits_approval(arguments)):
         return run([real_gh(), *arguments], env=environment, check=False).returncode
-    if arguments[1] == "create":
+    if normalized_arguments(arguments)[1] == "create":
         result = run([real_gh(), *arguments], env=environment, check=False, stdout=subprocess.PIPE,
                      encoding="utf-8", errors="replace")
         output = result.stdout or ""

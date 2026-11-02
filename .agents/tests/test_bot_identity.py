@@ -306,14 +306,40 @@ class GhWrapperTests(Sandbox):
         self.installation_token.assert_not_called()
 
     def test_command_specific_booleans_preserve_the_explicit_work_target(self):
-        for command, flags in (("merge", ("-m", "-r", "-s")), ("review", ("-a", "-r", "-c")),
-                               ("checkout", ("-f",))):
+        for command, flags in (("merge", ("-m", "-r", "-s")), ("review", ("-a", "-r", "-c", "--comment")),
+                               ("checkout", ("-f",)), ("co", ("-f",))):
             for flag in flags:
                 with self.subTest(command=command, flag=flag):
                     environment = self.environment("pr", command, flag,
                                                    "https://github.com/Infonetica/cris/pull/5", checkout="tj-agents")
                     self.assertNotIn("GH_TOKEN", environment)
         self.installation_token.assert_not_called()
+
+    def test_a_boolean_fork_remote_option_preserves_the_explicit_work_target(self):
+        environment = self.environment("repo", "fork", "--remote", "https://github.com/Infonetica/cris",
+                                       checkout="tj-agents")
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installation_token.assert_not_called()
+
+    def test_clone_option_values_do_not_replace_the_repository_target(self):
+        for flag in ("-u", "--upstream-remote-name"):
+            with self.subTest(flag=flag):
+                environment = self.environment("repo", "clone", flag, "upstream", "tj-agents/personal",
+                                               "destination/subdirectory", checkout="tomjseery")
+                self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_formatting_payload_urls_preserve_the_checkout_identity(self):
+        for command in (("pr", "list"), ("issue", "list"), ("pr", "checks"), ("repo", "list")):
+            for flag in ("-q", "-t"):
+                with self.subTest(command=command, flag=flag):
+                    environment = self.environment(*command, "--json", "url", flag,
+                        '.[] | select(.url == "https://github.com/Infonetica/cris/pull/5")', checkout="tj-agents")
+                    self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_issue_create_alias_excludes_payload_urls(self):
+        environment = self.environment("issue", "new", "-t", "Fixture", "-b",
+                                       "See https://github.com/Infonetica/cris", checkout="tj-agents")
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
 
     def test_api_preview_values_preserve_the_explicit_personal_target(self):
         for flag in ("--preview", "-p"):
@@ -406,6 +432,13 @@ class ApprovalHandoffTests(GhWrapperTests):
 
     def test_a_payload_url_preserves_bot_authentication_and_the_approval_handoff(self):
         out, err = self.hand_over("pr", "create", "--title", "Fixture", "--body",
+                                  "See https://github.com/cli/cli/issues/1", stdout=self.CORE + "\n")
+        self.assertEqual(self.CORE + "\n", out)
+        self.assertEqual("ghs_tj-agents", self.gh.calls[0][1]["GH_TOKEN"])
+        self.assertIn(bot.approval_command([self.CORE]), err)
+
+    def test_create_alias_preserves_bot_authentication_and_the_approval_handoff(self):
+        out, err = self.hand_over("pr", "new", "-t", "Fixture", "-b",
                                   "See https://github.com/cli/cli/issues/1", stdout=self.CORE + "\n")
         self.assertEqual(self.CORE + "\n", out)
         self.assertEqual("ghs_tj-agents", self.gh.calls[0][1]["GH_TOKEN"])
