@@ -28,14 +28,16 @@ still names its old `<package>:<name>`.
 
 Verify the entry points people actually use on every supported platform, including Windows and Linux
 launch paths where supported. Source edits, successful generation, passing unit tests and version commands
-alone leave a migration unproven; check installed bindings and fresh runtime behavior. Record any
-unverified entry point as incomplete, with its resolver and observable acceptance condition.
+alone leave a migration unproven; check installed bindings and runtime behavior after `agent:refresh-plugins`
+in the current session, or against a fixture or dummy host process. Never launch another agent session, tab
+or handoff to verify. Record any unverified entry point as incomplete, with its resolver and observable
+acceptance condition.
 
 ```text
 Replace old-launch with launch:
 1. Migrate the registered shell command, configuration and actual callers.
 2. Delete the old entry and regenerate installed settings.
-3. Invoke launch from a fresh supported Windows/Linux session and check its actual behavior.
+3. Refresh plugins in this session, run launch against a dummy host and check its actual behavior.
 Result: launch --version alone leaves this migration incomplete.
 ```
 
