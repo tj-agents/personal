@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:832aa182f14aecd9525ad17a4c113341ff6a6a35ec67e274ba574cd9ec914b5c -->
+<!-- BEGIN personal:rules sha256:b1db472b0bb7a1003688fe65606d268cdc9278b032474df90eaa2c601c3486d2 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -38,14 +38,16 @@ still names its old `<package>:<name>`.
 
 Verify the entry points people actually use on every supported platform, including Windows and Linux
 launch paths where supported. Source edits, successful generation, passing unit tests and version commands
-alone leave a migration unproven; check installed bindings and fresh runtime behavior. Record any
-unverified entry point as incomplete, with its resolver and observable acceptance condition.
+alone leave a migration unproven; check installed bindings and runtime behavior after `agent:refresh-plugins`
+in the current session, or against a fixture or dummy host process. Never launch another agent session, tab
+or handoff to verify. Record any unverified entry point as incomplete, with its resolver and observable
+acceptance condition.
 
 ```text
 Replace old-launch with launch:
 1. Migrate the registered shell command, configuration and actual callers.
 2. Delete the old entry and regenerate installed settings.
-3. Invoke launch from a fresh supported Windows/Linux session and check its actual behavior.
+3. Refresh plugins in this session, run launch against a dummy host and check its actual behavior.
 Result: launch --version alone leaves this migration incomplete.
 ```
 
