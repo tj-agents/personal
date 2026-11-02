@@ -1,6 +1,6 @@
 ---
 name: rules
-description: The personal rules to settle before planning or starting any work in an explicitly adopted personal project — clean cuts, proportionate implementation, self-documentation, plans and PR approvals.
+description: The personal rules to settle before planning or starting any work in an explicitly adopted personal project — clean cuts, proportionate implementation, self-documentation and plans.
 kind: policy
 domain: personal
 profile: core
@@ -77,11 +77,6 @@ An acknowledged repeated native close prepare failure occurs during item A:
 
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.
-
-## 5. Approvals
-
-Report every PR awaiting Tommy's approval with its link and `personal:bot-identity`'s `!` approval
-command filled in for all of them. An agent never runs that command.
 
 This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
 its marked native instruction block from this body and checks it for drift. A selected plugin or an
