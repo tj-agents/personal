@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:c51fe768beb91b7db22fa02bf4bcffd659f1ec23eee5cf37f2bd5eedfe59aba3 -->
+<!-- BEGIN personal:rules sha256:26dbfd6ffce2eb723026177f422fa84b5e4f9a14c72fca63511bbddc5e0b1ea9 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -60,28 +60,12 @@ configuration switches, duplicate paths or process machinery only for a concrete
 capabilities the project already selects. Verify the behavior and meaningful failure paths in proportion
 to the change, with tests that prove behavior rather than restate the implementation.
 
-## 3. Established problem records
+## 3. Work items and progress
 
-Owns automatic recording of established personal bugs, agent or process mistakes, and deliberate debt.
-Within authorized work in an explicitly adopted personal project, record them through Personal's selected
-tools without waiting to be asked. Honor an explicit no-recording limit, and never record employer or
-non-personal evidence through Personal.
-
-Reconcile the canonical existing identity before recording. For a repeated observation, append material
-new recurrence evidence, the cause when known, and the current outcome or repair state; do not create a
-duplicate item. Verify remote persistence before claiming the problem is documented. The existing Personal
-tools own their commands and procedures.
-
-Recording does not authorize, prioritize or dispatch implementation. Apply
-[Workflow's incidental-problems decision](https://github.com/tj-agents/core/blob/main/.agents/workflow/resources/problem-records.md#incidental-problems)
-to those decisions and preserve the active task and repair owner.
-
-```text
-An acknowledged repeated native close prepare failure occurs during item A:
-1. Update its existing close issue with new recurrence evidence, the known cause and current repair state.
-2. Verify the update persists remotely before saying it is documented.
-3. Continue item A; do not create a duplicate item or take over the repair.
-```
+When authorized work starts or materially changes state, resolve the installed `personal:rules` skill
+and load its `resources/work-items.md`. The [work-item policy](https://github.com/tj-agents/personal/blob/main/.agents/personal/policy/rules/resources/work-items.md)
+is authored once there and is the bounded import for a source item observed in a different repository;
+loading it does not apply Personal's other rules to the observing task.
 
 ## 4. Plans
 

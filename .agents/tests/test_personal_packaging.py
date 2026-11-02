@@ -1,7 +1,5 @@
 import json
 import re
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 from typing import Any
@@ -9,12 +7,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SKILLS = {
     "use",
-    "address-work-item",
     "bot-identity",
-    "create-work-item",
     "revision",
     "rules",
-    "work-item",
 }
 EXTERNAL_SKILLS = {
     "engineering": {
@@ -73,15 +68,12 @@ class PersonalPackagingTests(unittest.TestCase):
                 ):
                     self.assertNotIn(retired, text, str(path))
 
-    def test_personal_harness_owns_the_github_work_item_runtime(self) -> None:
+    def test_personal_harness_retains_policy_without_tracker_runtime(self) -> None:
         harness = load("plugins/personal/harness.json")
-        self.assertIn(
-            ".agents/personal/utility/create/work-item", harness["source_roots"]
-        )
-        self.assertIn(".agents/personal/utility/work-item", harness["source_roots"])
-        self.assertIn(
-            ".agents/personal/workflow/address/work-item", harness["source_roots"]
-        )
+        self.assertIn(".agents/personal/policy/rules", harness["source_roots"])
+        self.assertFalse(any("work-item" in root for root in harness["source_roots"]))
+        policy = ROOT / "plugins/personal/skills/rules/resources/work-items.md"
+        self.assertTrue(policy.is_file())
 
     def test_qualified_references_resolve_to_declared_dependencies(self) -> None:
         for path in (ROOT / ".agents/personal").rglob("SKILL.md"):
@@ -94,68 +86,6 @@ class PersonalPackagingTests(unittest.TestCase):
                 else:
                     self.assertIn(namespace, EXTERNAL_SKILLS, str(path))
                     self.assertIn(name, EXTERNAL_SKILLS[namespace], str(path))
-
-    def test_inspection_entry_rejects_recurrence_mutation(self) -> None:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(ROOT / "plugins/personal/skills/work-item/work_item.py"),
-                "note",
-                "--help",
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("invalid choice: 'note'", result.stderr)
-
-    def test_published_create_and_address_wrappers_resolve_their_siblings(self) -> None:
-        commands = (
-            (
-                ROOT
-                / "plugins"
-                / "personal"
-                / "skills"
-                / "create-work-item"
-                / "scripts"
-                / "create_work_item.py",
-                "note",
-                "--help",
-            ),
-            (
-                ROOT
-                / "plugins"
-                / "personal"
-                / "skills"
-                / "create-work-item"
-                / "scripts"
-                / "create_work_item.py",
-                "template",
-                "--kind",
-                "story",
-            ),
-            (
-                ROOT
-                / "plugins"
-                / "personal"
-                / "skills"
-                / "address-work-item"
-                / "scripts"
-                / "address_work_item.py",
-                "--help",
-            ),
-        )
-        for path, *arguments in commands:
-            with self.subTest(path=path):
-                result = subprocess.run(
-                    [sys.executable, "-B", str(path), *arguments],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

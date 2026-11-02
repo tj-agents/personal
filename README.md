@@ -13,8 +13,7 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 
 - Policies: `personal:rules`.
 - Conventions: `personal:revision`.
-- Utilities: `personal:use`, `personal:work-item`, `personal:create-work-item`.
-- Workflow: `personal:address-work-item`.
+- Utilities: `personal:use`, `personal:bot-identity`.
 
 ## Adopt a personal project
 
@@ -34,25 +33,23 @@ callers in the same cutover. Employer projects are outside this profile; persona
 Adoption leaves existing workflows unchanged. This repository runs its own policy check against candidate
 source before merge.
 
-## Personal GitHub work items
+## Work items and progress
 
-Personal owns its GitHub tracker. Selecting `personal@tj-agents` in a repository's `.agents/plugins.json`
-selects `personal:work-item`; no other declaration exists. The tracker resolves the source primary checkout
-and records issues in its GitHub origin. A created issue is placed on the owner's board named after the
-repository and on the owner-wide board named after the owner, created on first use; that needs `gh` with the
-`project` scope. Personal never infers scope, selects a provider during read or create,
-or configures a cloud account, server, credential store or local backlog.
+Personal owns automatic work-item recording and progress policy for explicitly adopted personal projects.
+Its [bounded policy](.agents/personal/policy/rules/resources/work-items.md) covers bugs, mistakes, debt,
+features, stories and tasks. GitHub owns the shared `github:work-item`, `github:create-work-item` and
+`github:address-work-item` operations, deterministic schemas, managed issue bodies, request receipts
+and verified repository and owner board updates.
 
-## Recording and addressing
+The affected source project's primary checkout selects the policy and tracker. An observation in another
+repository does not move that project's defect or adopt Personal for the observing task. An eligible
+tj-agents tooling defect uses its source routine even when demonstrated during employer work; Template
+owns source repair authority and employer evidence boundaries still apply.
 
-Use `personal:create-work-item` to classify and record a bug, mistake, debt, feature, Story or task. Recording
-preserves the request for later work and does not start implementation. The shipped helper owns deterministic
-schemas, rendered bodies, GitHub CRUD and durable request receipts.
-
-Use `personal:work-item` to read, list or view an identified item. Use `personal:address-work-item` for an
-existing item after reconciling its identity and repair owner; Workflow owns the goal and execution, and the
-mapped Engineering operation owns bounded software delivery. The address helper records factual updates and
-closure evidence. A missing or different provider blocks the operation without adopting another queue.
+Work starting, blocking, resuming, handing off, entering review and reaching verified acceptance updates
+the same canonical item and its boards. Recording and board maintenance do not dispatch ordinary backlog
+implementation. Addressing reuses the existing owner under Workflow and its mapped Engineering operation.
+A missing provider, policy or board option leaves the operation incomplete without selecting another queue.
 
 ## Agent GitHub identity
 
