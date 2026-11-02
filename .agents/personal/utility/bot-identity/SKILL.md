@@ -54,11 +54,14 @@ as Infonetica, the call uses Tommy's own gh login or git helpers: an agent can a
 token also works in the App's accounts. A command naming no account runs unauthenticated, and agents may run only
 `gh auth status`. `token --owner <account>` prints a token. Restart Claude and Codex after setup.
 
-When more than one PR awaits Tommy's approval, give him one command to invoke in the agent terminal with `!`. It
-bypasses the wrapper and approves each PR as `tomjseery`; an agent never runs it:
+Every PR handed to Tommy for approval carries the `!` command he invokes in the agent terminal. It bypasses the
+wrapper and approves each PR as `tomjseery`, stopping at the first failure; an agent never runs it. After a
+successful non-draft `gh pr create` or `gh pr ready` in the App's accounts, the wrapper prints that PR's filled
+command on stderr in every repository, whatever plugins it selects. For several PRs in one reply, give one command
+from `approval <url>...`, which refuses PRs outside the App's accounts:
 
 ```text
-!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR bash -c 'g="<real gh>"; export GH_TOKEN=$("$g" auth token --user tomjseery); for p in <repo>/<number> ...; do "$g" pr review --approve "https://github.com/<owner>/${p%/*}/pull/${p#*/}"; done'
+python -B <skill-directory>/scripts/bot_identity.py approval https://github.com/<owner>/<repo>/pull/<number> ...
 ```
 
 This is environment containment, not an OS boundary: an agent can still read Tommy's stores directly

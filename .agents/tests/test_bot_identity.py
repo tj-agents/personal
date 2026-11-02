@@ -45,12 +45,14 @@ class FakeGitHub:
 
 
 class FakeGh:
-    def __init__(self):
+    def __init__(self, stdout=None, returncode=0):
         self.calls = []
+        self.stdout = stdout
+        self.returncode = returncode
 
-    def __call__(self, command, env=None, check=False):
+    def __call__(self, command, env=None, check=False, **captured):
         self.calls.append((command, env))
-        return subprocess.CompletedProcess(command, 0)
+        return subprocess.CompletedProcess(command, self.returncode, self.stdout if captured else None)
 
 
 def fake_installed(owners, record):
@@ -286,6 +288,64 @@ class GhWrapperTests(Sandbox):
         del os.environ["TJ_AGENT"]
         self.assertEqual(0, bot.run_gh(["pr", "list"], run=self.gh, checkout=lambda: "tj-agents"))
         self.assertEqual([(["real-gh", "pr", "list"], None)], self.gh.calls)
+
+
+class ApprovalHandoffTests(GhWrapperTests):
+    CORE = "https://github.com/tj-agents/core/pull/7"
+
+    def hand_over(self, *arguments, checkout="tj-agents", stdout=None, returncode=0):
+        self.gh.stdout, self.gh.returncode = stdout, returncode
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(returncode, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout))
+        return out.getvalue(), err.getvalue()
+
+    def test_a_created_pr_prints_its_filled_approval_command_and_keeps_its_url_on_stdout(self):
+        out, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertEqual(self.CORE + "\n", out)
+        self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
+        self.assertIn(bot.approval_command([self.CORE]), err)
+
+    def test_a_readied_pr_is_looked_up_with_its_selector_and_handed_over(self):
+        _, err = self.hand_over("pr", "ready", "7", "-R", "tj-agents/core", stdout=self.CORE)
+        view, environment = self.gh.calls[-1]
+        self.assertEqual(["real-gh", "pr", "view", "7", "-R", "tj-agents/core", "--json", "url", "--jq", ".url"],
+                         view)
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+        self.assertIn(bot.approval_command([self.CORE]), err)
+
+    def test_drafts_undo_failures_and_uncovered_accounts_hand_nothing_over(self):
+        for arguments, checkout, returncode in ((("pr", "create", "--draft"), "tj-agents", 0),
+                                                (("pr", "create", "-d"), "tj-agents", 0),
+                                                (("pr", "create", "--dry-run"), "tj-agents", 0),
+                                                (("pr", "ready", "--undo"), "tj-agents", 0),
+                                                (("pr", "create"), "tj-agents", 1),
+                                                (("pr", "ready", "4"), "tj-agents", 1),
+                                                (("pr", "create"), "Infonetica", 0),
+                                                (("pr", "create"), None, 0)):
+            with self.subTest(arguments=arguments, checkout=checkout, returncode=returncode):
+                self.gh.calls.clear()
+                _, err = self.hand_over(*arguments, checkout=checkout, stdout=self.CORE, returncode=returncode)
+                self.assertEqual("", err)
+                self.assertEqual(1, len(self.gh.calls))
+
+    def test_an_unresolved_url_still_points_at_the_command_builder(self):
+        _, err = self.hand_over("pr", "create", stdout="")
+        self.assertIn("approval <url>", err)
+
+    def test_one_command_approves_every_named_pr_as_tommy_and_stops_on_failure(self):
+        other = "https://github.com/tomjseery/notes/pull/2"
+        command = bot.approval_command([self.CORE, other])
+        self.assertTrue(command.startswith("!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR bash -c 'set -e; "))
+        self.assertIn('g="real-gh"', command)
+        self.assertIn('auth token --user tomjseery', command)
+        self.assertIn(f"for p in {self.CORE} {other}; do", command)
+
+    def test_only_prs_in_the_apps_accounts_get_an_approval_command(self):
+        for urls in ([], ["https://github.com/Infonetica/cris/pull/3"], ["https://github.com/tj-agents/core"],
+                     [self.CORE + "; rm -rf ~"]):
+            with self.subTest(urls=urls), self.assertRaises(bot.IdentityError):
+                bot.approval_command(urls)
 
 
 class AgentEnvironmentTests(Sandbox):

@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:832aa182f14aecd9525ad17a4c113341ff6a6a35ec67e274ba574cd9ec914b5c -->
+<!-- BEGIN personal:rules sha256:c51fe768beb91b7db22fa02bf4bcffd659f1ec23eee5cf37f2bd5eedfe59aba3 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -87,11 +87,6 @@ An acknowledged repeated native close prepare failure occurs during item A:
 
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.
-
-## 5. Approvals
-
-Report every PR awaiting Tommy's approval with its link and `personal:bot-identity`'s `!` approval
-command filled in for all of them. An agent never runs that command.
 
 This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
 its marked native instruction block from this body and checks it for drift. A selected plugin or an
