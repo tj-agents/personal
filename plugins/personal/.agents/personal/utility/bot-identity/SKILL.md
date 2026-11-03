@@ -34,9 +34,10 @@ If the wizard reports a missing account, Tommy installs the same App at
 setup. The key enrollment is retained, but setup does not claim readiness or alter agent host settings until all
 three installations verify.
 
-Readiness also requires `repository_creation:write` on the App and its `tj-agents` installation, so agents can
-create repositories there. It deliberately rejects `administration` write access: creating repositories does not need
-authority to administer, delete, or transfer existing repositories. A failed check identifies the exact App or
+Readiness requires `repository_creation:write` and `organization_projects:write` on the App and its accepted
+`tj-agents` installation, for repository creation and organization Projects. It rejects `administration`
+write access: creating repositories does not need authority to administer, delete, or transfer existing
+repositories. A failed check identifies the exact App or
 `tj-agents` installation settings page for Tommy to correct; setup never changes GitHub permissions itself.
 
 It installs a `gh` wrapper in `~/.agents-state/bin/bot-identity/` (`gh.exe` on Windows, so PowerShell and

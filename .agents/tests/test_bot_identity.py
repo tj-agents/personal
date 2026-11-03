@@ -514,7 +514,10 @@ class EnrollmentTests(Sandbox):
         return fetch, calls
 
     def test_readiness_reports_the_app_settings_page_for_a_missing_declaration(self):
-        fetch, calls = self.readiness_fetch({}, {"repository_creation": "write"})
+        fetch, calls = self.readiness_fetch(
+            {"organization_projects": "write"},
+            {"repository_creation": "write", "organization_projects": "write"},
+        )
         with self.assertRaisesRegex(bot.IdentityError,
                                     r"pinned GitHub App does not grant repository_creation:write; update it at "
                                     r"https://github.com/settings/apps/tomjseery-bot"):
@@ -522,24 +525,60 @@ class EnrollmentTests(Sandbox):
         self.assertEqual([("GET", "/app")], calls)
 
     def test_readiness_reports_the_tj_agents_installation_settings_page_pending_acceptance(self):
-        fetch, calls = self.readiness_fetch({"repository_creation": "write"}, {})
+        fetch, calls = self.readiness_fetch(
+            {"repository_creation": "write", "organization_projects": "write"},
+            {"organization_projects": "write"},
+        )
         with self.assertRaisesRegex(bot.IdentityError,
                                     r"tj-agents App installation does not grant repository_creation:write; update it at "
                                     r"https://github.com/organizations/tj-agents/settings/installations/7"):
             bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
         self.assertEqual([("GET", "/app"), ("GET", "/app/installations")], calls)
 
-    def test_readiness_accepts_the_declared_and_accepted_creation_capability(self):
-        fetch, calls = self.readiness_fetch({"repository_creation": "write"}, {"repository_creation": "write"})
+    def test_readiness_rejects_missing_or_read_only_projects_on_the_app(self) -> None:
+        for grant in ({}, {"organization_projects": "read"}):
+            with self.subTest(grant=grant):
+                fetch, calls = self.readiness_fetch(
+                    {"repository_creation": "write", **grant},
+                    {"repository_creation": "write", "organization_projects": "write"},
+                )
+                with self.assertRaisesRegex(
+                    bot.IdentityError,
+                    r"pinned GitHub App does not grant organization_projects:write; update it at "
+                    r"https://github.com/settings/apps/tomjseery-bot",
+                ):
+                    bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
+                self.assertEqual([("GET", "/app")], calls)
+
+    def test_readiness_rejects_projects_not_accepted_by_the_tj_agents_installation(self) -> None:
+        for grant in ({}, {"organization_projects": None}, {"organization_projects": "read"}):
+            with self.subTest(grant=grant):
+                fetch, calls = self.readiness_fetch(
+                    {"repository_creation": "write", "organization_projects": "write"},
+                    {"repository_creation": "write", **grant},
+                )
+                with self.assertRaisesRegex(
+                    bot.IdentityError,
+                    r"tj-agents App installation does not grant organization_projects:write; update it at "
+                    r"https://github.com/organizations/tj-agents/settings/installations/7",
+                ):
+                    bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
+                self.assertEqual([("GET", "/app"), ("GET", "/app/installations")], calls)
+
+    def test_readiness_accepts_the_declared_and_accepted_required_capabilities(self):
+        fetch, calls = self.readiness_fetch(
+            {"repository_creation": "write", "organization_projects": "write"},
+            {"repository_creation": "write", "organization_projects": "write"},
+        )
         bot.verify_ready(RECORD, fetch=fetch, sign=lambda record: "jwt")
         self.assertEqual([("GET", "/app"), ("GET", "/app/installations")], calls)
 
     def test_readiness_rejects_administration_write_on_the_app_or_tj_agents_installation(self):
         cases = (
-            ("App", {"repository_creation": "write", "administration": "write"},
-             {"repository_creation": "write"}, "settings/apps/tomjseery-bot"),
-            ("installation", {"repository_creation": "write"},
-             {"repository_creation": "write", "administration": "write"},
+            ("App", {"repository_creation": "write", "organization_projects": "write", "administration": "write"},
+             {"repository_creation": "write", "organization_projects": "write"}, "settings/apps/tomjseery-bot"),
+            ("installation", {"repository_creation": "write", "organization_projects": "write"},
+             {"repository_creation": "write", "organization_projects": "write", "administration": "write"},
              "organizations/tj-agents/settings/installations/7"),
         )
         for subject, app_permissions, installation_permissions, url in cases:

@@ -36,8 +36,12 @@ TOKEN_MARGIN_SECONDS = 300
 ENROLLMENT_SECONDS = 600
 MAX_ENROLLMENT_BYTES = 32 * 1024
 REQUIRED_OWNERS = ("tomjseery", "tj-agents", "concertable")
-REQUIRED_CAPABILITY_VERSION = 1
-REQUIRED_CAPABILITIES = {REQUIRED_CAPABILITY_VERSION: {"tj-agents": {"repository_creation": "write"}}}
+REQUIRED_CAPABILITY_VERSION = 2
+REQUIRED_CAPABILITIES = {
+    REQUIRED_CAPABILITY_VERSION: {
+        "tj-agents": {"repository_creation": "write", "organization_projects": "write"}
+    }
+}
 FORBIDDEN_WRITE_PERMISSIONS = ("administration",)
 WINDOWS = os.name == "nt"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
