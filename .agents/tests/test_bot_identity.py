@@ -26,6 +26,8 @@ RECORD = {"id": 5397553, "slug": "tomjseery-bot", "client_id": "Iv23liYRkDvGiQXw
           "key": "unused.pem"}
 INSTALLED = {"tj-agents": 7, "tomjseery": 8}
 ARGV_RECORDER = "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+FAKE_BUILDER = ("import json, sys\nassert sys.argv[1:] == ['issue', '--spec', '-']\n"
+                "print('!issued ' + json.dumps(json.load(sys.stdin), sort_keys=True))\nprint('Copied 1 characters')\n")
 
 
 def without_agent_settings(environment):
@@ -45,12 +47,14 @@ class FakeGitHub:
 
 
 class FakeGh:
-    def __init__(self):
+    def __init__(self, stdout=None, returncode=0):
         self.calls = []
+        self.stdout = stdout
+        self.returncode = returncode
 
-    def __call__(self, command, env=None, check=False):
+    def __call__(self, command, env=None, check=False, **captured):
         self.calls.append((command, env))
-        return subprocess.CompletedProcess(command, 0)
+        return subprocess.CompletedProcess(command, self.returncode, self.stdout if captured else None)
 
 
 def fake_installed(owners, record):
@@ -328,6 +332,90 @@ class GhWrapperTests(Sandbox):
         arguments = ["pr", "review", "5", "--approve"]
         self.assertEqual(0, bot.run_gh(arguments, run=self.gh, checkout=lambda: "tj-agents"))
         self.assertEqual([(["real-gh", *arguments], None)], self.gh.calls)
+
+
+class ApprovalHandoffTests(GhWrapperTests):
+    CORE = "https://github.com/tj-agents/core/pull/7"
+
+    def setUp(self):
+        super().setUp()
+        self.patch_environment({"AGENT_STATE_DIRECTORY": str(self.home)})
+        bot.user_command_builder().parent.mkdir(parents=True)
+        bot.user_command_builder().write_text(FAKE_BUILDER, encoding="utf-8")
+
+    def issued(self, urls):
+        return "!issued " + json.dumps(bot.approval_spec(urls), sort_keys=True)
+
+    def hand_over(self, *arguments, checkout="tj-agents", stdout=None, returncode=0):
+        self.gh.stdout, self.gh.returncode = stdout, returncode
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(returncode, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout))
+        return out.getvalue(), err.getvalue()
+
+    def test_a_created_pr_hands_over_its_issued_approval_command_and_keeps_its_url_on_stdout(self):
+        out, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertEqual(self.CORE + "\n", out)
+        self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
+        self.assertIn(self.issued([self.CORE]), err)
+        self.assertIn("Copied 1 characters", err)
+
+    def test_a_readied_pr_is_looked_up_with_its_selector_and_handed_over(self):
+        _, err = self.hand_over("pr", "ready", "7", "-R", "tj-agents/core", stdout=self.CORE)
+        view, environment = self.gh.calls[-1]
+        self.assertEqual(["real-gh", "pr", "view", "7", "-R", "tj-agents/core", "--json", "url", "--jq", ".url"],
+                         view)
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+        self.assertIn(self.issued([self.CORE]), err)
+
+    def test_drafts_undo_failures_and_uncovered_accounts_hand_nothing_over(self):
+        for arguments, checkout, returncode in ((("pr", "create", "--draft"), "tj-agents", 0),
+                                                (("pr", "create", "-d"), "tj-agents", 0),
+                                                (("pr", "create", "--dry-run"), "tj-agents", 0),
+                                                (("pr", "ready", "--undo"), "tj-agents", 0),
+                                                (("pr", "create"), "tj-agents", 1),
+                                                (("pr", "ready", "4"), "tj-agents", 1),
+                                                (("pr", "create"), "Infonetica", 0),
+                                                (("pr", "create"), None, 0)):
+            with self.subTest(arguments=arguments, checkout=checkout, returncode=returncode):
+                self.gh.calls.clear()
+                _, err = self.hand_over(*arguments, checkout=checkout, stdout=self.CORE, returncode=returncode)
+                self.assertEqual("", err)
+                self.assertEqual(1, len(self.gh.calls))
+
+    def test_flag_spellings_given_as_values_still_hand_the_pr_over(self):
+        _, err = self.hand_over("pr", "create", "--title", "--draft", "-b", "-w", stdout=self.CORE)
+        self.assertIn(self.issued([self.CORE]), err)
+
+    def test_an_unresolved_url_still_points_at_the_command_builder(self):
+        _, err = self.hand_over("pr", "create", stdout="")
+        self.assertIn("approval <url>", err)
+
+    def test_a_missing_or_failing_builder_reports_instead_of_composing_a_command(self):
+        for builder in (None, "import sys\nprint('no clipboard', file=sys.stderr)\nsys.exit(2)\n"):
+            with self.subTest(builder=builder):
+                if builder is None:
+                    bot.user_command_builder().unlink()
+                else:
+                    bot.user_command_builder().write_text(builder, encoding="utf-8")
+                _, err = self.hand_over("pr", "create", stdout=self.CORE)
+                self.assertIn("his command was not built", err)
+                self.assertNotIn("\n!", err)
+                self.assertNotIn("REQUIRED IN YOUR REPLY", err)
+
+    def test_one_spec_approves_every_named_pr_once_as_tommy(self):
+        other = "https://github.com/tomjseery/notes/pull/2"
+        self.assertEqual({"unset": ["GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"],
+                          "steps": [{"argv": ["real-gh", "auth", "token", "--user", "tomjseery"], "capture": "GH_TOKEN"},
+                                    {"argv": ["real-gh", "pr", "review", "--approve", self.CORE]},
+                                    {"argv": ["real-gh", "pr", "review", "--approve", other]}]},
+                         bot.approval_spec([self.CORE, other, self.CORE]))
+
+    def test_only_prs_in_the_apps_accounts_get_an_approval_command(self):
+        for urls in ([], ["https://github.com/Infonetica/cris/pull/3"], ["https://github.com/tj-agents/core"],
+                     [self.CORE + "; rm -rf ~"]):
+            with self.subTest(urls=urls), self.assertRaises(bot.IdentityError):
+                bot.approval_command(urls)
 
 
 class AgentEnvironmentTests(Sandbox):
@@ -717,8 +805,11 @@ class FreshSetupTests(unittest.TestCase):
                     text=True, timeout=30, check=False)
                 self.assertEqual(2, approval.returncode)
                 self.assertEqual("", approval.stdout)
-                self.assertIn("prepare_approval.py", approval.stderr)
+                self.assertIn("approval <url>", approval.stderr)
                 self.assertNotIn("TJ_AGENT", os.environ)
+        repository = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
+                                    capture_output=True, text=True, timeout=30, check=True)
+        self.assertEqual(ROOT.resolve(), Path(repository.stdout.strip()).resolve())
 
 
 def bot_toml(text):

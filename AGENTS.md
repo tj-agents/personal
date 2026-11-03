@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:eee7a719bb90e67aaa81ac101a45836dd099bc745fee61216c99ec7d6075f12d -->
+<!-- BEGIN personal:rules sha256:c51fe768beb91b7db22fa02bf4bcffd659f1ec23eee5cf37f2bd5eedfe59aba3 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -60,7 +60,30 @@ configuration switches, duplicate paths or process machinery only for a concrete
 capabilities the project already selects. Verify the behavior and meaningful failure paths in proportion
 to the change, with tests that prove behavior rather than restate the implementation.
 
-## 3. Plans
+## 3. Established problem records
+
+Owns automatic recording of established personal bugs, agent or process mistakes, and deliberate debt.
+Within authorized work in an explicitly adopted personal project, record them through Personal's selected
+tools without waiting to be asked. Honor an explicit no-recording limit, and never record employer or
+non-personal evidence through Personal.
+
+Reconcile the canonical existing identity before recording. For a repeated observation, append material
+new recurrence evidence, the cause when known, and the current outcome or repair state; do not create a
+duplicate item. Verify remote persistence before claiming the problem is documented. The existing Personal
+tools own their commands and procedures.
+
+Recording does not authorize, prioritize or dispatch implementation. Apply
+[Workflow's incidental-problems decision](https://github.com/tj-agents/core/blob/main/.agents/workflow/resources/problem-records.md#incidental-problems)
+to those decisions and preserve the active task and repair owner.
+
+```text
+An acknowledged repeated native close prepare failure occurs during item A:
+1. Update its existing close issue with new recurrence evidence, the known cause and current repair state.
+2. Verify the update persists remotely before saying it is documented.
+3. Continue item A; do not create a duplicate item or take over the repair.
+```
+
+## 4. Plans
 
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.

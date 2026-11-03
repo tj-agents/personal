@@ -54,14 +54,15 @@ as Infonetica, the call uses Tommy's own gh login or git helpers: an agent can a
 token also works in the App's accounts. A command naming no account runs unauthenticated, and agents may run only
 `gh auth status`. `token --owner <account>` prints a token. Restart Claude and Codex after setup.
 
-When PRs await Tommy's approval, select `cli:clip` and run `scripts/prepare_approval.py` with their explicit URLs
-and the selected `cli:clip` script path. Use `python` on Windows or `python3` on Linux/macOS; choose `--shell`
-for the shell Tommy's `!` command uses. The helper copies one command with `--plain-only` and verifies the
-clipboard. Preparation never authenticates or approves. Tommy alone invokes the copied `!` command to approve
-as `tomjseery`; agents never execute it.
+Every PR handed to Tommy for approval carries the `!` command he invokes in the agent terminal. It bypasses the
+wrapper and approves each PR as `tomjseery`, stopping at the first failure; an agent never runs it, and the wrapper
+refuses an agent's own approval. After a successful `gh pr create` (not draft, `--web` or `--dry-run`) or `gh pr ready`
+in the App's accounts, the wrapper builds that PR's command through `cli:clip`'s `user_command.py`, copies it to his
+clipboard and prints it on stderr. For several PRs in one reply, run `approval <url>...`, which does the same for all
+of them and refuses PRs outside the App's accounts:
 
 ```text
-python -B '<skill-directory>/scripts/prepare_approval.py' --shell powershell --clipboard-script '<clip-skill-directory>/scripts/copy_draft.py' https://github.com/tj-agents/core/pull/123
+python -B <skill-directory>/scripts/bot_identity.py approval https://github.com/<owner>/<repo>/pull/<number> ...
 ```
 
 This is environment containment, not an OS boundary: an agent can still read Tommy's stores directly

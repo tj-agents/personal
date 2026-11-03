@@ -2,7 +2,8 @@
 """Run agent GitHub access as Tommy's GitHub App in personal repositories (Python 3.11+, needs openssl).
 
 `token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
-the real gh, and `setup` installs the wrapper and the agent-only settings for Claude and Codex.
+the real gh, `approval URL...` prints Tommy's approval command and `setup` installs the wrapper and the agent-only
+settings for Claude and Codex.
 """
 
 from __future__ import annotations
@@ -43,6 +44,11 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
 GITHUB_URL = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)")
 API_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([A-Za-z0-9-]+)")
 REPOSITORY = re.compile(r"([A-Za-z0-9-]+)/[\w.-]+")
+PULL_REQUEST = re.compile(r"https://github\.com/([A-Za-z0-9-]+)/[\w.-]+/pull/\d+")
+UNREVIEWABLE_CREATE = ("-d", "--draft", "-w", "--web", "--dry-run")
+PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "--base", "-H", "--head", "-a",
+                  "--assignee", "-l", "--label", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-R",
+                  "--repo", "-T", "--template", "--recover")
 OWNER_FLAGS = ("-R", "--repo", "--owner")
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
@@ -685,6 +691,81 @@ def review_approval(arguments: list[str]) -> tuple[bool, list[str]]:
     return approving, owners
 
 
+def user_command_builder() -> Path:
+    return Path(os.environ.get("AGENT_STATE_DIRECTORY") or Path.home() / ".agents-state") / "bin" / "cli" / "user_command.py"
+
+
+def approval_spec(urls: list[str]) -> dict:
+    if not urls:
+        raise IdentityError("name at least one pull request URL")
+    for url in urls:
+        match = PULL_REQUEST.fullmatch(url)
+        if not match or match.group(1).lower() not in REQUIRED_OWNERS:
+            raise IdentityError(f"{url} is not a pull request in an account the GitHub App covers")
+    gh = real_gh()
+    return {"unset": ["GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"],
+            "steps": [{"argv": [gh, "auth", "token", "--user", "tomjseery"], "capture": "GH_TOKEN"},
+                      *({"argv": [gh, "pr", "review", "--approve", url]} for url in dict.fromkeys(urls))]}
+
+
+def approval_command(urls: list[str], run=subprocess.run) -> str:
+    builder = user_command_builder()
+    if not builder.is_file():
+        raise IdentityError(f"cli's command builder is not installed at {builder}; run agent:refresh-plugins")
+    result = run([sys.executable, "-B", str(builder), "issue", "--spec", "-"], input=json.dumps(approval_spec(urls)),
+                 capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+                 timeout=TIMEOUT_SECONDS, creationflags=NO_WINDOW)
+    if result.returncode:
+        raise IdentityError(result.stderr.strip() or "cli's command builder failed")
+    return result.stdout.strip()
+
+
+def option_names(arguments: list[str]) -> set[str]:
+    names, rest = set(), iter(arguments)
+    for argument in rest:
+        if argument in PR_VALUE_FLAGS:
+            next(rest, None)
+        elif argument.startswith("-"):
+            names.add(argument.partition("=")[0])
+    return names
+
+
+def awaits_approval(arguments: list[str]) -> bool:
+    flags = option_names(arguments[2:])
+    if arguments[:2] == ["pr", "create"]:
+        return not flags & set(UNREVIEWABLE_CREATE)
+    return arguments[:2] == ["pr", "ready"] and "--undo" not in flags
+
+
+def ready_selector(arguments: list[str]) -> list[str]:
+    selector, rest = [], iter(arguments[2:])
+    for argument in rest:
+        if argument in ("-R", "--repo"):
+            selector += [argument, next(rest, "")]
+        elif argument.startswith(("-R", "--repo=")) or not argument.startswith("-"):
+            selector.append(argument)
+    return selector
+
+
+def hand_over(output: str) -> None:
+    match = PULL_REQUEST.search(output)
+    url = match.group(0) if match and match.group(1).lower() in REQUIRED_OWNERS else None
+    builder = f'`python -B "{Path(__file__).resolve().as_posix()}" approval <url>...`'
+    if not url:
+        print(f"bot_identity: REQUIRED IN YOUR REPLY: this PR awaits Tommy's approval. Run {builder} with its link and "
+              "include the link and the line it prints; never run that line yourself.", file=sys.stderr)
+        return
+    try:
+        issued = approval_command([url])
+    except IdentityError as error:
+        print(f"bot_identity: {url} awaits Tommy's approval, but his command was not built: {error}", file=sys.stderr)
+        return
+    print(f"bot_identity: REQUIRED IN YOUR REPLY: {url} awaits Tommy's approval. His command is on his clipboard; "
+          f"your reply must include that link and this exact line, which Tommy runs; never run it yourself:\n"
+          f"{issued}\nReporting several PRs in one reply? Run {builder} with all their links instead.",
+          file=sys.stderr)
+
+
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
@@ -692,10 +773,26 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
     approving, review_owners = review_approval(arguments)
     owners = owners_from_arguments(arguments) + review_owners + ([checkout_owner] if checkout_owner else [])
     if approving and any(owner.lower() in REQUIRED_OWNERS for owner in owners):
-        raise IdentityError("Tommy must approve these PRs; use personal:bot-identity's prepare_approval.py "
-                            "to put his command on the clipboard")
+        raise IdentityError("Tommy must approve these PRs; run this script's `approval <url>...` to put his "
+                            "command on the clipboard")
     environment = agent_gh_environment(arguments, checkout_owner)
-    return run([real_gh(), *arguments], env=environment, check=False).returncode
+    app = environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
+    if not (app and awaits_approval(arguments)):
+        return run([real_gh(), *arguments], env=environment, check=False).returncode
+    if arguments[1] == "create":
+        result = run([real_gh(), *arguments], env=environment, check=False, stdout=subprocess.PIPE,
+                     encoding="utf-8", errors="replace")
+        output = result.stdout or ""
+        sys.stdout.write(output)
+        sys.stdout.flush()
+    else:
+        result = run([real_gh(), *arguments], env=environment, check=False)
+        view = [real_gh(), "pr", "view", *ready_selector(arguments), "--json", "url", "--jq", ".url"]
+        output = "" if result.returncode else run(view, env=environment, check=False, stdout=subprocess.PIPE,
+                                                    encoding="utf-8", errors="replace").stdout or ""
+    if result.returncode == 0:
+        hand_over(output)
+    return result.returncode
 
 
 def tommy_credential(fields: dict[str, str], run=subprocess.run) -> str:
@@ -945,6 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
         commands = parser.add_subparsers(dest="command", required=True)
         commands.add_parser("token").add_argument("--owner", required=True)
         commands.add_parser("credential").add_argument("operation")
+        commands.add_parser("approval").add_argument("urls", nargs="+")
         setup_command = commands.add_parser("setup")
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
@@ -954,6 +1052,9 @@ def main(argv: list[str] | None = None) -> int:
             return credential(arguments.operation)
         if arguments.command == "setup":
             setup(check=arguments.check, onboard_key=arguments.onboard)
+            return 0
+        if arguments.command == "approval":
+            print(approval_command(arguments.urls))
             return 0
         if arguments.owner.lower() not in REQUIRED_OWNERS:
             raise IdentityError("the GitHub App is not authorized for that account")
