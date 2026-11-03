@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 import io
@@ -30,6 +31,7 @@ import stat
 
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
+TOKEN_FINGERPRINT = "TJ_BOT_TOKEN_SHA256"
 UNAUTHENTICATED = "bot-identity-unauthenticated"
 TIMEOUT_SECONDS = 30
 TOKEN_MARGIN_SECONDS = 300
@@ -54,6 +56,39 @@ PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "-
                   "--assignee", "-l", "--label", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-R",
                   "--repo", "-T", "--template", "--recover")
 OWNER_FLAGS = ("-R", "--repo", "--owner")
+PAYLOAD_FLAGS = (*[flag for flag in PR_VALUE_FLAGS if flag.startswith("--")], "--field", "--raw-field",
+                 "--input", "--header", "--jq", "--search", "--method", "--cache", "--json", "--limit",
+                 "-q", "-t",
+                 "--preview", "--branch", "--subject", "--author-email", "--match-head-commit", "--description",
+                 "--homepage", "--gitignore", "--license", "--source", "--team", "--color", "--reason",
+                 "--add-assignee", "--add-label", "--add-project", "--add-reviewer", "--remove-assignee",
+                 "--remove-label", "--remove-project", "--remove-reviewer")
+COMMAND_PAYLOAD_FLAGS = {
+    ("api",): ("-F", "-f", "-H", "-q", "-X", "-p", "-t"),
+    ("pr", "create"): ("-a", "-B", "-b", "-F", "-H", "-l", "-m", "-p", "-r", "-T", "-t"),
+    ("pr", "edit"): ("-B", "-b", "-F", "-m", "-t"),
+    ("pr", "merge"): ("-A", "-b", "-F", "-t"),
+    ("pr", "review"): ("-b", "-F"),
+    ("pr", "checkout"): ("-b",),
+    ("pr", "comment"): ("-b", "-F"),
+    ("pr", "close"): ("-c", "--comment"),
+    ("pr", "reopen"): ("-c", "--comment"),
+    ("pr", "view"): ("-q", "-t"),
+    ("pr", "list"): ("-a", "-A", "-B", "-H", "-l", "-L", "-S", "-s", "-q", "-t"),
+    ("pr", "checks"): ("-q", "-t"),
+    ("issue", "create"): ("-a", "-b", "-F", "-l", "-m", "-p", "-T", "-t"),
+    ("issue", "edit"): ("-b", "-F", "-m", "-t"),
+    ("issue", "comment"): ("-b", "-F"),
+    ("issue", "close"): ("-c", "-r", "--comment"),
+    ("issue", "reopen"): ("-c", "--comment"),
+    ("issue", "view"): ("-q", "-t"),
+    ("issue", "list"): ("-a", "-A", "-l", "-L", "-S", "-s", "-m", "-q", "-t"),
+    ("repo", "create"): ("-d", "-g", "-h", "-l", "-r", "-s", "-t", "-p", "--remote"),
+    ("repo", "clone"): ("-u", "--upstream-remote-name"),
+    ("repo", "fork"): ("--remote-name", "--org", "--fork-name"),
+    ("repo", "edit"): ("-d", "-h"),
+    ("repo", "view"): ("-q", "-t"),
+}
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
@@ -578,23 +613,57 @@ def installation_token(owner: str, record: dict, now: float | None = None, fetch
     return issued["token"]
 
 
-def owners_from_arguments(arguments: list[str]) -> list[str]:
-    owners = [match.group(1) for argument in arguments for match in GITHUB_URL.finditer(argument)]
-    for index, argument in enumerate(arguments):
+def normalized_arguments(arguments: list[str]) -> list[str]:
+    aliases = {("pr", "new"): "create", ("issue", "new"): "create", ("pr", "co"): "checkout",
+               ("pr", "ls"): "list", ("issue", "ls"): "list", ("repo", "ls"): "list"}
+    replacement = aliases.get(tuple(arguments[:2]))
+    return [arguments[0], replacement, *arguments[2:]] if replacement else arguments
+
+
+def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
+    arguments = normalized_arguments(arguments)
+    owners, positional = [], []
+    hostname = None
+    command = tuple(arguments[:1] if arguments[:1] == ["api"] else arguments[:2])
+    payload_flags = (*PAYLOAD_FLAGS, *COMMAND_PAYLOAD_FLAGS.get(command, ()))
+    remaining = iter(arguments)
+    for argument in remaining:
         flag, equals, inline = argument.partition("=")
-        if flag in OWNER_FLAGS:
-            value = inline if equals else (arguments[index + 1] if index + 1 < len(arguments) else "")
+        if flag == "--hostname":
+            hostname = inline if equals else next(remaining, "")
+            continue
+        elif flag in OWNER_FLAGS:
+            value = inline if equals else next(remaining, "")
         elif argument.startswith("-R") and len(argument) > 2:
             value = argument[2:]
-        else:
+        elif flag in payload_flags:
+            if not equals:
+                next(remaining, None)
             continue
-        if value and not GITHUB_URL.search(value):
-            owners.append(value.split("/")[0])
+        else:
+            if not argument.startswith("-"):
+                positional.append(argument)
+            continue
+        if value:
+            match = GITHUB_URL.search(value)
+            owners.append(match.group(1) if match else value.split("/")[0])
     if arguments[:1] == ["api"]:
-        owners += [match.group(1) for argument in arguments[1:] for match in API_PATH.finditer(argument)]
+        targets = positional[1:2]
+        owners += [match.group(1) for argument in targets for match in API_PATH.finditer(argument)]
+    elif arguments[:1] == ["repo"]:
+        targets = positional[2:3]
+    elif arguments[:1] in (["pr"], ["issue"]) and arguments[1:2] != ["create"]:
+        targets = positional[2:]
+    else:
+        targets = []
+    owners += [match.group(1) for argument in targets for match in GITHUB_URL.finditer(argument)]
     if arguments[:1] == ["repo"]:
-        owners += [argument.split("/")[0] for argument in arguments[2:] if REPOSITORY.fullmatch(argument)]
-    return owners
+        owners += [argument.split("/")[0] for argument in targets if REPOSITORY.fullmatch(argument)]
+    return owners, hostname
+
+
+def owners_from_arguments(arguments: list[str]) -> list[str]:
+    return argument_context(arguments)[0]
 
 
 def owner_from_checkout(run=subprocess.run) -> str | None:
@@ -608,8 +677,39 @@ def owner_from_checkout(run=subprocess.run) -> str | None:
 
 
 def tommy_environment() -> dict[str, str]:
-    return {key: value for key, value in os.environ.items()
-            if key not in AGENT_ONLY and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
+    environment = dict(os.environ)
+    environment.pop(AGENT_FLAG, None)
+    issued = environment.pop(TOKEN_FINGERPRINT, None)
+    token = environment.get("GH_TOKEN", "")
+    if token == UNAUTHENTICATED or (issued and issued == hashlib.sha256(token.encode()).hexdigest()):
+        environment.pop("GH_TOKEN")
+    if environment.get("GH_CONFIG_DIR") == str(gh_config_directory()):
+        environment.pop("GH_CONFIG_DIR")
+    try:
+        count = int(environment.get("GIT_CONFIG_COUNT", "0"))
+        entries = [(environment[f"GIT_CONFIG_KEY_{index}"], environment[f"GIT_CONFIG_VALUE_{index}"])
+                   for index in range(count)]
+    except (ValueError, KeyError):
+        raise IdentityError("inherited Git configuration is malformed") from None
+    helper = "credential.https://github.com.helper"
+    if any(key == helper and value.endswith('" credential') for key, value in entries):
+        managed = {helper, "credential.https://github.com.useHttpPath",
+                   *(f"credential.{url}.helper" for url in CLEARED_HELPERS)}
+        kept = [(key, value) for key, value in entries if key not in managed]
+        environment.pop("GIT_CONFIG_COUNT", None)
+        for index in range(count):
+            environment.pop(f"GIT_CONFIG_KEY_{index}")
+            environment.pop(f"GIT_CONFIG_VALUE_{index}")
+        if kept:
+            environment["GIT_CONFIG_COUNT"] = str(len(kept))
+            for index, (key, value) in enumerate(kept):
+                environment[f"GIT_CONFIG_KEY_{index}"] = key
+                environment[f"GIT_CONFIG_VALUE_{index}"] = value
+    for key in ("PATH", "Path"):
+        if key in environment:
+            environment[key] = os.pathsep.join(entry for entry in environment[key].split(os.pathsep)
+                                                if not is_shim(entry))
+    return environment
 
 
 def shim_directory() -> Path:
@@ -629,15 +729,45 @@ def real_gh() -> str:
     return found
 
 
+def personal_checkout(root: Path | None = None) -> Path:
+    result = subprocess.run(["git", "-C", str(root or Path.cwd()), "rev-parse", "--show-toplevel"],
+                            capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT_SECONDS, check=False,
+                            creationflags=NO_WINDOW)
+    if result.returncode:
+        raise IdentityError("bot identity requires an explicitly adopted personal checkout")
+    checkout = Path(result.stdout.strip()).resolve()
+    try:
+        selection = json.loads((checkout / ".agents/plugins.json").read_text(encoding="utf-8-sig"))
+        plugins = selection["plugins"]
+        marketplace = selection["marketplaces"]["tj-agents"]["repository"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise IdentityError("bot identity requires an explicitly adopted personal checkout") from error
+    if (not isinstance(plugins, list) or "personal@tj-agents" not in plugins
+            or marketplace != "tj-agents/marketplace"
+            or any(plugin in plugins for plugin in ("work@tj-agents", "infonetica@tj-agents"))):
+        raise IdentityError("bot identity requires an explicitly adopted personal checkout")
+    return checkout
+
+
 def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> dict[str, str]:
     if arguments[:1] == ["auth"] and arguments[1:2] != ["status"]:
         raise IdentityError("agents may run only `gh auth status`")
-    owners = owners_from_arguments(arguments) + ([checkout_owner] if checkout_owner else [])
+    explicit_owners, hostname = argument_context(arguments)
+    owners = (explicit_owners
+              or owners_from_arguments(["-R", os.environ.get("GH_REPO", "")])
+              or ([checkout_owner] if checkout_owner else []))
+    if len({owner.lower() for owner in owners}) > 1:
+        raise IdentityError("one GitHub command must target a single account")
     environment = dict(os.environ)
     if not owners:
         return environment
-    record = app_record()
     protected = [owner for owner in owners if owner.lower() in REQUIRED_OWNERS]
+    if not protected:
+        return environment if arguments[:1] == ["auth"] else tommy_environment()
+    hostname = hostname if hostname is not None else os.environ.get("GH_HOST") or "github.com"
+    if hostname.lower() != "github.com":
+        raise IdentityError("the Personal GitHub App is authorized only for github.com")
+    record = app_record()
     covered = installed(protected, record) if protected else {}
     missing = [owner for owner in protected if owner.lower() not in covered]
     if missing:
@@ -648,6 +778,7 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
         if not token:
             raise IdentityError(f"could not get an installation token for {app_owner}")
         environment["GH_TOKEN"] = token
+        environment[TOKEN_FINGERPRINT] = hashlib.sha256(token.encode()).hexdigest()
         return environment
     return environment if arguments[:1] == ["auth"] else tommy_environment()
 
@@ -676,6 +807,7 @@ def option_names(arguments: list[str]) -> set[str]:
 
 
 def awaits_approval(arguments: list[str]) -> bool:
+    arguments = normalized_arguments(arguments)
     flags = option_names(arguments[2:])
     if arguments[:2] == ["pr", "create"]:
         return not flags & set(UNREVIEWABLE_CREATE)
@@ -710,11 +842,15 @@ def hand_over(output: str) -> None:
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
+    try:
+        personal_checkout()
+    except IdentityError:
+        return run([real_gh(), *arguments], env=tommy_environment(), check=False).returncode
     environment = agent_gh_environment(arguments, checkout())
     app = environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
     if not (app and awaits_approval(arguments)):
         return run([real_gh(), *arguments], env=environment, check=False).returncode
-    if arguments[1] == "create":
+    if normalized_arguments(arguments)[1] == "create":
         result = run([real_gh(), *arguments], env=environment, check=False, stdout=subprocess.PIPE,
                      encoding="utf-8", errors="replace")
         output = result.stdout or ""
@@ -757,17 +893,22 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout, run=subprocess.
     if fields.get("protocol") != "https" or fields.get("host", "").lower() != "github.com" or not owner:
         return 0
     try:
+        personal_checkout()
+    except IdentityError:
+        out.write(tommy_credential(fields, run))
+        return 0
+    if owner.lower() not in REQUIRED_OWNERS:
+        out.write(tommy_credential(fields, run))
+        return 0
+    try:
         record = app_record()
-        if owner.lower() in REQUIRED_OWNERS:
-            if not installed([owner], record):
-                return 0
-            token = installation_token(owner, record)
-            if token:
-                out.write(f"username=x-access-token\npassword={token}\n")
+        if not installed([owner], record):
             return 0
+        token = installation_token(owner, record)
+        if token:
+            out.write(f"username=x-access-token\npassword={token}\n")
     except IdentityError:
         return 0
-    out.write(tommy_credential(fields, run))
     return 0
 
 
@@ -906,7 +1047,8 @@ def installed_script() -> Path:
     return shim_directory() / Path(__file__).name
 
 
-def verify_host_setup() -> None:
+def verify_host_setup(root: Path | None = None) -> None:
+    root = personal_checkout(root)
     source = Path(__file__).resolve()
     script = installed_script()
     descriptor = script.with_name("tomjseery-bot.json")
@@ -922,8 +1064,8 @@ def verify_host_setup() -> None:
     if launcher.read_bytes() != expected_launcher:
         raise IdentityError("the installed GitHub App wrapper is stale; run setup")
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
-    codex = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    claude = root / ".claude" / "settings.local.json"
+    codex = root / ".codex" / "config.toml"
     try:
         claude_settings = json.loads(claude.read_text(encoding="utf-8-sig"))
         claude_env = claude_settings["env"]
@@ -940,7 +1082,8 @@ def verify_host_setup() -> None:
             raise IdentityError("agent host settings are stale; run setup")
 
 
-def setup(check: bool = False, onboard_key: bool = False) -> None:
+def setup(check: bool = False, onboard_key: bool = False, root: Path | None = None) -> None:
+    root = personal_checkout(root)
     if onboard_key:
         try:
             candidate = app_record()
@@ -952,19 +1095,19 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
     record = app_record()
     verify_ready(record)
     if check:
-        verify_host_setup()
+        verify_host_setup(root)
         print("bot_identity: ready")
         return
     script = install_shims(Path(__file__).resolve())
     gh_config_directory().mkdir(parents=True, exist_ok=True)
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
-    codex = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    claude = root / ".claude" / "settings.local.json"
+    codex = root / ".codex" / "config.toml"
     update_claude(claude, environment)
     update_codex(codex, environment)
     if remove_user_path(shim_directory()):
         print(f"Removed {shim_directory()} from your user PATH; only agent sessions put it first")
-    print("Agents now use the GitHub App in its installed accounts; restart Claude and Codex to apply, "
+    print(f"Personal agent identity is configured only in {root}; restart Claude and Codex to apply, "
           "and re-run setup after changing PATH")
 
 
@@ -979,6 +1122,7 @@ def main(argv: list[str] | None = None) -> int:
         commands.add_parser("credential").add_argument("operation")
         commands.add_parser("approval").add_argument("urls", nargs="+")
         setup_command = commands.add_parser("setup")
+        setup_command.add_argument("--root", type=Path)
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
         setup_flags.add_argument("--onboard", action="store_true")
@@ -986,11 +1130,12 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "credential":
             return credential(arguments.operation)
         if arguments.command == "setup":
-            setup(check=arguments.check, onboard_key=arguments.onboard)
+            setup(check=arguments.check, onboard_key=arguments.onboard, root=arguments.root)
             return 0
         if arguments.command == "approval":
             print(approval_command(arguments.urls))
             return 0
+        personal_checkout()
         if arguments.owner.lower() not in REQUIRED_OWNERS:
             raise IdentityError("the GitHub App is not authorized for that account")
         token = installation_token(arguments.owner, app_record())
