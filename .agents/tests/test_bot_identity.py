@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import contextlib
+from collections.abc import Callable, Iterator
 import os
 from pathlib import Path
 import shutil
@@ -629,6 +630,154 @@ class SettingsTests(unittest.TestCase):
 
 
 class EnrollmentTests(Sandbox):
+    @contextlib.contextmanager
+    def running_wizard(self, fetch: Callable[..., object], *, setup: bool = False) -> Iterator[tuple[str, threading.Thread, list[str]]]:
+        urls: list[str] = []
+        errors: list[str] = []
+        started = threading.Event()
+        elapsed = [0.0]
+
+        def opened(url: str) -> bool:
+            urls.append(url)
+            started.set()
+            return True
+
+        onboard = bot.onboard
+
+        def run_wizard() -> None:
+            onboard(open_browser=opened, fetch=fetch, sign=lambda record: "jwt", clock=lambda: elapsed[0])
+
+        def serve() -> None:
+            try:
+                if setup:
+                    with mock.patch.object(bot, "onboard", side_effect=run_wizard):
+                        bot.setup(onboard_key=True)
+                else:
+                    run_wizard()
+            except bot.IdentityError as error:
+                errors.append(str(error))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            thread = threading.Thread(target=serve)
+            thread.start()
+            try:
+                self.assertTrue(started.wait(2))
+                yield urls[0], thread, errors
+            finally:
+                elapsed[0] = bot.ENROLLMENT_SECONDS + 1
+                thread.join(3)
+                self.assertFalse(thread.is_alive())
+
+    def wizard_status(self, endpoint: str, body: bytes = b"") -> dict[str, object]:
+        request = urllib.request.Request(endpoint, data=body, method="POST", headers={
+            "Origin": endpoint.split("/enroll/", 1)[0],
+            "X-Bot-Identity-State": endpoint.rsplit("/", 1)[1],
+        })
+        with urllib.request.urlopen(request, timeout=2) as response:
+            self.assertEqual("application/json", response.headers.get_content_type())
+            result = json.load(response)
+        self.assertIsInstance(result, dict)
+        return result
+
+    def test_existing_key_wizard_advances_permissions_installations_and_acceptance_without_pem(self) -> None:
+        required = {"repository_creation": "write", "organization_projects": "write"}
+        app_permissions: dict[str, str] = {"repository_creation": "write"}
+        installation_permissions: dict[str, str] = {}
+        installed = [False]
+
+        def fetch(path: str, bearer: str, method: str = "GET") -> object:
+            delegate, _ = self.readiness_fetch(app_permissions, installation_permissions)
+            value = delegate(path, bearer, method)
+            return value if path == "/app" or installed[0] else []
+
+        with mock.patch.object(bot, "persist_enrollment") as persist, self.running_wizard(fetch) as (endpoint, thread, errors):
+            page = urllib.request.urlopen(endpoint, timeout=2)
+            with page:
+                self.assertIn('id=key-step hidden', page.read().decode())
+            status = self.wizard_status(endpoint)
+            self.assertEqual("app", status["stage"])
+            self.assertFalse(status["needs_key"])
+            self.assertEqual("https://github.com/settings/apps/tomjseery-bot", status["url"])
+            self.assertTrue(thread.is_alive())
+            app_permissions.update(required)
+            status = self.wizard_status(endpoint)
+            self.assertEqual("installation", status["stage"])
+            self.assertIn("tomjseery, tj-agents, concertable", status["message"])
+            self.assertTrue(thread.is_alive())
+            installed[0] = True
+            status = self.wizard_status(endpoint)
+            self.assertEqual("installation", status["stage"])
+            self.assertEqual("https://github.com/organizations/tj-agents/settings/installations/7", status["url"])
+            installation_permissions.update(required)
+            self.assertEqual("ready", self.wizard_status(endpoint)["stage"])
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual([], errors)
+        persist.assert_not_called()
+
+    def test_existing_key_wizard_retries_api_failures_without_reenrollment(self) -> None:
+        required = {"repository_creation": "write", "organization_projects": "write"}
+        delegate, _ = self.readiness_fetch(required, required)
+        failure: list[int | None] = [403]
+
+        def fetch(path: str, bearer: str, method: str = "GET") -> object:
+            if failure:
+                raise bot.GitHubError("secret fixture must not appear", failure.pop())
+            return delegate(path, bearer, method)
+
+        with mock.patch.object(bot, "persist_enrollment") as persist, self.running_wizard(fetch) as (endpoint, thread, errors):
+            for status_code in (403, None):
+                if status_code is None:
+                    failure.append(None)
+                status = self.wizard_status(endpoint)
+                self.assertEqual("retry", status["stage"])
+                self.assertFalse(status["needs_key"])
+                self.assertNotIn("secret fixture", json.dumps(status))
+                self.assertTrue(thread.is_alive())
+            self.assertEqual("ready", self.wizard_status(endpoint)["stage"])
+            thread.join(2)
+            self.assertEqual([], errors)
+        persist.assert_not_called()
+
+    def test_onboard_setup_guides_existing_enrollment_then_continues_in_same_invocation(self) -> None:
+        with mock.patch.object(bot, "onboard") as onboard, mock.patch.object(bot, "verify_ready"), \
+                mock.patch.object(bot, "install_shims", return_value=Path("fixture.py")) as install, \
+                mock.patch.object(bot, "gh_config_directory", return_value=self.home / "gh"), \
+                mock.patch.object(bot, "update_claude"), mock.patch.object(bot, "update_codex"), \
+                mock.patch.object(bot, "remove_user_path"), mock.patch.object(bot, "validate_remote_app"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            bot.setup(onboard_key=True)
+        onboard.assert_called_once_with()
+        install.assert_called_once()
+
+    def test_http_wizard_returns_to_setup_only_after_full_readiness(self) -> None:
+        required = {"repository_creation": "write", "organization_projects": "write"}
+        accepted: dict[str, str] = {}
+        fetch, _ = self.readiness_fetch(required, accepted)
+        verify = bot.verify_ready
+
+        def verify_local(record: dict[str, object], **kwargs: object) -> None:
+            verify(record, fetch=fetch, sign=lambda value: "jwt")
+
+        with mock.patch.object(bot, "verify_ready", side_effect=verify_local), \
+                mock.patch.object(bot, "install_shims", return_value=Path("fixture.py")) as install, \
+                mock.patch.object(bot, "gh_config_directory", return_value=self.home / "gh"), \
+                mock.patch.object(bot, "update_claude") as claude, mock.patch.object(bot, "update_codex") as codex, \
+                mock.patch.object(bot, "remove_user_path"), \
+                self.running_wizard(fetch, setup=True) as (endpoint, thread, errors):
+            self.assertEqual("installation", self.wizard_status(endpoint)["stage"])
+            install.assert_not_called()
+            claude.assert_not_called()
+            codex.assert_not_called()
+            accepted.update(required)
+            self.assertEqual("ready", self.wizard_status(endpoint)["stage"])
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual([], errors)
+            install.assert_called_once()
+            claude.assert_called_once()
+            codex.assert_called_once()
+
     def remove_enrollment(self):
         for path in (self.home / "github-app").glob("tomjseery-bot.*"):
             path.unlink()
@@ -800,15 +949,97 @@ class EnrollmentTests(Sandbox):
         with self.assertRaisesRegex(bot.IdentityError, "permissions are unsafe"):
             bot.require_private_permissions(path)
 
-    def test_only_revoked_credentials_restart_onboarding_after_a_github_failure(self):
-        for status, starts in ((401, True), (403, False), (None, False)):
-            with self.subTest(status=status), \
-                    mock.patch.object(bot, "validate_remote_app", side_effect=bot.GitHubError("failed", status)), \
-                    mock.patch.object(bot, "onboard") as onboard, \
-                    mock.patch.object(bot, "verify_ready", side_effect=bot.IdentityError("stop before settings")):
-                with self.assertRaises(bot.IdentityError):
-                    bot.setup(onboard_key=True)
-                self.assertEqual(starts, onboard.called)
+    def test_revoked_key_requests_one_replacement_and_retains_it_while_installations_are_pending(self) -> None:
+        required = {"repository_creation": "write", "organization_projects": "write"}
+        delegate, _ = self.readiness_fetch(required, required)
+        revoked = [True]
+        installed = [False]
+
+        def fetch(path: str, bearer: str, method: str = "GET") -> object:
+            if revoked[0]:
+                raise bot.GitHubError("revoked fixture", 401)
+            value = delegate(path, bearer, method)
+            return value if path == "/app" or installed[0] else []
+
+        def enroll(key: bytes, **kwargs: object) -> dict[str, object]:
+            self.assertEqual(b"replacement fixture", key)
+            revoked[0] = False
+            return RECORD
+
+        with mock.patch.object(bot, "persist_enrollment", side_effect=enroll) as persist, \
+                self.running_wizard(fetch) as (endpoint, thread, errors):
+            self.assertEqual("key", self.wizard_status(endpoint)["stage"])
+            self.assertTrue(self.wizard_status(endpoint)["needs_key"])
+            self.assertEqual("installation", self.wizard_status(endpoint, b"replacement fixture")["stage"])
+            self.assertFalse(self.wizard_status(endpoint)["needs_key"])
+            self.assertEqual("installation", self.wizard_status(endpoint)["stage"])
+            self.assertTrue(thread.is_alive())
+            installed[0] = True
+            self.assertEqual("ready", self.wizard_status(endpoint)["stage"])
+            thread.join(2)
+            self.assertEqual([], errors)
+        persist.assert_called_once()
+
+    def test_missing_key_enrolls_once_and_does_not_accept_replacement_uploads(self) -> None:
+        self.remove_enrollment()
+        required = {"repository_creation": "write", "organization_projects": "write"}
+        delegate, _ = self.readiness_fetch(required, required)
+        installed = [False]
+
+        def fetch(path: str, bearer: str, method: str = "GET") -> object:
+            value = delegate(path, bearer, method)
+            return value if path == "/app" or installed[0] else []
+
+        with mock.patch.object(bot, "persist_enrollment", return_value=RECORD) as persist, \
+                self.running_wizard(fetch) as (endpoint, thread, errors):
+            self.assertEqual("key", self.wizard_status(endpoint)["stage"])
+            persist.assert_not_called()
+            self.assertEqual("installation", self.wizard_status(endpoint, b"new key fixture")["stage"])
+            self.assertFalse(self.wizard_status(endpoint)["needs_key"])
+            self.assertEqual("retry", self.wizard_status(endpoint, b"unwanted replacement")["stage"])
+            self.assertFalse(self.wizard_status(endpoint)["needs_key"])
+            installed[0] = True
+            self.assertEqual("ready", self.wizard_status(endpoint)["stage"])
+            thread.join(2)
+            self.assertEqual([], errors)
+        persist.assert_called_once_with(b"new key fixture", fetch=fetch, sign=mock.ANY)
+
+    def test_browser_open_failure_closes_the_loopback_socket(self) -> None:
+        for failure in (False, OSError("sensitive fixture"), bot.webbrowser.Error("sensitive fixture")):
+            urls: list[str] = []
+
+            def opened(url: str) -> bool:
+                urls.append(url)
+                if isinstance(failure, Exception):
+                    raise failure
+                return failure
+
+            with self.subTest(failure=type(failure).__name__), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(bot.IdentityError, "could not open") as raised:
+                    bot.onboard(open_browser=opened)
+                self.assertNotIn("sensitive fixture", str(raised.exception))
+                with self.assertRaises(urllib.error.URLError):
+                    urllib.request.urlopen(urls[0], timeout=0.2)
+
+    def test_timeout_closes_pending_wizard_without_changing_enrollment(self) -> None:
+        fetch, _ = self.readiness_fetch({}, {})
+        with mock.patch.object(bot, "persist_enrollment") as persist:
+            with self.running_wizard(fetch) as (endpoint, _, errors):
+                self.assertEqual("app", self.wizard_status(endpoint)["stage"])
+            self.assertEqual(["GitHub App enrollment did not complete within 10 minutes"], errors)
+            with self.assertRaises(urllib.error.URLError):
+                urllib.request.urlopen(endpoint, timeout=0.2)
+        persist.assert_not_called()
+
+    def test_plain_setup_and_check_never_open_the_onboarding_browser(self) -> None:
+        with mock.patch.object(bot, "onboard") as onboard, \
+                mock.patch.object(bot, "verify_ready", side_effect=bot.IdentityError("not ready")), \
+                mock.patch.object(bot, "install_shims") as install:
+            for check in (False, True):
+                with self.subTest(check=check), self.assertRaises(bot.IdentityError):
+                    bot.setup(check=check)
+        onboard.assert_not_called()
+        install.assert_not_called()
 
     def test_loopback_enrollment_rejects_host_origin_state_and_large_uploads(self):
         url, started, errors = [], threading.Event(), []

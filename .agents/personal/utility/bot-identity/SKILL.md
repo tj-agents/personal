@@ -22,9 +22,9 @@ Run setup only for an explicitly adopted personal Git checkout: its `.agents/plu
 `infonetica@tj-agents`. `--root <checkout>` selects that checkout explicitly; otherwise setup uses the current
 directory. A machine without a valid enrollment fails closed with an exact onboarding action; normal setup and
 checks never open a browser. With Tommy present, use the explicit local-browser wizard: it identifies the pinned
-existing App, accepts one newly generated App PEM, verifies it against GitHub before storing protected local state,
-and never prints the key or token. The original downloaded PEM remains in the browser/OS download location; remove
-it there after successful enrollment.
+existing App and reuses a valid enrolled key. Only a missing or revoked key requires a newly generated App PEM,
+verified against GitHub before protected local storage. It never prints the key or token. Remove any original
+downloaded PEM through the browser or OS after successful enrollment.
 
 ```text
 # From C:\Users\TommySeery\source\repos\personal-notes, an adopted personal checkout:
@@ -36,10 +36,12 @@ python -B <skill-directory>/scripts/bot_identity.py setup --check
 python -B <skill-directory>/scripts/bot_identity.py setup --root C:\Users\TommySeery\source\repos\personal-notes --check
 ```
 
-If the wizard reports a missing account, Tommy installs the same App at
-`https://github.com/apps/tomjseery-bot/installations/new` for tomjseery, tj-agents and Concertable, then re-runs
-setup. The key enrollment is retained, but setup does not claim readiness or alter agent host settings until all
-three installations verify.
+The wizard checks current readiness immediately, links to the next App permission or installation settings step,
+and rechecks while Tommy completes it. Install the same App for tomjseery, tj-agents and Concertable when requested,
+then accept the required `tj-agents` permissions. Permission failures and transient API errors retain the enrolled
+key and allow retry in the same page. Once readiness verifies, the same setup invocation continues automatically;
+agent host settings remain untouched until then. Browser launch failure or the ten-minute deadline closes the
+local wizard; rerun `setup --onboard` to continue.
 
 Readiness requires `repository_creation:write` and `organization_projects:write` on the App and its accepted
 `tj-agents` installation, for repository creation and organization Projects. It rejects `administration`

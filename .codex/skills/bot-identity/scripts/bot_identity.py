@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections.abc import Callable
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
@@ -106,6 +107,17 @@ MCP_DENY = (
 
 class IdentityError(Exception):
     pass
+
+
+class EnrollmentError(IdentityError):
+    pass
+
+
+class ReadinessError(IdentityError):
+    def __init__(self, message: str, stage: str, url: str) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.url = url
 
 
 class GitHubError(IdentityError):
@@ -224,7 +236,7 @@ def validate_remote_app(record: dict, fetch=api, sign=app_jwt) -> dict:
     if not isinstance(actual, dict) or actual.get("id") != descriptor["id"] or \
             actual.get("client_id") != descriptor["client_id"] or actual.get("slug") != descriptor["slug"] or \
             actual.get("owner", {}).get("login", "").lower() != descriptor["owner"].lower():
-        raise IdentityError("the enrolled key does not authenticate the pinned GitHub App")
+        raise EnrollmentError("the enrolled key does not authenticate the pinned GitHub App")
     return actual
 
 
@@ -240,14 +252,15 @@ def installation_settings_url(installation: dict) -> str:
     return f"https://github.com/organizations/{login}/settings/installations/{installation['id']}"
 
 
-def capability_error(subject: str, permissions: object, required: dict[str, str], url: str) -> None:
+def capability_error(subject: str, permissions: object, required: dict[str, str], url: str,
+                     stage: str = "app") -> None:
     available = permissions if isinstance(permissions, dict) else {}
     forbidden = [name for name in FORBIDDEN_WRITE_PERMISSIONS if available.get(name) == "write"]
     if forbidden:
-        raise IdentityError(f"the {subject} grants forbidden {forbidden[0]}:write; remove it at {url}")
+        raise ReadinessError(f"the {subject} grants forbidden {forbidden[0]}:write; remove it at {url}", stage, url)
     for name, level in required.items():
         if available.get(name) != level:
-            raise IdentityError(f"the {subject} does not grant {name}:{level}; update it at {url}")
+            raise ReadinessError(f"the {subject} does not grant {name}:{level}; update it at {url}", stage, url)
 
 
 def validate_app_capabilities(actual: dict) -> None:
@@ -270,23 +283,19 @@ def remote_installations(record: dict, fetch=api, sign=app_jwt) -> dict[str, dic
     return known
 
 
-def missing_required_installations(record: dict, fetch=api, sign=app_jwt) -> list[str]:
-    known = remote_installations(record, fetch=fetch, sign=sign)
-    return [owner for owner in REQUIRED_OWNERS if owner not in known]
-
-
 def verify_ready(record: dict, fetch=api, sign=app_jwt) -> None:
     actual = validate_remote_app(record, fetch=fetch, sign=sign)
     validate_app_capabilities(actual)
     known = remote_installations(record, fetch=fetch, sign=sign)
     missing = [owner for owner in REQUIRED_OWNERS if owner not in known]
     if missing:
-        raise IdentityError("the pinned GitHub App is not installed on: " + ", ".join(missing) +
-                            "; install it at https://github.com/apps/tomjseery-bot/installations/new")
+        url = "https://github.com/apps/tomjseery-bot/installations/new"
+        raise ReadinessError("the pinned GitHub App is not installed on: " + ", ".join(missing) +
+                             "; install it at " + url, "installation", url)
     tj_agents = known["tj-agents"]
     capability_error("tj-agents App installation", tj_agents.get("permissions"),
                      REQUIRED_CAPABILITIES[REQUIRED_CAPABILITY_VERSION]["tj-agents"],
-                     installation_settings_url(tj_agents))
+                     installation_settings_url(tj_agents), "installation")
 
 
 def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
@@ -317,22 +326,91 @@ def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
 def enrollment_page(port: int, nonce: str) -> bytes:
     descriptor = app_descriptor()
     endpoint = f"/enroll/{nonce}"
-    return f"""<!doctype html><meta charset=utf-8><title>GitHub App enrollment</title>
-<h1>Enroll this machine for {descriptor['slug']}</h1>
-<p>This connects only to the existing GitHub App <strong>{descriptor['owner']}/{descriptor['slug']}</strong>
-(App ID {descriptor['id']}). Your browser keeps the downloaded PEM; remove it yourself through your browser or OS after success.</p>
-<p>Create a new private key at <a href=\"https://github.com/settings/apps/tomjseery-bot\">GitHub App settings</a>, then select that PEM file.</p>
-<input id=key type=file accept=\".pem,application/x-pem-file\"><button id=enroll>Enroll key</button>
-<button id=verify>Verify required installations</button><pre id=result></pre>
+    return f"""<!doctype html><meta charset=utf-8><title>GitHub App setup</title>
+<h1>Connect this machine to {descriptor['slug']}</h1>
+<p>This checks the existing GitHub App <strong>{descriptor['owner']}/{descriptor['slug']}</strong>
+(App ID {descriptor['id']}). Keep this page open while completing each GitHub step.</p>
+<p>For tj-agents, App organization permissions must include Repository creation and Projects, both
+Read and write. Accept those permissions on the tj-agents installation. Administration must not grant write access.</p>
+<section id=key-step hidden><p>The enrolled key is missing or no longer authenticates this App.
+Create a private key at <a href=\"https://github.com/settings/apps/tomjseery-bot\" target=_blank rel=noreferrer>GitHub App settings</a>,
+then select that PEM file. Remove your downloaded copy through your browser or OS after success.</p>
+<input id=key type=file accept=\".pem,application/x-pem-file\"><button id=enroll>Enroll key</button></section>
+<p><a id=action hidden target=_blank rel=noreferrer>Open the next GitHub step</a></p>
+<button id=verify>Check again</button><pre id=result>Checking current readiness...</pre>
 <script>const endpoint={endpoint!r}, state={nonce!r}, result=document.getElementById('result');
-async function post(body) {{ let r=await fetch(endpoint,{{method:'POST',headers:{{'X-Bot-Identity-State':state}},body}}); result.textContent=await r.text(); }}
-document.getElementById('enroll').onclick=async()=>{{let f=document.getElementById('key').files[0];if(!f){{result.textContent='Select the newly downloaded PEM file.';return}};await post(await f.arrayBuffer())}};
-document.getElementById('verify').onclick=()=>post('');</script>""".encode("utf-8")
+const keyStep=document.getElementById('key-step'), action=document.getElementById('action');
+let pending=false, timer, complete=false;
+async function post(body='') {{
+  if(pending||complete) return;
+  pending=true; clearTimeout(timer);
+  try {{
+    const response=await fetch(endpoint,{{method:'POST',headers:{{'X-Bot-Identity-State':state}},body}});
+    if(!response.ok) throw new Error();
+    const status=await response.json();
+    result.textContent=status.message; keyStep.hidden=!status.needs_key;
+    action.hidden=!status.url; if(status.url) action.href=status.url;
+    complete=status.stage==='ready';
+  }} catch {{ result.textContent='The local readiness check could not complete. Check again while the terminal is running.'; }}
+  finally {{ pending=false; if(!complete) timer=setTimeout(()=>post(),3000); }}
+}}
+document.getElementById('enroll').onclick=async()=>{{
+  const file=document.getElementById('key').files[0];
+  if(!file){{result.textContent='Select the newly downloaded PEM file.';return;}}
+  await post(await file.arrayBuffer());
+}};
+document.getElementById('verify').onclick=()=>post(); post();</script>""".encode("utf-8")
 
 
-def onboard(open_browser=webbrowser.open, fetch=api, sign=app_jwt, clock=time.monotonic) -> None:
+def onboard(open_browser: Callable[[str], bool] = webbrowser.open,
+            fetch: Callable[..., object] = api,
+            sign: Callable[[dict[str, object]], str] = app_jwt,
+            clock: Callable[[], float] = time.monotonic) -> None:
     import secrets
     nonce = secrets.token_urlsafe(32)
+    record: dict[str, object] | None = None
+    initialized = False
+    finished = False
+
+    def status(stage: str, message: str, url: str = "") -> dict[str, str | bool]:
+        return {"stage": stage, "message": message, "url": url, "needs_key": record is None}
+
+    def readiness(key: bytes) -> dict[str, str | bool]:
+        nonlocal record, initialized
+        settings = app_settings_url(app_descriptor())
+        if not initialized:
+            try:
+                record = app_record()
+            except IdentityError:
+                record = None
+            initialized = True
+        if key and record is not None:
+            return status("retry", "An enrolled key already exists. Check readiness without uploading another key.")
+        try:
+            if key:
+                record = persist_enrollment(key, fetch=fetch, sign=sign)
+            if record is None:
+                return status("key", "Enroll a private key for the existing tomjseery-bot App.", settings)
+            verify_ready(record, fetch=fetch, sign=sign)
+            return status("ready", "App permissions and required installations are ready. Return to the terminal; setup continues automatically.")
+        except ReadinessError as error:
+            return status(error.stage, str(error), error.url)
+        except GitHubError as error:
+            if error.status == 401:
+                record = None
+                return status("key", "The enrolled key no longer authenticates this App. Enroll a new App private key.", settings)
+            return status("retry", "GitHub could not verify readiness. Check the connection and App access, then check again. Keep the existing key.")
+        except EnrollmentError:
+            record = None
+            return status("key", "The selected key does not authenticate the existing tomjseery-bot App. Select its App private key.", settings)
+        except IdentityError:
+            return status("retry", "Readiness could not be verified. Check the local enrollment and selected App key, then check again.")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return status("retry", "The readiness check could not complete. Check the connection and local signing tool, then check again.")
+
+    class EnrollmentServer(HTTPServer):
+        def handle_error(self, request: object, client_address: object) -> None:
+            return
 
     class EnrollmentHandler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
@@ -367,6 +445,7 @@ def onboard(open_browser=webbrowser.open, fetch=api, sign=app_jwt, clock=time.mo
             self.wfile.write(payload)
 
         def do_POST(self) -> None:
+            nonlocal finished
             origin = f"http://127.0.0.1:{self.server.server_port}"
             if not self.allowed() or self.path != f"/enroll/{nonce}" or \
                     self.headers.get("Origin") != origin or self.headers.get("X-Bot-Identity-State") != nonce:
@@ -380,34 +459,25 @@ def onboard(open_browser=webbrowser.open, fetch=api, sign=app_jwt, clock=time.mo
                 self.reply(413, "Enrollment upload rejected")
                 return
             key = self.rfile.read(length)
-            try:
-                if key:
-                    persist_enrollment(key, fetch=fetch, sign=sign)
-                missing = missing_required_installations(app_record(), fetch=fetch, sign=sign)
-                if missing:
-                    self.reply(200, "Key enrolled. Install the App for " + ", ".join(missing) +
-                               " at https://github.com/apps/tomjseery-bot/installations/new, then rerun setup.")
-                    self.server.finished = True
-                else:
-                    self.reply(200, "Enrollment verified. Return to the terminal to finish setup.")
-                    self.server.finished = True
-            except IdentityError:
-                self.reply(400, "Enrollment could not be verified. Check the connection and that the selected key belongs to this App, then retry.")
+            result = readiness(key)
+            self.reply(200, json.dumps(result), "application/json; charset=utf-8")
+            finished = result["stage"] == "ready"
 
-    server = HTTPServer(("127.0.0.1", 0), EnrollmentHandler)
-    server.timeout = 1
-    server.finished = False
-    url = f"http://127.0.0.1:{server.server_port}/enroll/{nonce}"
-    print("Opening a local GitHub App enrollment page. It expires in 10 minutes.")
-    print(url)
-    open_browser(url)
-    deadline = clock() + ENROLLMENT_SECONDS
-    try:
-        while clock() < deadline and not server.finished:
+    with EnrollmentServer(("127.0.0.1", 0), EnrollmentHandler) as server:
+        server.timeout = 0.2
+        url = f"http://127.0.0.1:{server.server_port}/enroll/{nonce}"
+        print("Opening a local GitHub App setup page. It expires in 10 minutes.")
+        print(url)
+        deadline = clock() + ENROLLMENT_SECONDS
+        try:
+            opened = open_browser(url)
+        except (OSError, webbrowser.Error) as error:
+            raise IdentityError("the GitHub App setup page could not open; retry setup --onboard") from error
+        if not opened:
+            raise IdentityError("the GitHub App setup page could not open; retry setup --onboard")
+        while clock() < deadline and not finished:
             server.handle_request()
-    finally:
-        server.server_close()
-    if not server.finished:
+    if not finished:
         raise IdentityError("GitHub App enrollment did not complete within 10 minutes")
 
 
@@ -1085,13 +1155,7 @@ def verify_host_setup(root: Path | None = None) -> None:
 def setup(check: bool = False, onboard_key: bool = False, root: Path | None = None) -> None:
     root = personal_checkout(root)
     if onboard_key:
-        try:
-            candidate = app_record()
-            validate_remote_app(candidate)
-        except IdentityError as error:
-            if isinstance(error, GitHubError) and error.status != 401:
-                raise
-            onboard()
+        onboard()
     record = app_record()
     verify_ready(record)
     if check:
