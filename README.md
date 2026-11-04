@@ -63,6 +63,10 @@ The plugin declares this setup step in its harness manifest for Core's setup and
 Initial enrollment requires Tommy's authenticated GitHub key issuance through the local browser wizard;
 ordinary setup and verification never prompt. See the [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md).
 
+Run setup only in an explicitly adopted personal Git checkout, or pass `--root <checkout>` for one. It writes agent
+identity settings only to that checkout's `.claude/settings.local.json` and `.codex/config.toml`; work and Infonetica
+checkouts never receive the personal App identity.
+
 Readiness also requires `repository_creation:write` on the App and its `tj-agents` installation. Setup fails
 closed if that creation capability is removed, or if `administration:write` is granted; it reports the specific
 App or installation settings page for Tommy to correct and never changes GitHub permissions itself.
