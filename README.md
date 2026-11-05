@@ -57,11 +57,13 @@ closure evidence. A missing or different provider blocks the operation without a
 ## Agent GitHub identity
 
 `personal:bot-identity` enrolls each trusted machine into the existing `tomjseery-bot` App.
-Its published descriptor contains only public identity metadata. Setup verifies a newly issued key and
-creates the protected local credential record; no JSON assembly or copying keys between machines is needed.
+Its published descriptor contains only public identity metadata. Setup verifies a newly enrolled key before
+creating the protected local credential record; no JSON assembly or copying keys between machines is needed.
 The plugin declares this setup step in its harness manifest for Core's setup and sync entry points.
-Initial enrollment requires Tommy's authenticated GitHub key issuance through the local browser wizard;
-ordinary setup and verification never prompt. See the [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md).
+With Tommy present, `setup --onboard` opens one local wizard for enrollment and readiness. It reuses a valid key,
+guides App permissions and installation acceptance, and rechecks until the same setup invocation can continue.
+Only a missing or revoked key requires key issuance; ordinary setup and verification remain browser-free.
+See the [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md).
 
 Run setup only in an explicitly adopted personal Git checkout, or pass `--root <checkout>` for one. It writes agent
 identity settings only to that checkout's `.claude/settings.local.json` and `.codex/config.toml`; work and Infonetica
