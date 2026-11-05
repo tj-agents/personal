@@ -128,6 +128,19 @@ class UseTests(unittest.TestCase):
         use.run(self.root, "write", None)
         self.assertEqual(0, use.run(self.root, "check", None))
 
+    def test_retired_current_solution_block_fails_check_and_write_replaces_it_in_place(self):
+        retired = ("<!-- BEGIN personal:current-solution sha256:" + "0" * 64 + " -->\nOld policy.\n"
+                   "<!-- END personal:current-solution -->")
+        path = self.root / "AGENTS.md"
+        for existing in (f"# Project\n\n{retired}\n\nKeep this rule.\n",
+                         f"# Project\n\n{retired}\n\nKeep this rule.\n\n{use.fragment()}\n"):
+            with self.subTest(existing=existing):
+                path.write_text(existing, encoding="utf-8")
+                self.assertEqual(1, use.run(self.root, "check", None))
+                self.assertEqual(0, use.run(self.root, "write", None))
+                self.assertEqual(f"# Project\n\n{use.fragment()}\n\nKeep this rule.\n", path.read_text())
+                self.assertEqual(0, use.run(self.root, "check", None))
+
     def test_preview_writes_nothing_and_missing_selection_is_rejected(self):
         self.assertEqual(0, use.run(self.root, "preview", None))
         self.assertFalse((self.root / "AGENTS.md").exists())
@@ -137,7 +150,7 @@ class UseTests(unittest.TestCase):
         self.assertFalse((self.root / "AGENTS.md").exists())
 
     def test_broken_or_duplicate_markers_prevent_all_native_writes(self):
-        for invalid in (use.START, use.END, use.fragment() + "\n" + use.fragment()):
+        for invalid in (use.START, use.END, use.fragment() + "\n" + use.fragment(), use.RETIRED_START):
             with self.subTest(invalid=invalid):
                 (self.root / "CLAUDE.md").write_text(invalid, encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "markers"):

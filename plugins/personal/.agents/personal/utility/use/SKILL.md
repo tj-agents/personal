@@ -25,7 +25,8 @@ AGENTS.md once each, and leaves CLAUDE.md as the exact `@AGENTS.md` pointer; `@.
 pointer, and any other Claude-only `@path` import is refused rather than copied in as plain text. It also
 removes its own earlier-generated `.github/workflows/check-personal-policy.yml` CI caller, since adoption
 no longer wires CI enforcement, while refusing to touch a workflow of that name it did not generate. It
-refuses retained compatibility declarations and broken block markers. The policy has one authored body;
+refuses retained compatibility declarations and broken block markers. Check fails while a retired
+`current-solution` policy block remains; write replaces it in place with the current block. The policy has one authored body;
 generated native blocks are checked, never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
