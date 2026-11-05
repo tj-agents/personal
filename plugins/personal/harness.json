@@ -4,10 +4,7 @@
   "source_roots": [
     ".agents/personal/policy/rules",
     ".agents/personal/utility/use",
-    ".agents/personal/utility/bot-identity",
-    ".agents/personal/utility/create/work-item",
-    ".agents/personal/utility/work-item",
-    ".agents/personal/workflow/address/work-item"
+    ".agents/personal/utility/bot-identity"
   ],
   "requires": {
     "setup": {
@@ -28,7 +25,8 @@
       "tj-agents/base",
       "tj-agents/engineering",
       "tj-agents/agent",
-      "tj-agents/docs"
+      "tj-agents/docs",
+      "tj-agents/github"
     ]
   }
 }
