@@ -26,8 +26,6 @@ RECORD = {"id": 5397553, "slug": "tomjseery-bot", "client_id": "Iv23liYRkDvGiQXw
           "key": "unused.pem"}
 INSTALLED = {"tj-agents": 7, "tomjseery": 8}
 ARGV_RECORDER = "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
-FAKE_BUILDER = ("import json, sys\nassert sys.argv[1:] == ['issue', '--spec', '-']\n"
-                "print('!issued ' + json.dumps(json.load(sys.stdin), sort_keys=True))\nprint('Copied 1 characters')\n")
 
 
 def without_agent_settings(environment):
@@ -77,6 +75,9 @@ class Sandbox(unittest.TestCase):
         bot.protect(self.home / "github-app", directory=True)
         bot.protect(self.home / "github-app" / "tomjseery-bot.pem")
         bot.protect(self.home / "github-app" / "tomjseery-bot.json")
+        scope = mock.patch.object(bot, "personal_checkout", return_value=self.home)
+        scope.start()
+        self.addCleanup(scope.stop)
 
     def patch_environment(self, values):
         patcher = mock.patch.object(os, "environ", {**os.environ, **values})
@@ -111,6 +112,7 @@ class IdentityTests(Sandbox):
                  ("pr", "view", "-R", "https://github.com/Concertable/b2b"): ["Concertable"],
                  ("pr", "view", "-R", "github.com/Concertable/b2b"): ["Concertable"],
                  ("pr", "review", "--approve", "https://github.com/tj-agents/core/pull/5"): ["tj-agents"],
+                 ("pr", "view", "--json", "title", "https://github.com/Infonetica/cris/pull/5"): ["Infonetica"],
                  ("repo", "delete", "tomjseery/notes", "--yes"): ["tomjseery"],
                  ("project", "list", "--owner", "tj-agents"): ["tj-agents"],
                  ("api", "graphql"): []}
@@ -162,9 +164,15 @@ class CredentialTests(Sandbox):
         (self.home / "github-app" / "tomjseery-bot.json").unlink()
         with mock.patch.object(bot, "tommy_credential") as tommy:
             out = io.StringIO()
-            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=Infonetica/x\n\n"), out)
+            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=tj-agents/x\n\n"), out)
         self.assertEqual("", out.getvalue())
         tommy.assert_not_called()
+
+    def test_a_work_target_does_not_require_personal_enrollment(self):
+        (self.home / "github-app" / "tomjseery-bot.json").unlink()
+        answer, calls = self.ask("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n")
+        self.assertEqual("username=tomjseery\npassword=gho_tommy\n", answer)
+        self.assertEqual(1, len(calls))
 
     def test_other_accounts_use_tommys_own_helpers_without_agent_settings(self):
         self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
@@ -302,9 +310,123 @@ class GhWrapperTests(Sandbox):
         environment = self.environment("pr", "review", "5", "--approve", checkout="Infonetica")
         self.assertNotIn("TJ_AGENT", environment)
 
-    def test_an_installed_checkout_wins_over_an_uncovered_flag(self):
+    def test_an_explicit_work_target_overrides_a_personal_checkout(self):
         environment = self.environment("issue", "list", "-R", "Infonetica/cris", checkout="tj-agents")
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installed.assert_not_called()
+
+    def test_payload_urls_do_not_change_the_target_identity(self):
+        cases = (
+            ("issue", "create", "--title", "Fixture", "--body", "See https://github.com/cli/cli/issues/1"),
+            ("issue", "create", "--body=https://github.com/cli/cli/issues/1", "-R", "tj-agents/personal"),
+            ("api", "repos/tj-agents/personal/issues", "-f", "body=https://github.com/cli/cli/issues/1"),
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                environment = self.environment(*arguments, checkout="tj-agents")
+                self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_a_personal_token_is_removed_when_a_gh_child_enters_work_scope(self):
+        personal = self.environment("api", "repos/tj-agents/personal")
+        self.patch_environment(personal)
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            work = self.environment("api", "repos/Infonetica/cris")
+        self.assertNotIn("GH_TOKEN", work)
+        self.assertNotIn(bot.TOKEN_FINGERPRINT, work)
+
+    def test_an_employer_token_replacing_an_inherited_personal_token_is_preserved(self):
+        self.patch_environment(self.environment("api", "repos/tj-agents/personal"))
+        self.patch_environment({"GH_TOKEN": "employer-replacement-fixture"})
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            work = self.environment("api", "repos/Infonetica/cris")
+        self.assertEqual("employer-replacement-fixture", work["GH_TOKEN"])
+        self.assertNotIn(bot.TOKEN_FINGERPRINT, work)
+
+    def test_a_personal_token_is_not_sent_to_a_different_host(self):
+        self.refused("api", "repos/tj-agents/personal", "--hostname", "example.test")
+        self.installation_token.assert_not_called()
+
+    def test_command_specific_booleans_preserve_the_explicit_work_target(self):
+        for command, flags in (("merge", ("-m", "-r", "-s")), ("review", ("-a", "-r", "-c", "--comment")),
+                               ("checkout", ("-f",)), ("co", ("-f",))):
+            for flag in flags:
+                with self.subTest(command=command, flag=flag):
+                    environment = self.environment("pr", command, flag,
+                                                   "https://github.com/Infonetica/cris/pull/5", checkout="tj-agents")
+                    self.assertNotIn("GH_TOKEN", environment)
+        self.installation_token.assert_not_called()
+
+    def test_a_boolean_fork_remote_option_preserves_the_explicit_work_target(self):
+        environment = self.environment("repo", "fork", "--remote", "https://github.com/Infonetica/cris",
+                                       checkout="tj-agents")
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installation_token.assert_not_called()
+
+    def test_clone_option_values_do_not_replace_the_repository_target(self):
+        for flag in ("-u", "--upstream-remote-name"):
+            with self.subTest(flag=flag):
+                environment = self.environment("repo", "clone", flag, "upstream", "tj-agents/personal",
+                                               "destination/subdirectory", checkout="tomjseery")
+                self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_formatting_payload_urls_preserve_the_checkout_identity(self):
+        for command in (("pr", "list"), ("issue", "list"), ("pr", "checks"), ("repo", "list")):
+            for flag in ("-q", "-t"):
+                with self.subTest(command=command, flag=flag):
+                    environment = self.environment(*command, "--json", "url", flag,
+                        '.[] | select(.url == "https://github.com/Infonetica/cris/pull/5")', checkout="tj-agents")
+                    self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_issue_create_alias_excludes_payload_urls(self):
+        environment = self.environment("issue", "new", "-t", "Fixture", "-b",
+                                       "See https://github.com/Infonetica/cris", checkout="tj-agents")
         self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_api_preview_values_preserve_the_explicit_personal_target(self):
+        for flag in ("--preview", "-p"):
+            with self.subTest(flag=flag):
+                environment = self.environment("api", flag, "nebula", "repos/tj-agents/personal",
+                                               checkout="Infonetica")
+                self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_hostname_text_in_a_payload_cannot_override_the_actual_host(self):
+        self.refused("api", "repos/tj-agents/personal", "--hostname", "enterprise.example",
+                     "-f", "--hostname=github.com")
+        self.installation_token.assert_not_called()
+
+    def test_hostname_text_in_a_payload_is_not_an_option(self):
+        environment = self.environment("issue", "create", "--title", "--hostname", "--body",
+                                       "--hostname=example.test", checkout="tj-agents")
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_gh_repo_target_overrides_the_checkout(self):
+        self.patch_environment({"GH_REPO": "Infonetica/cris"})
+        environment = self.environment("issue", "list", checkout="tj-agents")
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installed.assert_not_called()
+
+    def test_mixed_explicit_owners_are_rejected_before_minting(self):
+        self.refused("pr", "view", "https://github.com/tj-agents/core/pull/1", "-R", "Infonetica/cris")
+        self.installation_token.assert_not_called()
+
+    def test_an_unselected_checkout_never_mints_a_personal_token(self):
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            environment = self.environment("issue", "list", "-R", "tj-agents/infonetica", checkout="tj-agents")
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installation_token.assert_not_called()
+
+    def test_an_unselected_checkout_retains_employer_authentication_and_unrelated_git_config(self):
+        index = int(os.environ["GIT_CONFIG_COUNT"])
+        self.patch_environment({"GH_TOKEN": "employer-fixture", "GITHUB_TOKEN": "other-fixture",
+                                f"GIT_CONFIG_KEY_{index}": "core.autocrlf",
+                                f"GIT_CONFIG_VALUE_{index}": "false", "GIT_CONFIG_COUNT": str(index + 1)})
+        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
+            environment = self.environment("api", "repos/tj-agents/infonetica")
+        self.assertEqual("employer-fixture", environment["GH_TOKEN"])
+        self.assertEqual("other-fixture", environment["GITHUB_TOKEN"])
+        self.assertEqual("1", environment["GIT_CONFIG_COUNT"])
+        self.assertEqual("core.autocrlf", environment["GIT_CONFIG_KEY_0"])
+        self.assertNotIn(str(bot.shim_directory()), environment["PATH"].split(os.pathsep))
 
     def test_uncovered_accounts_fall_through_to_tommys_own_gh(self):
         environment = self.environment("pr", "list", checkout="Infonetica")
@@ -337,15 +459,6 @@ class GhWrapperTests(Sandbox):
 class ApprovalHandoffTests(GhWrapperTests):
     CORE = "https://github.com/tj-agents/core/pull/7"
 
-    def setUp(self):
-        super().setUp()
-        self.patch_environment({"AGENT_STATE_DIRECTORY": str(self.home)})
-        bot.user_command_builder().parent.mkdir(parents=True)
-        bot.user_command_builder().write_text(FAKE_BUILDER, encoding="utf-8")
-
-    def issued(self, urls):
-        return "!issued " + json.dumps(bot.approval_spec(urls), sort_keys=True)
-
     def hand_over(self, *arguments, checkout="tj-agents", stdout=None, returncode=0):
         self.gh.stdout, self.gh.returncode = stdout, returncode
         out, err = io.StringIO(), io.StringIO()
@@ -353,12 +466,26 @@ class ApprovalHandoffTests(GhWrapperTests):
             self.assertEqual(returncode, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout))
         return out.getvalue(), err.getvalue()
 
-    def test_a_created_pr_hands_over_its_issued_approval_command_and_keeps_its_url_on_stdout(self):
+    def test_a_created_pr_prints_its_filled_approval_command_and_keeps_its_url_on_stdout(self):
         out, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
         self.assertEqual(self.CORE + "\n", out)
         self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
-        self.assertIn(self.issued([self.CORE]), err)
-        self.assertIn("Copied 1 characters", err)
+        self.assertIn("clipboard with cli:clip", err)
+        self.assertIn(bot.approval_command([self.CORE]), err)
+
+    def test_a_payload_url_preserves_bot_authentication_and_the_approval_handoff(self):
+        out, err = self.hand_over("pr", "create", "--title", "Fixture", "--body",
+                                  "See https://github.com/cli/cli/issues/1", stdout=self.CORE + "\n")
+        self.assertEqual(self.CORE + "\n", out)
+        self.assertEqual("ghs_tj-agents", self.gh.calls[0][1]["GH_TOKEN"])
+        self.assertIn(bot.approval_command([self.CORE]), err)
+
+    def test_create_alias_preserves_bot_authentication_and_the_approval_handoff(self):
+        out, err = self.hand_over("pr", "new", "-t", "Fixture", "-b",
+                                  "See https://github.com/cli/cli/issues/1", stdout=self.CORE + "\n")
+        self.assertEqual(self.CORE + "\n", out)
+        self.assertEqual("ghs_tj-agents", self.gh.calls[0][1]["GH_TOKEN"])
+        self.assertIn(bot.approval_command([self.CORE]), err)
 
     def test_a_readied_pr_is_looked_up_with_its_selector_and_handed_over(self):
         _, err = self.hand_over("pr", "ready", "7", "-R", "tj-agents/core", stdout=self.CORE)
@@ -366,7 +493,7 @@ class ApprovalHandoffTests(GhWrapperTests):
         self.assertEqual(["real-gh", "pr", "view", "7", "-R", "tj-agents/core", "--json", "url", "--jq", ".url"],
                          view)
         self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
-        self.assertIn(self.issued([self.CORE]), err)
+        self.assertIn(bot.approval_command([self.CORE]), err)
 
     def test_drafts_undo_failures_and_uncovered_accounts_hand_nothing_over(self):
         for arguments, checkout, returncode in ((("pr", "create", "--draft"), "tj-agents", 0),
@@ -385,31 +512,19 @@ class ApprovalHandoffTests(GhWrapperTests):
 
     def test_flag_spellings_given_as_values_still_hand_the_pr_over(self):
         _, err = self.hand_over("pr", "create", "--title", "--draft", "-b", "-w", stdout=self.CORE)
-        self.assertIn(self.issued([self.CORE]), err)
+        self.assertIn(bot.approval_command([self.CORE]), err)
 
     def test_an_unresolved_url_still_points_at_the_command_builder(self):
         _, err = self.hand_over("pr", "create", stdout="")
         self.assertIn("approval <url>", err)
 
-    def test_a_missing_or_failing_builder_reports_instead_of_composing_a_command(self):
-        for builder in (None, "import sys\nprint('no clipboard', file=sys.stderr)\nsys.exit(2)\n"):
-            with self.subTest(builder=builder):
-                if builder is None:
-                    bot.user_command_builder().unlink()
-                else:
-                    bot.user_command_builder().write_text(builder, encoding="utf-8")
-                _, err = self.hand_over("pr", "create", stdout=self.CORE)
-                self.assertIn("his command was not built", err)
-                self.assertNotIn("\n!", err)
-                self.assertNotIn("REQUIRED IN YOUR REPLY", err)
-
-    def test_one_spec_approves_every_named_pr_once_as_tommy(self):
+    def test_one_command_approves_every_named_pr_as_tommy_and_stops_on_failure(self):
         other = "https://github.com/tomjseery/notes/pull/2"
-        self.assertEqual({"unset": ["GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"],
-                          "steps": [{"argv": ["real-gh", "auth", "token", "--user", "tomjseery"], "capture": "GH_TOKEN"},
-                                    {"argv": ["real-gh", "pr", "review", "--approve", self.CORE]},
-                                    {"argv": ["real-gh", "pr", "review", "--approve", other]}]},
-                         bot.approval_spec([self.CORE, other, self.CORE]))
+        command = bot.approval_command([self.CORE, other])
+        self.assertTrue(command.startswith("!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR bash -c 'set -e; "))
+        self.assertIn('g="real-gh"', command)
+        self.assertIn('auth token --user tomjseery', command)
+        self.assertIn(f"for p in {self.CORE} {other}; do", command)
 
     def test_only_prs_in_the_apps_accounts_get_an_approval_command(self):
         for urls in ([], ["https://github.com/Infonetica/cris/pull/3"], ["https://github.com/tj-agents/core"],
@@ -746,6 +861,14 @@ class FreshSetupTests(unittest.TestCase):
     def test_setup_and_fresh_wrapper_use_the_bot_without_touching_human_settings(self):
         with tempfile.TemporaryDirectory(prefix="bot setup ü ") as temporary:
             home = Path(temporary)
+            project = home / "personal project"
+            project.mkdir()
+            subprocess.run(["git", "init", str(project)], capture_output=True, check=True)
+            (project / ".agents").mkdir()
+            (project / ".agents/plugins.json").write_text(json.dumps({
+                "plugins": ["personal@tj-agents"],
+                "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
+            }), encoding="utf-8")
             real = home / "real gh"
             real.mkdir()
             script = real / "fake-gh.py"
@@ -766,36 +889,36 @@ class FreshSetupTests(unittest.TestCase):
                 bot.write_private(bot.store() / "tomjseery-bot.json", {**RECORD, "key": str(key)})
                 with mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "remove_user_path"), \
                         contextlib.redirect_stdout(io.StringIO()):
-                    bot.setup()
-                    bot.setup(check=True)
+                    bot.setup(root=project)
+                    bot.setup(check=True, root=project)
                     original_path = os.environ["PATH"]
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(real), original_path])}):
-                        bot.setup(check=True)
+                        bot.setup(check=True, root=project)
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(home / "new tools"), original_path])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True)
+                            bot.setup(check=True, root=project)
                     entries = original_path.split(os.pathsep)
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([*entries[1:], entries[0]])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True)
-                    claude = home / "claude/settings.json"
+                            bot.setup(check=True, root=project)
+                    claude = project / ".claude/settings.local.json"
                     settings = json.loads(claude.read_text(encoding="utf-8"))
                     settings["permissions"]["deny"].remove(bot.MCP_DENY[0])
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "write restrictions are missing"):
-                        bot.setup(check=True)
+                        bot.setup(check=True, root=project)
                     del settings["permissions"]
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "host settings are missing"):
-                        bot.setup(check=True)
-                    bot.setup()
-                    bot.setup(check=True)
+                        bot.setup(check=True, root=project)
+                    bot.setup(root=project)
+                    bot.setup(check=True, root=project)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-installations.json", INSTALLED)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-tomjseery.json",
                                   {"token": "fixture-token", "expires": 4102444800})
-                settings = json.loads((home / "claude/settings.json").read_text(encoding="utf-8"))["env"]
+                settings = json.loads((project / ".claude/settings.local.json").read_text(encoding="utf-8"))["env"]
                 result = subprocess.run([str(bot.shim_directory() / launcher.name), "api", "repos/tomjseery/smoke"],
-                                        cwd=home, env={**environment, **settings}, capture_output=True,
+                                        cwd=project, env={**environment, **settings}, capture_output=True,
                                         text=True, timeout=30, check=True)
                 self.assertEqual("BOT", result.stdout.strip())
                 approval = subprocess.run(
@@ -807,6 +930,26 @@ class FreshSetupTests(unittest.TestCase):
                 self.assertEqual("", approval.stdout)
                 self.assertIn("approval <url>", approval.stderr)
                 self.assertNotIn("TJ_AGENT", os.environ)
+                self.assertFalse((home / "claude/settings.json").exists())
+                self.assertFalse((home / "codex/config.toml").exists())
+
+
+class ScopeTests(unittest.TestCase):
+    def test_setup_refuses_work_and_unselected_projects_before_reading_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            subprocess.run(["git", "init", str(project)], capture_output=True, check=True)
+            (project / ".agents").mkdir()
+            for plugins in ([], ["work@tj-agents"], ["personal@tj-agents", "infonetica@tj-agents"]):
+                with self.subTest(plugins=plugins):
+                    (project / ".agents/plugins.json").write_text(json.dumps({
+                        "plugins": plugins,
+                        "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
+                    }), encoding="utf-8")
+                    with mock.patch.object(bot, "app_record") as record:
+                        with self.assertRaisesRegex(bot.IdentityError, "explicitly adopted personal"):
+                            bot.setup(root=project)
+                    record.assert_not_called()
         repository = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
                                     capture_output=True, text=True, timeout=30, check=True)
         self.assertEqual(ROOT.resolve(), Path(repository.stdout.strip()).resolve())
