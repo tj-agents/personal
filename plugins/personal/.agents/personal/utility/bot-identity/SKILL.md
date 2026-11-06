@@ -67,10 +67,11 @@ runs unauthenticated, and agents may run only `gh auth status`. `token --owner <
 Claude and Codex after setup.
 
 Every PR handed to Tommy for approval carries the `!` command he invokes in the agent terminal. It bypasses the
-wrapper and approves each PR as `tomjseery`, stopping at the first failure; an agent never runs it. After a
-successful `gh pr create` (not draft, `--web` or `--dry-run`) or `gh pr ready` in the App's accounts, the wrapper prints that PR's filled
-command on stderr in every repository, whatever plugins it selects. For several PRs in one reply, give one command
-from `approval <url>...`, which refuses PRs outside the App's accounts:
+wrapper and approves each PR as `tomjseery`, stopping at the first failure; an agent never runs it, and the wrapper
+refuses an agent's own approval. After a successful `gh pr create` (not draft, `--web` or `--dry-run`) or `gh pr ready`
+in the App's accounts, the wrapper prints that PR's filled command on stderr. Put the printed command on his clipboard
+with `cli:clip`, unchanged. For several PRs in one reply, copy the one command `approval <url>...` prints, which
+refuses PRs outside the App's accounts:
 
 ```text
 python -B <skill-directory>/scripts/bot_identity.py approval https://github.com/<owner>/<repo>/pull/<number> ...

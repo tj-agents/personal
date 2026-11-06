@@ -779,6 +779,49 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     return environment if arguments[:1] == ["auth"] else tommy_environment()
 
 
+def review_approval(arguments: list[str]) -> tuple[bool, list[str]]:
+    index = 0
+    commands = []
+    approving = False
+    repositories = []
+    while index < len(arguments):
+        argument = arguments[index]
+        following = arguments[index + 1] if index + 1 < len(arguments) else ""
+        if argument == "--":
+            break
+        flag, equals, value = argument.partition("=")
+        if commands == ["pr", "review"] and flag == "--approve":
+            if not equals or value in ("1", "t", "T", "true", "TRUE", "True"):
+                approving = True
+        if flag in ("--body", "--body-file", "--repo", "--hostname"):
+            if flag == "--repo":
+                repositories.append(value if equals else following)
+            index += 1 if equals else 2
+        elif argument.startswith("-") and not argument.startswith("--"):
+            consumes_next = False
+            for offset, short in enumerate(argument[1:], start=1):
+                if short in ("b", "F", "R"):
+                    consumes_next = offset == len(argument) - 1
+                    if short == "R":
+                        repositories.append(following if consumes_next else argument[offset + 1:].removeprefix("="))
+                    break
+                if short == "a" and commands == ["pr", "review"]:
+                    suffix = argument[offset + 1:]
+                    if not suffix.startswith("=") or suffix[1:] in ("1", "t", "T", "true", "TRUE", "True"):
+                        approving = True
+                    if suffix.startswith("="):
+                        break
+            index += 2 if consumes_next else 1
+        else:
+            if not argument.startswith("-") and len(commands) < 2:
+                commands.append(argument)
+                if commands != ["pr", "review"][:len(commands)]:
+                    return False, []
+            index += 1
+    owners = [repository.rstrip("/").split("/")[-2] for repository in repositories if "/" in repository]
+    return approving, owners
+
+
 def approval_command(urls: list[str]) -> str:
     if not urls:
         raise IdentityError("name at least one pull request URL")
@@ -826,23 +869,29 @@ def hand_over(output: str) -> None:
     builder = f'`python -B "{Path(__file__).resolve().as_posix()}" approval <url>...`'
     if not url:
         print(f"bot_identity: REQUIRED IN YOUR REPLY: this PR awaits Tommy's approval. Your reply reporting it "
-              f"must include its link and the command {builder} prints; never run that command yourself.",
-              file=sys.stderr)
+              f"must include its link, and the command {builder} prints goes on his clipboard with cli:clip; "
+              f"never run that command yourself.", file=sys.stderr)
         return
-    print(f"bot_identity: REQUIRED IN YOUR REPLY: {url} awaits Tommy's approval. Your reply reporting it must "
-          f"include that link and this exact command, which Tommy runs; never run it yourself:\n"
+    print(f"bot_identity: REQUIRED IN YOUR REPLY: {url} awaits Tommy's approval. Put this exact command on his "
+          f"clipboard with cli:clip and include that link and the command in your reply; Tommy runs it, never you:\n"
           f"{approval_command([url])}\n"
-          f"Reporting several PRs in one reply? Give one command from {builder} instead.", file=sys.stderr)
+          f"Reporting several PRs in one reply? Copy one command from {builder} instead.", file=sys.stderr)
 
 
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
+    checkout_owner = checkout()
+    approving, review_owners = review_approval(arguments)
+    owners = owners_from_arguments(arguments) + review_owners or ([checkout_owner] if checkout_owner else [])
+    if approving and any(owner.lower() in REQUIRED_OWNERS for owner in owners):
+        raise IdentityError("Tommy must approve these PRs; give him the command from this script's "
+                            "`approval <url>...` on his clipboard with cli:clip")
     try:
         personal_checkout()
     except IdentityError:
         return run([real_gh(), *arguments], env=tommy_environment(), check=False).returncode
-    environment = agent_gh_environment(arguments, checkout())
+    environment = agent_gh_environment(arguments, checkout_owner)
     app = environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
     if not (app and awaits_approval(arguments)):
         return run([real_gh(), *arguments], env=environment, check=False).returncode
