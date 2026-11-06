@@ -17,7 +17,7 @@ work_item = import_module("work_item")
 
 
 def main():
-    return work_item.main(extra_commands=("note",))
+    return work_item.main(extra_commands=("update", "note"))
 
 
 if __name__ == "__main__":
