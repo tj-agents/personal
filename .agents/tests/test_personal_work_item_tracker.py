@@ -1,5 +1,7 @@
 import argparse
 import copy
+import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -17,6 +19,12 @@ sys.path.insert(0, str(SCRIPTS))
 github = import_module("github_tracker")
 records = import_module("tj_personal_work_items.records")
 RequestJournal = import_module("tj_personal_work_items.request_journal").RequestJournal
+CREATE_SPEC = importlib.util.spec_from_file_location(
+    "create_work_item",
+    ROOT / ".agents/personal/utility/create/work-item/scripts/create_work_item.py",
+)
+create_entry = importlib.util.module_from_spec(CREATE_SPEC)
+CREATE_SPEC.loader.exec_module(create_entry)
 
 CONFIG = {
     "provider": "personal:work-item",
@@ -167,6 +175,119 @@ class FakeAPI:
                 self.issues[0].update(payload)
             return copy.deepcopy(self.issues[0])
         raise AssertionError((method, endpoint, payload))
+
+
+class CLIOutput(io.StringIO):
+    def reconfigure(self, **kwargs):
+        pass
+
+
+class CreateEntryTests(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeAPI()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.facts = self.root / "facts.json"
+        self.facts.write_text(json.dumps(item()), encoding="utf-8")
+
+    def run_entry(self, *arguments):
+        output, errors = CLIOutput(), CLIOutput()
+        with (
+            patch.object(sys, "argv", ["create_work_item.py", *arguments]),
+            patch.object(sys, "stdout", output),
+            patch.object(sys, "stderr", errors),
+            patch.object(github, "GitHub", return_value=self.api),
+            patch.object(github, "selection", return_value=CONFIG),
+            patch.object(github, "RequestJournal", return_value=None),
+            patch.object(github, "project_token", return_value=None),
+        ):
+            code = create_entry.main()
+        return code, json.loads(output.getvalue() or errors.getvalue())
+
+    def create(self):
+        code, result = self.run_entry(
+            "create", "--input", str(self.facts), "--request-id", "request-0001"
+        )
+        self.assertEqual(0, code, result)
+        return result
+
+    def test_create_entry_refines_with_the_fresh_read_hash(self):
+        original = self.create()
+        self.api.issues[0]["assignees"] = [{"login": "repair-owner"}]
+        code, current = self.run_entry(
+            "read", "--item", original["identity"], "--body", "--comments"
+        )
+        self.assertEqual(0, code, current)
+        refined = {**item(), "title": "Refined outcome", "evidence": "More evidence"}
+        self.facts.write_text(json.dumps(refined), encoding="utf-8")
+        code, result = self.run_entry(
+            "update",
+            "--item",
+            original["identity"],
+            "--input",
+            str(self.facts),
+            "--expected-hash",
+            current["body_hash"],
+        )
+        self.assertEqual(0, code, result)
+        self.assertEqual(original["identity"], result["identity"])
+        self.assertEqual(original["kind"], result["kind"])
+        self.assertEqual("Refined outcome", result["title"])
+        self.assertIn("More evidence", self.api.issues[0]["body"])
+        self.assertEqual([{"login": "repair-owner"}], self.api.issues[0]["assignees"])
+        self.assertEqual(1, len(self.api.issues))
+
+    def test_create_entry_refuses_a_stale_refinement_without_writing(self):
+        original = self.create()
+        github.Tracker(CONFIG, self.api).update(
+            1,
+            {**item(), "title": "Other writer", "evidence": "Concurrent evidence"},
+            original["body_hash"],
+        )
+        writes = sum(method == "PATCH" for method, _, _ in self.api.calls)
+        code, result = self.run_entry(
+            "update",
+            "--item",
+            original["identity"],
+            "--input",
+            str(self.facts),
+            "--expected-hash",
+            original["body_hash"],
+        )
+        self.assertEqual(2, code, result)
+        self.assertIn("read and reconcile", result["error"])
+        self.assertEqual("Other writer", self.api.issues[0]["title"])
+        self.assertEqual(
+            writes, sum(method == "PATCH" for method, _, _ in self.api.calls)
+        )
+
+    def test_create_entry_retains_idempotent_create_and_evidence_notes(self):
+        original = self.create()
+        repeated = self.create()
+        self.assertEqual(original["identity"], repeated["identity"])
+        self.assertTrue(repeated["reconciled"])
+        evidence = self.root / "recurrence.txt"
+        evidence.write_text("Observed again; repair remains owned", encoding="utf-8")
+        arguments = (
+            "note",
+            "--item",
+            original["identity"],
+            "--request-id",
+            "note-0001",
+            "--text-file",
+            str(evidence),
+        )
+        code, first = self.run_entry(*arguments)
+        self.assertEqual(0, code, first)
+        code, repeated_note = self.run_entry(*arguments)
+        self.assertEqual(0, code, repeated_note)
+        self.assertEqual(first, repeated_note)
+        self.assertEqual(1, len(self.api.issues))
+        self.assertEqual(1, len(self.api.comments))
+        self.assertEqual(
+            original["body_hash"], github.digest(self.api.issues[0]["body"])
+        )
 
 
 class TrackerTests(unittest.TestCase):
