@@ -1,7 +1,13 @@
 # personal
 
-plugin source repository and every worktree. Never select or inject this profile there. GitHub ownership,
-a publisher account or a checkout location does not establish personal scope; read the target project's
+Personal supplies standards and workflows for Tommy's own personal projects when they are explicitly
+adopted, including its intentional Personal-only bot identity. For example, an adopted personal project
+can use Personal's GitHub work-item workflow and bot; an employer project remains Work even if Tommy
+owns the GitHub organization. Learning is a separate optional overlay, such as when learning a new
+language.
+
+Personal scope comes only from explicit adoption, not GitHub ownership, a publisher account, checkout
+repository and every worktree. Never select or inject this profile there; read the target project's
 README.md and AGENTS.md before adoption.
 
 Mandatory standards for explicitly adopted personal projects.
