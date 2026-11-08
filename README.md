@@ -7,8 +7,12 @@ owns the GitHub organization. Learning is a separate optional overlay, such as w
 language.
 
 Personal scope comes only from explicit adoption, not GitHub ownership, a publisher account, checkout
-repository and every worktree. Never select or inject this profile there; read the target project's
-README.md and AGENTS.md before adoption.
+location or authentication. Tommy has explicitly adopted Personal for all `tj-agents` source repositories.
+A source repository remains Personal even when it publishes a profile for employer-project consumers:
+`tj-agents/work` supplies generic local, Git-ignored employer-project assistance, and
+`tj-agents/company` supplies the current employer-specific layer. Actual employer projects remain outside
+Personal unless Tommy explicitly extends that scope; read the target project's README.md and AGENTS.md before
+adoption.
 
 Mandatory standards for explicitly adopted personal projects.
 

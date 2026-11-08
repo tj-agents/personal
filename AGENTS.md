@@ -1,8 +1,12 @@
 # personal
 
-plugin source repository and every worktree. Never select or inject this profile there. GitHub ownership,
-a publisher account or a checkout location does not establish personal scope; read the target project's
-README.md and AGENTS.md before adoption.
+Personal applies only to projects explicitly adopted as personal. Tommy has explicitly adopted Personal for
+all `tj-agents` source repositories. A source repository remains Personal even when it publishes a profile for
+employer-project consumers: `tj-agents/work` supplies generic local, Git-ignored employer-project assistance,
+and `tj-agents/company` supplies the current employer-specific layer. Actual employer projects remain
+outside Personal unless Tommy explicitly extends that scope. GitHub ownership, a publisher account or a
+checkout location does not establish personal scope; read the target project's README.md and AGENTS.md before
+adoption.
 
 This repository uses the plugin layout `template:check` documents and enforces
 (https://github.com/tj-agents/template). Authored skills live once under `.agents/<plugin>/<kind>/<name>/SKILL.md`,
