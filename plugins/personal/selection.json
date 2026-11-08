@@ -27,8 +27,8 @@
         "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering",
-        "python"
+        "tj-item",
+        "gh"
       ],
       "provenance": [
         "house"
@@ -56,8 +56,8 @@
         "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering",
-        "python"
+        "tj-item",
+        "gh"
       ],
       "provenance": [
         "house"
@@ -114,8 +114,8 @@
         "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering",
-        "python"
+        "tj-item",
+        "gh"
       ],
       "provenance": [
         "house"
