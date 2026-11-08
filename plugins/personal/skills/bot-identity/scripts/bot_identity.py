@@ -1043,8 +1043,15 @@ def installed_script() -> Path:
     return shim_directory() / Path(__file__).name
 
 
-def verify_host_setup(root: Path | None = None) -> None:
-    root = personal_checkout(root)
+def claude_user_settings() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+
+
+def codex_user_config() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+
+
+def verify_host_setup() -> None:
     source = Path(__file__).resolve()
     script = installed_script()
     descriptor = script.with_name("tomjseery-bot.json")
@@ -1060,8 +1067,8 @@ def verify_host_setup(root: Path | None = None) -> None:
     if launcher.read_bytes() != expected_launcher:
         raise IdentityError("the installed GitHub App wrapper is stale; run setup")
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    claude = root / ".claude" / "settings.local.json"
-    codex = root / ".codex" / "config.toml"
+    claude = claude_user_settings()
+    codex = codex_user_config()
     try:
         claude_settings = json.loads(claude.read_text(encoding="utf-8-sig"))
         claude_env = claude_settings["env"]
@@ -1078,8 +1085,7 @@ def verify_host_setup(root: Path | None = None) -> None:
             raise IdentityError("agent host settings are stale; run setup")
 
 
-def setup(check: bool = False, onboard_key: bool = False, root: Path | None = None) -> None:
-    root = personal_checkout(root)
+def setup(check: bool = False, onboard_key: bool = False) -> None:
     if onboard_key:
         try:
             candidate = app_record()
@@ -1091,20 +1097,18 @@ def setup(check: bool = False, onboard_key: bool = False, root: Path | None = No
     record = app_record()
     verify_ready(record)
     if check:
-        verify_host_setup(root)
+        verify_host_setup()
         print("bot_identity: ready")
         return
     script = install_shims(Path(__file__).resolve())
     gh_config_directory().mkdir(parents=True, exist_ok=True)
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    claude = root / ".claude" / "settings.local.json"
-    codex = root / ".codex" / "config.toml"
-    update_claude(claude, environment)
-    update_codex(codex, environment)
+    update_claude(claude_user_settings(), environment)
+    update_codex(codex_user_config(), environment)
     if remove_user_path(shim_directory()):
         print(f"Removed {shim_directory()} from your user PATH; only agent sessions put it first")
-    print(f"Personal agent identity is configured only in {root}; restart Claude and Codex to apply, "
-          "and re-run setup after changing PATH")
+    print("Personal agent identity is configured in the Claude and Codex user settings; restart Claude and Codex "
+          "to apply, and re-run setup after changing PATH")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1118,7 +1122,6 @@ def main(argv: list[str] | None = None) -> int:
         commands.add_parser("credential").add_argument("operation")
         commands.add_parser("approval").add_argument("urls", nargs="+")
         setup_command = commands.add_parser("setup")
-        setup_command.add_argument("--root", type=Path)
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
         setup_flags.add_argument("--onboard", action="store_true")
@@ -1126,7 +1129,7 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "credential":
             return credential(arguments.operation)
         if arguments.command == "setup":
-            setup(check=arguments.check, onboard_key=arguments.onboard, root=arguments.root)
+            setup(check=arguments.check, onboard_key=arguments.onboard)
             return 0
         if arguments.command == "approval":
             print(approval_command(arguments.urls))
