@@ -17,23 +17,16 @@ Concertable. GitHub never lets
 an author approve its own PR. [github-actions:merge-policy](https://github.com/tj-agents/github-actions/blob/main/.agents/github-actions/utility/merge-policy/SKILL.md)
 owns Tommy's human approval requirement. Infonetica never gets the App; there agents keep Tommy's credentials.
 
-Run setup only for an explicitly adopted personal Git checkout: its `.agents/plugins.json` selects
-`personal@tj-agents` from `tj-agents/marketplace` and selects neither `work@tj-agents` nor
-`infonetica@tj-agents`. `--root <checkout>` selects that checkout explicitly; otherwise setup uses the current
-directory. A machine without a valid enrollment fails closed with an exact onboarding action; normal setup and
-checks never open a browser. With Tommy present, use the explicit local-browser wizard: it identifies the pinned
-existing App, accepts one newly generated App PEM, verifies it against GitHub before storing protected local state,
-and never prints the key or token. The original downloaded PEM remains in the browser/OS download location; remove
-it there after successful enrollment.
+Tommy runs setup once per machine. A machine without a valid enrollment fails closed with an exact onboarding
+action; normal setup and checks never open a browser. With Tommy present, use the explicit local-browser wizard: it
+identifies the pinned existing App, accepts one newly generated App PEM, verifies it against GitHub before storing
+protected local state, and never prints the key or token. The original downloaded PEM remains in the browser/OS
+download location; remove it there after successful enrollment.
 
 ```text
-# From C:\Users\TommySeery\source\repos\personal-notes, an adopted personal checkout:
 python -B <skill-directory>/scripts/bot_identity.py setup --onboard  # python3 on Linux/macOS
 python -B <skill-directory>/scripts/bot_identity.py setup
 python -B <skill-directory>/scripts/bot_identity.py setup --check
-
-# From elsewhere, select that same checkout explicitly:
-python -B <skill-directory>/scripts/bot_identity.py setup --root C:\Users\TommySeery\source\repos\personal-notes --check
 ```
 
 If the wizard reports a missing account, Tommy installs the same App at
@@ -47,12 +40,11 @@ authority to administer, delete, or transfer existing repositories. A failed che
 `tj-agents` installation settings page for Tommy to correct; setup never changes GitHub permissions itself.
 
 It installs a `gh` wrapper in `~/.agents-state/bin/bot-identity/` (`gh.exe` on Windows, so PowerShell and
-programs pass arguments intact), but writes agent identity settings only to
-`<checkout>/.claude/settings.local.json` and `<checkout>/.codex/config.toml`; it never writes global Claude or
-Codex identity settings. Those checkout settings give agent sessions (Claude `env`, Codex
-`shell_environment_policy.set`) `PATH` with the wrapper first, `TJ_AGENT=1`, a dead `GH_TOKEN` with an empty
-`GH_CONFIG_DIR`, so gh outside the wrapper has no login, and git config that clears every github.com credential
-helper except the bot's. `PATH` is a snapshot, so re-run setup after changing it. Tommy's own terminals are
+programs pass arguments intact), and writes agent identity settings only to the user-level
+`~/.claude/settings.json` and `~/.codex/config.toml`, never into a checkout, because these values are
+machine-specific. They give every agent session (Claude `env`, Codex `shell_environment_policy.set`) `PATH`
+with the wrapper first, `TJ_AGENT=1`, a dead `GH_TOKEN` with an empty `GH_CONFIG_DIR`, so gh outside the wrapper
+has no login, and git config that clears every github.com credential helper except the bot's. `PATH` is a snapshot, so re-run setup after changing it. Tommy's own terminals are
 unchanged; setup removes the wrapper from the user PATH. It also denies the GitHub MCP write tools, which hold
 Tommy's token.
 
