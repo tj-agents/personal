@@ -31,6 +31,6 @@ merge closes the issue.
 ```text
 personal:address-work-item owner/repository#42
 1. tj item resolve https://github.com/owner/repository/issues/42 returns kind story, state To Do and no current owner.
-2. Reconcile github:github.com/owner/repository:42, then enter workflow:run with it and the mapped engineering:feature operation; Workflow acquires the sole goal owner.
+2. Reconcile the returned ref, then enter workflow:run with it and the mapped engineering:feature operation; Workflow acquires the sole goal owner.
 3. engineering:feature delivers and returns verification evidence; tj item comment 42 --body-file evidence.md records it.
 ```
