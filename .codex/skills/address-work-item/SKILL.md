@@ -5,7 +5,7 @@ kind: workflow
 domain: personal
 profile: core
 applicability: explicitly adopted personal GitHub repositories
-requires: engineering, python
+requires: tj-item, gh
 provenance: house
 ---
 
