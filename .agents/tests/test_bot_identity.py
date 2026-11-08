@@ -815,7 +815,7 @@ class EnrollmentTests(Sandbox):
 
 
 class FreshSetupTests(unittest.TestCase):
-    def test_setup_and_fresh_wrapper_use_the_bot_without_touching_human_settings(self):
+    def test_user_settings_scope_the_bot_to_agent_sessions_and_leave_the_checkout_untouched(self):
         with tempfile.TemporaryDirectory(prefix="bot setup ü ") as temporary:
             home = Path(temporary)
             project = home / "personal project"
@@ -846,62 +846,43 @@ class FreshSetupTests(unittest.TestCase):
                 bot.write_private(bot.store() / "tomjseery-bot.json", {**RECORD, "key": str(key)})
                 with mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "remove_user_path"), \
                         contextlib.redirect_stdout(io.StringIO()):
-                    bot.setup(root=project)
-                    bot.setup(check=True, root=project)
+                    bot.setup()
+                    bot.setup(check=True)
                     original_path = os.environ["PATH"]
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(real), original_path])}):
-                        bot.setup(check=True, root=project)
+                        bot.setup(check=True)
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(home / "new tools"), original_path])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True, root=project)
+                            bot.setup(check=True)
                     entries = original_path.split(os.pathsep)
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([*entries[1:], entries[0]])}):
                         with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True, root=project)
-                    claude = project / ".claude/settings.local.json"
+                            bot.setup(check=True)
+                    claude = home / "claude/settings.json"
                     settings = json.loads(claude.read_text(encoding="utf-8"))
                     settings["permissions"]["deny"].remove(bot.MCP_DENY[0])
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "write restrictions are missing"):
-                        bot.setup(check=True, root=project)
+                        bot.setup(check=True)
                     del settings["permissions"]
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "host settings are missing"):
-                        bot.setup(check=True, root=project)
-                    bot.setup(root=project)
-                    bot.setup(check=True, root=project)
+                        bot.setup(check=True)
+                    bot.setup()
+                    bot.setup(check=True)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-installations.json", INSTALLED)
                 bot.write_private(bot.store() / "tokens/tomjseery-bot-tomjseery.json",
                                   {"token": "fixture-token", "expires": 4102444800})
-                settings = json.loads((project / ".claude/settings.local.json").read_text(encoding="utf-8"))["env"]
+                settings = json.loads((home / "claude/settings.json").read_text(encoding="utf-8"))["env"]
                 result = subprocess.run([str(bot.shim_directory() / launcher.name), "api", "repos/tomjseery/smoke"],
                                         cwd=project, env={**environment, **settings}, capture_output=True,
                                         text=True, timeout=30, check=True)
                 self.assertEqual("BOT", result.stdout.strip())
                 self.assertNotIn("TJ_AGENT", os.environ)
-                self.assertFalse((home / "claude/settings.json").exists())
-                self.assertFalse((home / "codex/config.toml").exists())
-
-
-class ScopeTests(unittest.TestCase):
-    def test_setup_refuses_work_and_unselected_projects_before_reading_credentials(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary)
-            subprocess.run(["git", "init", str(project)], capture_output=True, check=True)
-            (project / ".agents").mkdir()
-            for plugins in ([], ["work@tj-agents"], ["personal@tj-agents", "infonetica@tj-agents"]):
-                with self.subTest(plugins=plugins):
-                    (project / ".agents/plugins.json").write_text(json.dumps({
-                        "plugins": plugins,
-                        "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
-                    }), encoding="utf-8")
-                    with mock.patch.object(bot, "app_record") as record:
-                        with self.assertRaisesRegex(bot.IdentityError, "explicitly adopted personal"):
-                            bot.setup(root=project)
-                    record.assert_not_called()
-        repository = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
-                                    capture_output=True, text=True, timeout=30, check=True)
-        self.assertEqual(ROOT.resolve(), Path(repository.stdout.strip()).resolve())
+                codex = bot_toml((home / "codex/config.toml").read_text(encoding="utf-8"))
+                self.assertEqual(settings, codex["shell_environment_policy"]["set"])
+                self.assertFalse((project / ".claude").exists())
+                self.assertFalse((project / ".codex").exists())
 
 
 def bot_toml(text):
