@@ -86,3 +86,15 @@ pwsh .agents/sync-generated.ps1 -Check
 ```
 
 The layout, the vendored generator and CI come from [Template](https://github.com/tj-agents/template).
+
+Run the onboarding browser acceptance check with an installed Chromium executable:
+
+```sh
+uv run python .agents/tests/onboarding_browser.py --browser /usr/bin/chromium --artifacts /var/tmp/personal-onboarding
+```
+
+Use `--headed` to observe the browser in the desktop session. The runner exercises the real local page
+with synthetic GitHub responses and blocks external requests. Each rendered transition has a bounded
+wait; a failure saves a screenshot, rendered state, expected step and browser errors in the artifact
+directory. This fixture check complements live enrollment; it does not prove GitHub authentication or
+installation readiness. Playwright is a development dependency; the setup runtime uses the standard library.
