@@ -11,7 +11,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".agents/personal/utility"
 BOT_IDENTITY = SCRIPTS / "bot-identity/scripts/bot_identity.py"
-DESCRIPTOR = SCRIPTS / "bot-identity/scripts/tomjseery-bot.json"
+ONBOARDING = SCRIPTS / "bot-identity/scripts/onboarding.py"
+PAGE = SCRIPTS / "bot-identity/scripts/onboarding.html"
 APPROVE = SCRIPTS / "approve/scripts/approve.py"
 PAST = 1_000_000_000_000_000_000
 
@@ -43,7 +44,8 @@ def shim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def installed(shim: Path, approve: bytes) -> None:
     shim.mkdir()
     (shim / "bot_identity.py").write_bytes(BOT_IDENTITY.read_bytes())
-    (shim / "tomjseery-bot.json").write_bytes(DESCRIPTOR.read_bytes())
+    (shim / "onboarding.py").write_bytes(ONBOARDING.read_bytes())
+    (shim / "onboarding.html").write_bytes(PAGE.read_bytes())
     (shim / "approve.py").write_bytes(approve)
     for path in shim.iterdir():
         os.utime(path, ns=(PAST, PAST))
@@ -57,12 +59,13 @@ def test_converge_replaces_a_stale_copy_and_leaves_identical_ones_untouched(
     assert bot.converge_shims() == [shim / "approve.py"]
 
     assert (shim / "approve.py").read_bytes() == APPROVE.read_bytes()
-    for name in ("bot_identity.py", "tomjseery-bot.json"):
+    for name in ("bot_identity.py", "onboarding.py", "onboarding.html"):
         assert (shim / name).stat().st_mtime_ns == PAST
     assert sorted(path.name for path in shim.iterdir()) == [
         "approve.py",
         "bot_identity.py",
-        "tomjseery-bot.json",
+        "onboarding.html",
+        "onboarding.py",
     ]
     assert bot.converge_shims() == []
 

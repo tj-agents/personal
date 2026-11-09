@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".agents/personal/utility/approve/scripts/approve.py"
 spec = importlib.util.spec_from_file_location("approve", SCRIPT)
@@ -20,12 +22,14 @@ spec.loader.exec_module(approve)
 bot = approve.bot_identity
 
 HEAD = "a" * 40
-BOT = "app/tomjseery-bot"
+BOT = "app/alex-bot"
+CONFIGURATION = {"schema_version": 1, "app": {"id": 123, "client_id": "test-client", "slug": "alex-bot", "owner": "alex"},
+                 "reviewer": "alex", "accounts": ["alex", "example-tools"], "permissions": {}, "key": None}
 SESSION_VARIABLES = ("TJ_RUN_LAUNCH_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
 
 
 def ref(number):
-    return {"ref": f"github:tj-agents/core:{number}", "provider": "github", "scope": "tj-agents/core",
+    return {"ref": f"github:example-tools/core:{number}", "provider": "github", "scope": "example-tools/core",
             "native_id": str(number)}
 
 
@@ -62,6 +66,7 @@ class FakeTools:
         self.item_prs = item_prs or {}
         self.pulls = pulls or {}
         self.failing = failing
+        self.login = "alex"
         self.calls = []
 
     def store(self, command, data):
@@ -86,7 +91,9 @@ class FakeTools:
                      for address, state in self.item_prs.get(arguments[2], [])]
             return completed(command, json.dumps({"ref": arguments[2], "prs": pulls, "all_merged": False}))
         if arguments[:3] == ["auth", "token", "--user"]:
-            return completed(command, "gho_tommy\n")
+            return completed(command, "gho_alex\n")
+        if arguments == ["api", "user", "--jq", ".login"]:
+            return completed(command, self.login + "\n")
         if arguments[:2] == ["pr", "view"]:
             return completed(command, json.dumps(self.pulls[arguments[2]]))
         if arguments[:3] == ["pr", "review", "--approve"]:
@@ -102,7 +109,8 @@ class FakeTools:
 class ApproveTests(unittest.TestCase):
     def setUp(self):
         for patcher in (mock.patch.object(bot, "real_gh", return_value="real-gh"),
-                        mock.patch.object(approve, "tool", side_effect=lambda name: name)):
+                        mock.patch.object(approve, "tool", side_effect=lambda name: name),
+                        mock.patch.object(bot, "identity_config", return_value=CONFIGURATION, create=True)):
             patcher.start()
             self.addCleanup(patcher.stop)
         environment = {key: value for key, value in os.environ.items() if key not in SESSION_VARIABLES}
@@ -111,17 +119,17 @@ class ApproveTests(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, environment, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.first, self.second, self.approved, self.stale = (url("tj-agents/core", 1), url("tomjseery/notes", 2),
-                                                             url("tj-agents/cli", 3), url("tj-agents/docs", 4))
+        self.first, self.second, self.approved, self.stale = (url("example-tools/core", 1), url("alex/notes", 2),
+                                                             url("example-tools/cli", 3), url("example-tools/docs", 4))
         self.tools = FakeTools(
             sessions={"claude:me": session("claude:me", 10, 11)},
-            item_prs={"github:tj-agents/core:10": [(self.first, "open"), (self.approved, "open")],
-                      "github:tj-agents/core:11": [(self.first, "open"), (self.second, "open"),
-                                                   (self.stale, "open"), (url("tj-agents/core", 5), "merged")]},
+            item_prs={"github:example-tools/core:10": [(self.first, "open"), (self.approved, "open")],
+                      "github:example-tools/core:11": [(self.first, "open"), (self.second, "open"),
+                                                   (self.stale, "open"), (url("example-tools/core", 5), "merged")]},
             pulls={self.first: details(self.first),
                    self.second: details(self.second),
-                   self.approved: details(self.approved, reviews=[review("tomjseery")]),
-                   self.stale: details(self.stale, reviews=[review("tomjseery", oid="b" * 40)])})
+                   self.approved: details(self.approved, reviews=[review("alex")]),
+                   self.stale: details(self.stale, reviews=[review("alex", oid="b" * 40)])})
 
     def run_approve(self):
         out = io.StringIO()
@@ -131,34 +139,34 @@ class ApproveTests(unittest.TestCase):
     def approvals(self):
         return [command[4] for command in self.tools.commands("real-gh", "pr", "review")]
 
-    def test_the_list_is_printed_then_every_pr_approved_as_tommy_with_stdin_at_nul(self):
+    def test_the_list_is_printed_then_every_pr_approved_as_the_configured_human_with_stdin_at_nul(self):
         with open(os.devnull, encoding="utf-8") as nul, mock.patch.object(sys, "stdin", nul):
             code, out = self.run_approve()
         self.assertEqual(0, code)
-        self.assertEqual(["core#1  Change 1", "tomjseery/notes#2  Change 2", "docs#4  Change 4",
-                          "approved core#1", "approved tomjseery/notes#2", "approved docs#4"], out.splitlines())
+        self.assertEqual(["example-tools/core#1  Change 1", "alex/notes#2  Change 2", "example-tools/docs#4  Change 4",
+                          "approved example-tools/core#1", "approved alex/notes#2", "approved example-tools/docs#4"], out.splitlines())
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
         token = self.tools.commands("real-gh", "auth", "token")
-        self.assertEqual([["real-gh", "auth", "token", "--user", "tomjseery"]], token)
+        self.assertEqual([["real-gh", "auth", "token", "--user", "alex"]], token)
         for command, env in self.tools.calls:
             if command[0] in ("real-gh", "tj"):
                 self.assertTrue(all(key not in env for key in ("TJ_AGENT", "GITHUB_TOKEN", "GH_CONFIG_DIR")))
                 if command[1:3] != ["auth", "token"]:
-                    self.assertEqual("gho_tommy", env["GH_TOKEN"])
+                    self.assertEqual("gho_alex", env["GH_TOKEN"])
 
     def test_each_linked_item_and_pr_is_read_once(self):
         self.tools.sessions["claude:me"] = session("claude:me", 10, 11, 10)
         self.run_approve()
-        self.assertEqual([["tj", "item", "prs", "github:tj-agents/core:10"],
-                          ["tj", "item", "prs", "github:tj-agents/core:11"]], self.tools.commands("tj"))
+        self.assertEqual([["tj", "item", "prs", "github:example-tools/core:10"],
+                          ["tj", "item", "prs", "github:example-tools/core:11"]], self.tools.commands("tj"))
         viewed = [command[3] for command in self.tools.commands("real-gh", "pr", "view")]
         self.assertEqual([self.first, self.approved, self.second, self.stale], viewed)
 
-    def test_only_open_bot_prs_without_tommys_approval_at_head_are_kept(self):
-        other, closed, requested = url("tj-agents/core", 6), url("tj-agents/core", 7), url("tj-agents/core", 8)
-        self.tools.item_prs = {"github:tj-agents/core:10": [(other, "open"), (closed, "open"), (requested, "open")]}
-        self.tools.pulls = {other: details(other, author="tomjseery"), closed: details(closed, state="CLOSED"),
-                            requested: details(requested, reviews=[review("tomjseery")], requests=["tomjseery"])}
+    def test_only_open_bot_prs_without_the_reviewers_approval_at_head_are_kept(self):
+        other, closed, requested = url("example-tools/core", 6), url("example-tools/core", 7), url("example-tools/core", 8)
+        self.tools.item_prs = {"github:example-tools/core:10": [(other, "open"), (closed, "open"), (requested, "open")]}
+        self.tools.pulls = {other: details(other, author="alex"), closed: details(closed, state="CLOSED"),
+                            requested: details(requested, reviews=[review("alex")], requests=["alex"])}
         self.tools.sessions["claude:me"] = session("claude:me", 10)
         self.run_approve()
         self.assertEqual([requested], self.approvals())
@@ -168,8 +176,8 @@ class ApproveTests(unittest.TestCase):
         code, out = self.run_approve()
         self.assertEqual(1, code)
         self.assertEqual(3, len(self.approvals()))
-        self.assertIn("failed tomjseery/notes#2: GraphQL: Review cannot be submitted", out)
-        self.assertIn("approved docs#4", out)
+        self.assertIn("failed alex/notes#2: GraphQL: Review cannot be submitted", out)
+        self.assertIn("approved example-tools/docs#4", out)
 
     def test_a_launch_id_resolves_the_launch_item_and_its_bound_session(self):
         os.environ["TJ_RUN_LAUNCH_ID"] = "L1"
@@ -177,7 +185,7 @@ class ApproveTests(unittest.TestCase):
         self.tools.sessions = {"claude:bound": session("claude:bound", 10)}
         self.run_approve()
         self.assertEqual([["agent-store", "show", "--launch-id", "L1"]], self.tools.commands("agent-store", "show"))
-        self.assertEqual(["github:tj-agents/core:11", "github:tj-agents/core:10"],
+        self.assertEqual(["github:example-tools/core:11", "github:example-tools/core:10"],
                          [command[3] for command in self.tools.commands("tj")])
 
     def test_a_codex_thread_resolves_its_native_session(self):
@@ -196,7 +204,7 @@ class ApproveTests(unittest.TestCase):
                                launch("L3", parent="codex:grandchild", item=11),
                                launch("L4", parent="claude:someone-else", item=12)]
         self.run_approve()
-        self.assertEqual(["github:tj-agents/core:10", "github:tj-agents/core:11"],
+        self.assertEqual(["github:example-tools/core:10", "github:example-tools/core:11"],
                          [command[3] for command in self.tools.commands("tj")])
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
 
@@ -214,7 +222,7 @@ class ApproveTests(unittest.TestCase):
         self.assertEqual([], self.tools.calls)
 
     def test_nothing_waiting_says_so_and_approves_nothing(self):
-        self.tools.item_prs = {"github:tj-agents/core:10": [(self.approved, "open")]}
+        self.tools.item_prs = {"github:example-tools/core:10": [(self.approved, "open")]}
         code, out = self.run_approve()
         self.assertEqual((0, []), (code, self.approvals()))
         self.assertEqual("No pull requests await your approval.\n", out)
@@ -242,7 +250,7 @@ class LauncherTests(unittest.TestCase):
             shim = home / "shim"
             shim.mkdir()
             source = Path(bot.__file__)
-            for name in (source.name, "tomjseery-bot.json"):
+            for name in (source.name, "onboarding.py", "onboarding.html"):
                 (shim / name).write_bytes((source.parent / name).read_bytes())
             with mock.patch.object(bot, "shim_directory", return_value=shim), \
                     mock.patch.dict(os.environ, {"TJ_BIN_DIR": str(home / "bin")}):
@@ -256,6 +264,64 @@ class LauncherTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=60, check=False)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("usage: tj approve", result.stdout)
+
+
+def test_another_users_bot_and_reviewer_are_used_and_other_accounts_are_not_read() -> None:
+    own = url("mira-projects/editor", 1)
+    other_bot = url("mira-projects/editor", 2)
+    unauthorized = url("unselected/editor", 3)
+    human = url("mira-projects/editor", 4)
+    spoofed = details(human, author="mira-helper")
+    spoofed["author"]["type"] = "User"
+    configuration = {**CONFIGURATION, "app": {**CONFIGURATION["app"], "slug": "mira-helper"},
+                     "reviewer": "mira", "accounts": ["mira-projects"]}
+    tools = FakeTools(sessions={"codex:mira-thread": session("codex:mira-thread", 1)},
+                      item_prs={"github:example-tools/core:1": [(address, "open")
+                                                             for address in (own, other_bot, unauthorized, human)]},
+                      pulls={own: details(own, author="app/mira-helper"),
+                             other_bot: details(other_bot, author="app/someone-else"), human: spoofed})
+    tools.login = "mira"
+    environment = {key: value for key, value in os.environ.items() if key not in SESSION_VARIABLES}
+    environment["CODEX_THREAD_ID"] = "mira-thread"
+    with mock.patch.dict(os.environ, environment, clear=True), \
+            mock.patch.object(bot, "identity_config", return_value=configuration, create=True), \
+            mock.patch.object(bot, "real_gh", return_value="real-gh"), \
+            mock.patch.object(approve, "tool", side_effect=lambda name: name):
+        assert approve.approve(run=tools, out=io.StringIO()) == 0
+    assert tools.commands("real-gh", "auth", "token") == [["real-gh", "auth", "token", "--user", "mira"]]
+    assert tools.commands("real-gh", "pr", "review") == [["real-gh", "pr", "review", "--approve", own]]
+    assert unauthorized not in [command[3] for command in tools.commands("real-gh", "pr", "view")]
+
+
+def test_wrong_authenticated_reviewer_blocks_every_approval_and_pr_lookup() -> None:
+    tools = FakeTools(sessions={"codex:thread": session("codex:thread", 1)})
+    tools.login = "someone-else"
+    environment = {key: value for key, value in os.environ.items() if key not in SESSION_VARIABLES}
+    environment["CODEX_THREAD_ID"] = "thread"
+    with mock.patch.dict(os.environ, environment, clear=True), \
+            mock.patch.object(bot, "identity_config", return_value=CONFIGURATION, create=True), \
+            mock.patch.object(bot, "real_gh", return_value="real-gh"), \
+            mock.patch.object(approve, "tool", side_effect=lambda name: name), \
+            pytest.raises(approve.ApproveError, match="configured human reviewer alex"):
+        approve.approve(run=tools, out=io.StringIO())
+    assert not tools.commands("real-gh", "pr")
+    assert not tools.commands("tj")
+
+
+def test_failed_native_token_lookup_never_includes_credential_output_in_the_error() -> None:
+    def failed_lookup(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, stdout="credential-must-stay-private", stderr="failed")
+
+    with pytest.raises(approve.ApproveError, match="gh has no alex login") as failure:
+        approve.reviewer_environment("real-gh", "alex", failed_lookup)
+    assert "credential-must-stay-private" not in str(failure.value)
+
+
+@pytest.mark.parametrize("author_type", [{"type": "User"}, {"__typename": "User"}, {"is_bot": False}])
+def test_a_human_cannot_impersonate_the_configured_app_slug(author_type: dict[str, object]) -> None:
+    pull = details(url("example-tools/core", 1), author="alex-bot")
+    pull["author"].update(author_type)
+    assert not approve.bot_authored(pull, "alex-bot")
 
 
 if __name__ == "__main__":

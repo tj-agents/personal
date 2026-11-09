@@ -1,0 +1,52 @@
+<!doctype html><meta charset="utf-8"><title>TJ Agents setup</title>
+<h1>Set up your agent bot</h1><p>$message</p>
+<p>Your human account approves your bot's changes. Secrets stay in this local setup process.</p>
+<label>Your human GitHub login <input id="reviewer" value="$reviewer"></label><br>
+<label>Permitted accounts (comma separated; defaults to your login)
+<input id="accounts" value="$accounts"></label><br>
+<label><input id="create_repositories" type="checkbox">Also allow creating repositories</label>
+<h2>I already have a bot</h2>
+<label>App slug or URL <input id="app" value="$slug"></label>
+<button id="select">Select existing App</button>
+<p id="key-help">Select an existing protected App PEM directly below. If it is unavailable on this
+computer, issue a key for the same App in GitHub settings. Keep the existing App and installations.</p>
+<input id="key" type="file" accept=".pem,application/x-pem-file"><button id="enroll">Enroll selected key</button>
+<button id="verify">Verify and finish</button>
+<div id="installations"></div>
+<h2>I need my own bot</h2>
+<label>App-owning organization (optional) <input id="organization"></label>
+<p>GitHub will ask you to review the prefilled permissions, name your App and approve registration.
+The App can be installed on accounts you authorize. This machine only uses the accounts selected above.</p>
+<button id="create"$disabled>Create my bot on GitHub</button><div id="links">$links</div><pre id="result"></pre>
+<script nonce="$nonce">
+const endpoint='/enroll/$nonce', state='$nonce', result=document.getElementById('result');
+const value=id=>document.getElementById(id).value;
+const selection=()=>({reviewer:value('reviewer'),accounts:value('accounts'),organization:value('organization'),
+create_repositories:document.getElementById('create_repositories').checked});
+async function post(path,body,raw=false){
+let r=await fetch(path,{method:'POST',headers:{'X-Bot-Identity-State':state},body:raw?body:JSON.stringify(body)});
+let data=await r.json();result.textContent=data.message||'';
+let installations=document.getElementById('installations');installations.replaceChildren();
+if(data.installed_accounts&&data.installed_accounts.length){
+let title=document.createElement('p');title.textContent='Reuse existing installations. Select the accounts this computer may use:';
+installations.append(title);
+for(let account of data.installed_accounts){let label=document.createElement('label'),input=document.createElement('input');
+input.type='checkbox';input.value=account;input.checked=value('accounts').toLowerCase().split(/[\s,]+/).includes(account.toLowerCase());
+label.append(input,document.createTextNode(account));installations.append(label,document.createElement('br'));}
+let use=document.createElement('button');use.textContent='Use selected existing installations';
+use.onclick=()=>{let accounts=[...installations.querySelectorAll('input:checked')].map(input=>input.value);
+document.getElementById('accounts').value=accounts.join(', ');post('/accounts/$nonce',{accounts});};installations.append(use);}
+let links=document.getElementById('links');links.replaceChildren();
+for(let [label,url] of Object.entries(data.links||{})){let a=document.createElement('a');a.textContent=label;
+a.href=url;a.target='_blank';a.rel='noreferrer';links.append(a,document.createElement('br'));}
+if(!r.ok)return null;return data;}
+document.getElementById('select').onclick=()=>post('/select/$nonce',{...selection(),app:value('app')});
+document.getElementById('verify').onclick=()=>post(endpoint,new Uint8Array(),true);
+document.getElementById('enroll').onclick=async()=>{let f=document.getElementById('key').files[0];
+if(!f){result.textContent='Select an App PEM in the file picker.';return;}await post(endpoint,await f.arrayBuffer(),true);};
+document.getElementById('create').onclick=async()=>{let data=await post('/create/$nonce',selection());if(!data)return;
+let form=document.createElement('form');form.method='POST';form.action=data.action;
+let input=document.createElement('input');input.type='hidden';input.name='manifest';input.value=JSON.stringify(data.manifest);
+form.append(input);document.body.append(form);form.submit();};
+$verify_on_load
+</script>
