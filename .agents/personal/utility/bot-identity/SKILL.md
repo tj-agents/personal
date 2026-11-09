@@ -40,7 +40,9 @@ authority to administer, delete, or transfer existing repositories. A failed che
 `tj-agents` installation settings page for Tommy to correct; setup never changes GitHub permissions itself.
 
 It installs a `gh` wrapper in `~/.agents-state/bin/bot-identity/` (`gh.exe` on Windows, so PowerShell and
-programs pass arguments intact), and writes agent identity settings only to the user-level
+programs pass arguments intact) that runs this script's copy there. Every Claude and Codex session start replaces a
+stale copy of this script, its descriptor or `approve.py` there with the running plugin's own. Setup also
+writes agent identity settings only to the user-level
 `~/.claude/settings.json` and `~/.codex/config.toml`, never into a checkout, because these values are
 machine-specific. They give every agent session (Claude `env`, Codex `shell_environment_policy.set`) `PATH`
 with the wrapper first, `TJ_AGENT=1`, a dead `GH_TOKEN` with an empty `GH_CONFIG_DIR`, so gh outside the wrapper

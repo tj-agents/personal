@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python",
+            "args": [
+              "-B",
+              "${CLAUDE_PLUGIN_ROOT}/.agents/personal/utility/bot-identity/scripts/bot_identity.py",
+              "converge"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
