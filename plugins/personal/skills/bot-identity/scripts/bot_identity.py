@@ -345,42 +345,34 @@ def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
         raise IdentityError("the selected file is not a supported GitHub App private key")
     descriptor = app_descriptor()
     directory = secure_store()
-    candidate = directory / ".candidate.pem"
-    if candidate.exists() or is_reparse(candidate):
-        candidate.unlink(missing_ok=True)
-    write_key(candidate, key)
     pending = directory / f"{descriptor['slug']}.pending.pem"
     if is_reparse(pending):
-        candidate.unlink(missing_ok=True)
         raise IdentityError("the pending GitHub App key location is unsafe")
-    os.replace(candidate, pending)
-    record = {**descriptor, "key": str(pending)}
+    candidate = directory / ".replacement.pem" if pending.exists() else pending
+    if is_reparse(candidate):
+        raise IdentityError("the replacement GitHub App key location is unsafe")
+    write_key(candidate, key)
+    record = {**descriptor, "key": str(candidate)}
     try:
-        try:
-            validate_remote_app(record, fetch=fetch, sign=sign)
-        except GitHubError as error:
-            if error.status == 401:
-                pending.unlink(missing_ok=True)
-            raise
-        except IdentityError:
-            pending.unlink(missing_ok=True)
-            raise
+        validate_remote_app(record, fetch=fetch, sign=sign)
         destination = directory / f"{descriptor['slug']}.pem"
         if is_reparse(destination):
             raise IdentityError("the local GitHub App key location is unsafe")
-        os.replace(pending, destination)
+        os.replace(candidate, destination)
         protect(destination)
         record["key"] = str(destination)
         configure_identity({**identity_config(), "key": str(destination)})
+        if candidate != pending:
+            pending.unlink(missing_ok=True)
         return record
     finally:
-        candidate.unlink(missing_ok=True)
+        if candidate != pending:
+            candidate.unlink(missing_ok=True)
 
 
 def onboard(open_browser=webbrowser.open, fetch=api, sign=app_jwt, clock=time.monotonic) -> None:
     def ready() -> None:
-        reuse_local_key(fetch=fetch, sign=sign)
-        verify_ready(app_record(), fetch=fetch, sign=sign)
+        verify_enrollment(fetch=fetch, sign=sign)
 
     try:
         onboarding.onboard(
@@ -1093,11 +1085,11 @@ def configure_existing_app(slug: str, reviewer: str | None = None, accounts: lis
     })
 
 
-def reuse_local_key(fetch=api, sign=app_jwt) -> None:
+def reuse_local_key(fetch=api, sign=app_jwt, prefer_pending: bool = False) -> None:
     config = identity_config()
     destination = store() / f"{config['app']['slug']}.pem"
     pending = store() / f"{config['app']['slug']}.pending.pem"
-    if config["key"] is not None and not pending.exists():
+    if config["key"] is not None and Path(config["key"]).exists() and not prefer_pending:
         return
     path = pending if pending.exists() else destination
     if not path.exists():
@@ -1114,22 +1106,33 @@ def reuse_local_key(fetch=api, sign=app_jwt) -> None:
     configure_identity({**config, "key": str(destination)})
 
 
+def verify_enrollment(fetch=api, sign=app_jwt) -> None:
+    reuse_local_key(fetch=fetch, sign=sign)
+    try:
+        verify_ready(app_record(), fetch=fetch, sign=sign)
+    except GitHubError as error:
+        config = identity_config()
+        pending = store() / f"{config['app']['slug']}.pending.pem"
+        if error.status != 401 or not pending.exists():
+            raise
+        reuse_local_key(fetch=fetch, sign=sign, prefer_pending=True)
+        verify_ready(app_record(), fetch=fetch, sign=sign)
+
+
 def setup(check: bool = False, onboard_key: bool = False) -> None:
-    if not check and not onboard_key:
-        reuse_local_key()
     if onboard_key:
         try:
-            reuse_local_key()
-            candidate = app_record()
-            verify_ready(candidate)
+            verify_enrollment()
         except OnboardingRequired:
             onboard()
         except GitHubError as error:
             if error.status != 401:
                 raise
             onboard()
-    record = app_record()
-    verify_ready(record)
+    if check:
+        verify_ready(app_record())
+    else:
+        verify_enrollment()
     if check:
         verify_host_setup()
         print("bot_identity: ready")

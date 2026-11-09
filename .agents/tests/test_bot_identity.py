@@ -977,7 +977,7 @@ def test_manifest_key_is_retained_unverified_until_retry_succeeds(
     assert not pending.exists()
 
 
-def test_known_invalid_pending_key_never_becomes_enrolled(
+def test_rejected_pending_key_is_retained_but_never_becomes_enrolled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(bot, "store", lambda: tmp_path)
@@ -990,7 +990,11 @@ def test_known_invalid_pending_key_never_becomes_enrolled(
         bot.persist_enrollment(b"-----BEGIN PRIVATE KEY-----\nfixture\n", fetch=rejected,
                                sign=lambda record: "fixture-jwt")
     assert bot.identity_config()["key"] is None
-    assert not (tmp_path / "alex-bot.pending.pem").exists()
+    pending = tmp_path / "alex-bot.pending.pem"
+    assert pending.exists()
+    bot.require_private_permissions(pending)
+    with pytest.raises(bot.OnboardingRequired):
+        bot.app_record()
 
 
 def test_open_wizard_retries_pending_key_without_another_upload(
@@ -1024,6 +1028,72 @@ def test_open_wizard_retries_pending_key_without_another_upload(
     bot.onboard(fetch=restored, sign=lambda record: "fixture-jwt")
     assert bot.app_record()["key"] == str(tmp_path / "alex-bot.pem")
     assert not (tmp_path / "alex-bot.pending.pem").exists()
+
+
+def test_missing_signing_tool_keeps_the_manifest_key_unverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot, "store", lambda: tmp_path)
+    bot.configure_identity({**CONFIG, "key": None})
+    monkeypatch.setattr(bot.shutil, "which", lambda name: None)
+    pem = b"-----BEGIN PRIVATE KEY-----\nfixture-key\n"
+    with pytest.raises(bot.IdentityError, match="openssl"):
+        bot.persist_enrollment(pem)
+    assert (tmp_path / "alex-bot.pending.pem").read_bytes() == pem
+    assert bot.identity_config()["key"] is None
+
+
+def test_rejected_replacement_does_not_overwrite_the_only_pending_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot, "store", lambda: tmp_path)
+    bot.configure_identity({**CONFIG, "key": None})
+    original = b"-----BEGIN PRIVATE KEY-----\noriginal-fixture\n"
+
+    def offline(path: str, bearer: str, method: str = "GET") -> dict:
+        raise bot.GitHubError("offline")
+
+    with pytest.raises(bot.GitHubError):
+        bot.persist_enrollment(original, fetch=offline, sign=lambda record: "fixture")
+
+    def wrong_app(path: str, bearer: str, method: str = "GET") -> dict:
+        return {"id": 999, "slug": "different-app"}
+
+    with pytest.raises(bot.IdentityError):
+        bot.persist_enrollment(b"-----BEGIN PRIVATE KEY-----\nreplacement-fixture\n",
+                               fetch=wrong_app, sign=lambda record: "fixture")
+    assert (tmp_path / "alex-bot.pending.pem").read_bytes() == original
+    assert not (tmp_path / ".replacement.pem").exists()
+    assert bot.identity_config()["key"] is None
+
+
+def test_unverified_replacement_does_not_block_a_working_enrollment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot, "store", lambda: tmp_path)
+    active = tmp_path / "alex-bot.pem"
+    bot.write_key(active, b"accepted-fixture-key")
+    bot.configure_identity({**CONFIG, "key": str(active)})
+    pending = tmp_path / "alex-bot.pending.pem"
+    bot.write_key(pending, b"unverified-fixture-key")
+
+    def sign(record: dict) -> str:
+        assert record["key"] == str(active)
+        return "active-key-signature"
+
+    def fetch(path: str, bearer: str, method: str = "GET") -> dict | list:
+        if path == "/app":
+            return {**CONFIG["app"], "owner": {"login": "alex", "type": "User"},
+                    "permissions": {"repository_creation": "write"}}
+        assert path == "/app/installations"
+        return [{"id": index, "account": {"login": owner},
+                 "permissions": CONFIG["permissions"].get(owner, {})}
+                for index, owner in enumerate(CONFIG["accounts"], start=1)]
+
+    bot.verify_enrollment(fetch=fetch, sign=sign)
+    assert active.read_bytes() == b"accepted-fixture-key"
+    assert pending.read_bytes() == b"unverified-fixture-key"
+    assert bot.app_record()["key"] == str(active)
 
 
 if __name__ == "__main__":
