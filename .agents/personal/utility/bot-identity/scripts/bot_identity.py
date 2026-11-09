@@ -104,6 +104,10 @@ class IdentityError(Exception):
     pass
 
 
+class KeyVerificationError(IdentityError):
+    pass
+
+
 class OnboardingRequired(IdentityError):
     pass
 
@@ -246,7 +250,7 @@ def app_jwt(record: dict, now: float | None = None, run=subprocess.run) -> str:
     result = run([openssl, "dgst", "-sha256", "-sign", record["key"]], input=signing.encode(), capture_output=True,
                  timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
     if result.returncode:
-        raise IdentityError("openssl could not sign with the enrolled GitHub App key")
+        raise KeyVerificationError("openssl could not sign with the enrolled GitHub App key")
     return f"{signing}.{b64(result.stdout)}"
 
 
@@ -271,7 +275,7 @@ def validate_remote_app(record: dict, fetch=api, sign=app_jwt) -> dict:
             actual.get("client_id") != descriptor["client_id"] or actual.get("slug") != descriptor["slug"] or \
             actual.get("owner", {}).get("login", "").lower() != descriptor["owner"].lower() or \
             actual.get("owner", {}).get("type") != descriptor["owner_type"]:
-        raise IdentityError("the enrolled key does not authenticate the configured GitHub App")
+        raise KeyVerificationError("the enrolled key does not authenticate the configured GitHub App")
     return actual
 
 
@@ -1123,7 +1127,7 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
     if onboard_key:
         try:
             verify_enrollment()
-        except OnboardingRequired:
+        except (OnboardingRequired, KeyVerificationError):
             onboard()
         except GitHubError as error:
             if error.status != 401:

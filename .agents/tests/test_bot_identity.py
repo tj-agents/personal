@@ -1096,5 +1096,25 @@ def test_unverified_replacement_does_not_block_a_working_enrollment(
     assert bot.app_record()["key"] == str(active)
 
 
+def test_unreadable_key_has_a_distinct_replaceable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot.shutil, "which", lambda name: "fixture-openssl")
+
+    def rejected(command: list[str], **arguments: object) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(command, 1, b"", b"fixture-signing-failure")
+
+    with pytest.raises(bot.KeyVerificationError, match="could not sign"):
+        bot.app_jwt(RECORD, run=rejected)
+
+
+def test_explicit_onboarding_can_replace_an_unreadable_retained_key() -> None:
+    with mock.patch.object(bot, "verify_enrollment", side_effect=bot.KeyVerificationError("unreadable")), \
+            mock.patch.object(bot, "onboard", side_effect=bot.IdentityError("stop after UI")) as opened:
+        with pytest.raises(bot.IdentityError, match="stop after UI"):
+            bot.setup(onboard_key=True)
+    opened.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
