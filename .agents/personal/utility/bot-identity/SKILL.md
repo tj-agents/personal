@@ -56,11 +56,12 @@ missing installation stops the command. Any other account is refused with its re
 falls back to Tommy's gh login or git helpers. A command naming no account runs unauthenticated, and agents may run only `gh auth status`. `token --owner <account>` prints a token. Restart
 Claude and Codex after setup.
 
-Setup also installs `personal:approve` as `tj approve` in the tj bin directory, and `setup --check` fails while it
-is missing or stale. Every PR handed to Tommy for approval comes with its link and `tj approve`, which he runs in his
-own terminal; an agent never runs it. After a successful `gh pr create` (not draft, `--web` or `--dry-run`) or
-`gh pr ready` in the App's accounts, the wrapper prints that requirement on stderr in every repository, whatever
-plugins it selects.
+Setup also installs `personal:approve` as `tj approve` in the tj bin directory and denies Claude agents
+`Bash(tj approve:*)` and `Bash(tj-approve:*)`; `setup --check` fails while either is missing or stale. When PRs
+await Tommy's approval, put the line `! tj approve` on his clipboard with `cli:clip` and include it and the PR
+links in the reply; an agent never runs it. After a successful `gh pr create` (not draft, `--web` or `--dry-run`)
+or `gh pr ready` in the App's accounts, the wrapper prints that requirement on stderr in every repository,
+whatever plugins it selects.
 
 This is environment containment, not an OS boundary: an agent can still read Tommy's stores directly
 (`gh auth token -u tomjseery`, `git credential-manager get`, `~/.git-credentials`). Only Tommy's credentials

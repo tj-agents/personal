@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Approve, as tomjseery, the open tj-agents pull requests the bot App authored that await him (Python 3.12+)."""
+"""Approve, as tomjseery, the bot App's open pull requests for this agent session's work items (Python 3.12+)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,33 +17,86 @@ import bot_identity
 
 ORG = "tj-agents"
 REVIEWER = "tomjseery"
-REPOSITORY_NAME = re.compile(r"[A-Za-z0-9_.-]+")
-REMOVED = ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR")
+PULL_URL = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
+NATIVE_SESSIONS = (("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID"))
+PR_FIELDS = "url,title,state,author,headRefOid,reviews,reviewRequests"
 
 
 class ApproveError(Exception):
     pass
 
 
-def refusal() -> str | None:
-    if bot_identity.AGENT_FLAG in os.environ:
-        return "refusing in an agent session; Tommy runs `tj approve` in his own terminal"
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return "refusing without an interactive terminal; Tommy runs `tj approve` in his own terminal"
-    return None
+def tool(name: str) -> str:
+    found = shutil.which(name) or shutil.which(name, path=str(bot_identity.tj_bin_directory()))
+    if not found:
+        raise ApproveError(f"{name} is not on PATH or in {bot_identity.tj_bin_directory()}")
+    return found
 
 
-def captured(run, command: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess:
+def captured(run, command: list[str], environment: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace")
 
 
 def reason(result: subprocess.CompletedProcess) -> str:
     lines = [line for line in (result.stderr or result.stdout or "").splitlines() if line.strip()]
-    return lines[-1].strip() if lines else f"gh exited {result.returncode}"
+    return lines[-1].strip() if lines else f"exited {result.returncode}"
+
+
+def agent_store(arguments: list[str], run) -> dict | None:
+    result = captured(run, [tool("agent-store"), *arguments])
+    try:
+        document = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ApproveError(f"agent-store {arguments[0]} failed: {reason(result)}") from error
+    if document.get("ok"):
+        return document["data"]
+    failure = document.get("error") or {}
+    if failure.get("code") == "not-found":
+        return None
+    raise ApproveError(f"agent-store {arguments[0]} failed: {failure.get('message') or reason(result)}")
+
+
+def linked(session: dict) -> list[str]:
+    return [link["item"]["ref"] for link in session.get("links") or []]
+
+
+def current_session(run) -> tuple[str | None, list[str]] | None:
+    if launch_id := os.environ.get("TJ_RUN_LAUNCH_ID"):
+        data = agent_store(["show", "--launch-id", launch_id], run)
+        if data is None:
+            return None
+        launch, session = data["launch"], data.get("session")
+        items = [launch["item"]["ref"]] if launch.get("item") else []
+        return launch.get("session"), items + (linked(session) if session else [])
+    for host, variable in NATIVE_SESSIONS:
+        if native := os.environ.get(variable):
+            data = agent_store(["show", f"{host}:{native}"], run)
+            return None if data is None else (data["session"]["session"], linked(data["session"]))
+    return None
+
+
+def descendant_items(handle: str, run) -> list[str]:
+    launches = agent_store(["launches"], run)["launches"]
+    items, frontier, seen = [], [handle], {handle}
+    while frontier:
+        parent = frontier.pop()
+        for launch in launches:
+            if launch.get("parent") != parent:
+                continue
+            if launch.get("item"):
+                items.append(launch["item"]["ref"])
+            child = launch.get("session")
+            if child and child not in seen:
+                seen.add(child)
+                frontier.append(child)
+                data = agent_store(["show", child], run)
+                if data is not None:
+                    items += linked(data["session"])
+    return items
 
 
 def reviewer_environment(gh: str, run) -> dict[str, str]:
-    environment = {key: value for key, value in os.environ.items() if key not in REMOVED}
+    environment = {key: value for key, value in os.environ.items() if key not in bot_identity.AGENT_ONLY}
     result = captured(run, [gh, "auth", "token", "--user", REVIEWER], environment)
     token = (result.stdout or "").strip()
     if result.returncode or not token:
@@ -50,14 +104,20 @@ def reviewer_environment(gh: str, run) -> dict[str, str]:
     return {**environment, "GH_TOKEN": token}
 
 
-def gh_json(gh: str, arguments: list[str], environment: dict[str, str], run) -> object:
-    result = captured(run, [gh, *arguments], environment)
+def json_output(command: list[str], environment: dict[str, str], run) -> object:
+    result = captured(run, command, environment)
+    label = " ".join([Path(command[0]).stem, *command[1:3]])
     if result.returncode:
-        raise ApproveError(f"gh {' '.join(arguments[:2])} failed: {reason(result)}")
+        raise ApproveError(f"{label} failed: {reason(result)}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as error:
-        raise ApproveError(f"gh {' '.join(arguments[:2])} returned invalid JSON") from error
+        raise ApproveError(f"{label} returned invalid JSON") from error
+
+
+def bot_authored(details: dict) -> bool:
+    slug = bot_identity.app_descriptor()["slug"]
+    return (details.get("author") or {}).get("login") in (f"app/{slug}", slug, f"{slug}[bot]")
 
 
 def awaits_reviewer(details: dict) -> bool:
@@ -68,37 +128,54 @@ def awaits_reviewer(details: dict) -> bool:
                    and (review.get("commit") or {}).get("oid") == head for review in details.get("reviews") or [])
 
 
-def pending(gh: str, environment: dict[str, str], run, repository: str | None = None) -> list[dict]:
-    scope = ["--repo", f"{ORG}/{repository}"] if repository else ["--owner", ORG]
-    author = f"app/{bot_identity.app_descriptor()['slug']}"
-    found = gh_json(gh, ["search", "prs", *scope, "--author", author, "--state", "open", "--limit", "100",
-                         "--json", "repository,number,title,url"], environment, run)
+def display_name(url: str) -> str:
+    match = PULL_URL.match(url)
+    if not match:
+        return url
+    owner, name, number = match.groups()
+    return f"{name}#{number}" if owner == ORG else f"{owner}/{name}#{number}"
+
+
+def pending(items: list[str], gh: str, environment: dict[str, str], run) -> list[dict]:
+    urls = []
+    for item in dict.fromkeys(items):
+        found = json_output([tool("tj"), "item", "prs", item], environment, run)
+        urls += [pull["url"] for pull in found["prs"] if pull.get("state") == "open"]
     waiting = []
-    for item in found:
-        details = gh_json(gh, ["pr", "view", item["url"], "--json", "headRefOid,reviews,reviewRequests"],
-                          environment, run)
-        if awaits_reviewer(details):
-            waiting.append({"name": f"{item['repository']['name']}#{item['number']}", "title": item["title"],
-                            "url": item["url"]})
+    for url in dict.fromkeys(urls):
+        details = json_output([gh, "pr", "view", url, "--json", PR_FIELDS], environment, run)
+        if details.get("state") == "OPEN" and bot_authored(details) and awaits_reviewer(details):
+            waiting.append({"name": display_name(url), "title": details.get("title", ""), "url": url})
     return waiting
 
 
-def approve(repository: str | None = None, run=subprocess.run, ask=input, out=sys.stdout) -> int:
+def approve(run=subprocess.run, ask=None, out=sys.stdout) -> int:
+    session = current_session(run)
+    if session is None:
+        print("No agent session found here; nothing approved.", file=out)
+        return 0
+    handle, items = session
+    if handle:
+        items += descendant_items(handle, run)
+    if not items:
+        print("No work items are linked to this session; nothing approved.", file=out)
+        return 0
     gh = bot_identity.real_gh()
     environment = reviewer_environment(gh, run)
-    waiting = pending(gh, environment, run, repository)
+    waiting = pending(items, gh, environment, run)
     if not waiting:
         print("No pull requests await your approval.", file=out)
         return 0
     for item in waiting:
         print(f"{item['name']}  {item['title']}", file=out)
-    try:
-        answer = ask(f"Approve {len(waiting)} pull requests? [y/N] ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() not in ("y", "yes"):
-        print("Nothing approved.", file=out)
-        return 0
+    if ask is not None:
+        try:
+            answer = ask(f"Approve {len(waiting)} pull requests? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Nothing approved.", file=out)
+            return 0
     failed = False
     for item in waiting:
         result = captured(run, [gh, "pr", "review", "--approve", item["url"]], environment)
@@ -111,16 +188,9 @@ def approve(repository: str | None = None, run=subprocess.run, ask=input, out=sy
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="tj approve", description=__doc__)
-    parser.add_argument("repository", nargs="?", help=f"limit to {ORG}/<repository>")
-    arguments = parser.parse_args(argv)
-    if arguments.repository and not REPOSITORY_NAME.fullmatch(arguments.repository):
-        parser.error(f"name a repository in {ORG}, e.g. core")
-    if message := refusal():
-        print(f"tj approve: {message}", file=sys.stderr)
-        return 2
+    argparse.ArgumentParser(prog="tj approve", description=__doc__).parse_args(argv)
     try:
-        return approve(arguments.repository)
+        return approve(ask=input if sys.stdin.isatty() else None)
     except (ApproveError, bot_identity.IdentityError) as error:
         print(f"tj approve: {error}", file=sys.stderr)
         return 2

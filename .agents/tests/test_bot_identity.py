@@ -354,7 +354,7 @@ class GhWrapperTests(Sandbox):
 
 class ApprovalHandoffTests(GhWrapperTests):
     CORE = "https://github.com/tj-agents/core/pull/7"
-    TJ_APPROVE = "tell Tommy to run `tj approve` in his own terminal; never run it yourself"
+    TJ_APPROVE = "Put the line `! tj approve` on Tommy's clipboard with cli:clip"
 
     def hand_over(self, *arguments, checkout="tj-agents", stdout=None, returncode=0):
         self.gh.stdout, self.gh.returncode = stdout, returncode
@@ -541,7 +541,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual("trusted", parsed["projects"]["a"]["trust_level"])
         self.assertEqual("x", parsed["model"])
 
-    def test_claude_merges_env_and_denies_mcp_writes(self):
+    def test_claude_merges_env_and_denies_mcp_writes_and_tj_approve(self):
         path = self.root / "settings.json"
         path.write_text(json.dumps({"env": {"KEEP": "1", "GIT_CONFIG_KEY_9": "old", "Path": "old"},
                                     "permissions": {"deny": ["Bash(rm:*)"]}}), encoding="utf-8")
@@ -550,6 +550,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual({"KEEP": "1", **self.environment}, settings["env"])
         self.assertIn("Bash(rm:*)", settings["permissions"]["deny"])
         self.assertIn("mcp__github__merge_pull_request", settings["permissions"]["deny"])
+        self.assertIn("Bash(tj approve:*)", settings["permissions"]["deny"])
+        self.assertIn("Bash(tj-approve:*)", settings["permissions"]["deny"])
 
     def test_setup_takes_the_wrapper_back_out_of_the_posix_profile(self):
         shim = self.root / "shim"
@@ -791,10 +793,13 @@ class FreshSetupTests(unittest.TestCase):
                             bot.setup(check=True)
                     claude = home / "claude/settings.json"
                     settings = json.loads(claude.read_text(encoding="utf-8"))
-                    settings["permissions"]["deny"].remove(bot.MCP_DENY[0])
-                    claude.write_text(json.dumps(settings), encoding="utf-8")
-                    with self.assertRaisesRegex(bot.IdentityError, "write restrictions are missing"):
-                        bot.setup(check=True)
+                    for denied in (bot.AGENT_DENY[0], "Bash(tj approve:*)", "Bash(tj-approve:*)"):
+                        bot.setup()
+                        settings = json.loads(claude.read_text(encoding="utf-8"))
+                        settings["permissions"]["deny"].remove(denied)
+                        claude.write_text(json.dumps(settings), encoding="utf-8")
+                        with self.assertRaisesRegex(bot.IdentityError, "write restrictions are missing"):
+                            bot.setup(check=True)
                     del settings["permissions"]
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "host settings are missing"):
