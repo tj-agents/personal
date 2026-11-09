@@ -17,6 +17,14 @@ takes its linked items, its launch's item and, recursively, the items of the lau
 sessions. For each item, `tj item prs` lists its pull requests; it keeps the open ones authored by
 `app/tomjseery-bot` that lack tomjseery's approval at the current head or have a pending review request from him.
 
+```text
+! tj approve
+agent#106  Remove the retired machine-events watcher whenever it reappears
+marketplace#68  Drop the retired preset from the Renovate configuration
+approved agent#106
+approved marketplace#68
+```
+
 With an interactive stdin it lists them and asks once `Approve N pull requests? [y/N]`; without one, as from
 `! tj approve` in an agent prompt, typing the command is the confirmation and it approves the listed PRs. It
 approves with the real `gh` and tomjseery's own login, prints `approved <repo>#<n>` or
