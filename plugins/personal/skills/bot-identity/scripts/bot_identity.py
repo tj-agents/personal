@@ -349,13 +349,26 @@ def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
     if candidate.exists() or is_reparse(candidate):
         candidate.unlink(missing_ok=True)
     write_key(candidate, key)
-    record = {**descriptor, "key": str(candidate)}
+    pending = directory / f"{descriptor['slug']}.pending.pem"
+    if is_reparse(pending):
+        candidate.unlink(missing_ok=True)
+        raise IdentityError("the pending GitHub App key location is unsafe")
+    os.replace(candidate, pending)
+    record = {**descriptor, "key": str(pending)}
     try:
-        validate_remote_app(record, fetch=fetch, sign=sign)
+        try:
+            validate_remote_app(record, fetch=fetch, sign=sign)
+        except GitHubError as error:
+            if error.status == 401:
+                pending.unlink(missing_ok=True)
+            raise
+        except IdentityError:
+            pending.unlink(missing_ok=True)
+            raise
         destination = directory / f"{descriptor['slug']}.pem"
         if is_reparse(destination):
             raise IdentityError("the local GitHub App key location is unsafe")
-        os.replace(candidate, destination)
+        os.replace(pending, destination)
         protect(destination)
         record["key"] = str(destination)
         configure_identity({**identity_config(), "key": str(destination)})
@@ -365,12 +378,16 @@ def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
 
 
 def onboard(open_browser=webbrowser.open, fetch=api, sign=app_jwt, clock=time.monotonic) -> None:
+    def ready() -> None:
+        reuse_local_key(fetch=fetch, sign=sign)
+        verify_ready(app_record(), fetch=fetch, sign=sign)
+
     try:
         onboarding.onboard(
             load=identity_config,
             configure=configure_identity,
             enroll=lambda key: persist_enrollment(key, fetch=fetch, sign=sign),
-            ready=lambda: verify_ready(app_record(), fetch=fetch, sign=sign),
+            ready=ready,
             error_type=IdentityError,
             open_browser=open_browser,
             clock=clock,
@@ -1078,19 +1095,28 @@ def configure_existing_app(slug: str, reviewer: str | None = None, accounts: lis
 
 def reuse_local_key(fetch=api, sign=app_jwt) -> None:
     config = identity_config()
-    if config["key"] is not None:
+    destination = store() / f"{config['app']['slug']}.pem"
+    pending = store() / f"{config['app']['slug']}.pending.pem"
+    if config["key"] is not None and not pending.exists():
         return
-    path = store() / f"{config['app']['slug']}.pem"
+    path = pending if pending.exists() else destination
     if not path.exists():
         return
     safe_existing_file(path)
     require_private_permissions(path)
     record = {**config["app"], "key": str(path)}
     validate_remote_app(record, fetch=fetch, sign=sign)
-    configure_identity({**config, "key": str(path)})
+    if path == pending:
+        if is_reparse(destination):
+            raise IdentityError("the local GitHub App key location is unsafe")
+        os.replace(pending, destination)
+        protect(destination)
+    configure_identity({**config, "key": str(destination)})
 
 
 def setup(check: bool = False, onboard_key: bool = False) -> None:
+    if not check and not onboard_key:
+        reuse_local_key()
     if onboard_key:
         try:
             reuse_local_key()

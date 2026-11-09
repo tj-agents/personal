@@ -946,5 +946,85 @@ def test_existing_key_network_failure_does_not_replace_or_reenroll_it(
     assert key.stat().st_mtime_ns == before
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_manifest_key_is_retained_unverified_until_retry_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool,
+) -> None:
+    monkeypatch.setattr(bot, "store", lambda: tmp_path)
+    bot.configure_identity({**CONFIG, "key": None})
+    pem = b"-----BEGIN PRIVATE KEY-----\nfixture-only\n-----END PRIVATE KEY-----\n"
+
+    def unavailable(path: str, bearer: str, method: str = "GET") -> dict:
+        if interrupted:
+            raise KeyboardInterrupt
+        raise bot.GitHubError("connection lost")
+
+    with pytest.raises(KeyboardInterrupt if interrupted else bot.GitHubError):
+        bot.persist_enrollment(pem, fetch=unavailable, sign=lambda record: "fixture-jwt")
+    pending = tmp_path / "alex-bot.pending.pem"
+    assert pending.read_bytes() == pem
+    bot.require_private_permissions(pending)
+    assert bot.identity_config()["key"] is None
+    with pytest.raises(bot.OnboardingRequired):
+        bot.app_record()
+
+    def restored(path: str, bearer: str, method: str = "GET") -> dict:
+        assert path == "/app"
+        return {**CONFIG["app"], "owner": {"login": "alex", "type": "User"}}
+
+    bot.reuse_local_key(fetch=restored, sign=lambda record: "fixture-jwt")
+    assert bot.app_record()["key"] == str(tmp_path / "alex-bot.pem")
+    assert not pending.exists()
+
+
+def test_known_invalid_pending_key_never_becomes_enrolled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot, "store", lambda: tmp_path)
+    bot.configure_identity({**CONFIG, "key": None})
+
+    def rejected(path: str, bearer: str, method: str = "GET") -> dict:
+        raise bot.GitHubError("unauthorized", 401)
+
+    with pytest.raises(bot.GitHubError):
+        bot.persist_enrollment(b"-----BEGIN PRIVATE KEY-----\nfixture\n", fetch=rejected,
+                               sign=lambda record: "fixture-jwt")
+    assert bot.identity_config()["key"] is None
+    assert not (tmp_path / "alex-bot.pending.pem").exists()
+
+
+def test_open_wizard_retries_pending_key_without_another_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot, "store", lambda: tmp_path)
+    bot.configure_identity({**CONFIG, "key": None})
+
+    def unavailable(path: str, bearer: str, method: str = "GET") -> dict:
+        raise bot.GitHubError("offline")
+
+    with pytest.raises(bot.GitHubError):
+        bot.persist_enrollment(b"-----BEGIN PRIVATE KEY-----\nfixture\n", fetch=unavailable,
+                               sign=lambda record: "fixture-jwt")
+
+    def restored(path: str, bearer: str, method: str = "GET") -> dict | list:
+        if path == "/app":
+            return {**CONFIG["app"], "owner": {"login": "alex", "type": "User"},
+                    "permissions": {"repository_creation": "write"}}
+        assert path == "/app/installations"
+        return [{"id": index, "account": {"login": owner},
+                 "permissions": CONFIG["permissions"].get(owner, {})}
+                for index, owner in enumerate(CONFIG["accounts"], start=1)]
+
+    def page(**callbacks: object) -> None:
+        ready = callbacks["ready"]
+        assert callable(ready)
+        ready()
+
+    monkeypatch.setattr(bot.onboarding, "onboard", page)
+    bot.onboard(fetch=restored, sign=lambda record: "fixture-jwt")
+    assert bot.app_record()["key"] == str(tmp_path / "alex-bot.pem")
+    assert not (tmp_path / "alex-bot.pending.pem").exists()
+
+
 if __name__ == "__main__":
     unittest.main()
