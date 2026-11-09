@@ -7,7 +7,6 @@
   },
   "repository": "https://github.com/tj-agents/personal",
   "skills": "./skills/",
-  "hooks": "./hooks/claude.json",
   "keywords": [
     "personal"
   ],

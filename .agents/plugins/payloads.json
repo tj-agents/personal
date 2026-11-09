@@ -10,17 +10,5 @@
       "tj-agents/agent",
       "tj-agents/docs"
     ]
-  },
-  "resources": [
-    {
-      "plugin": "personal",
-      "source": ".claude/hooks/personal.json",
-      "destination": "hooks/claude.json"
-    },
-    {
-      "plugin": "personal",
-      "source": ".codex/hooks/personal.json",
-      "destination": "hooks/codex.json"
-    }
-  ]
+  }
 }

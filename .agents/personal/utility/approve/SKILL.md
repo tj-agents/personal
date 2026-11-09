@@ -30,4 +30,4 @@ When PRs await Tommy, put the line `! tj approve` on his clipboard with `cli:cli
 in the reply. Never run it: `personal:bot-identity` setup denies it to Claude agents, installs it into the tj bin
 directory (`TJ_BIN_DIR`, default `%LOCALAPPDATA%\Programs\tj` on Windows or `~/.local/bin` on Linux) and
 `setup --check` verifies both. That launcher runs a copy of this script in `~/.agents-state/bin/bot-identity/`,
-which every Claude and Codex session start replaces with the running plugin's when it differs.
+which plugin refresh replaces with the pinned plugin's when it differs.

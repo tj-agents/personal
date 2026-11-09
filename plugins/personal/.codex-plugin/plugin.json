@@ -18,6 +18,5 @@
     "capabilities": [],
     "defaultPrompt": "Apply the personal project standards and selected work-item workflow."
   },
-  "hooks": "./hooks/codex.json",
-  "version": "f45982fef998"
+  "version": "c2ed0b13af21"
 }
