@@ -123,22 +123,18 @@ class ApproveTests(unittest.TestCase):
                    self.approved: details(self.approved, reviews=[review("tomjseery")]),
                    self.stale: details(self.stale, reviews=[review("tomjseery", oid="b" * 40)])})
 
-    def run_approve(self, answer=None):
-        out, prompts = io.StringIO(), []
-
-        def ask(prompt):
-            prompts.append(prompt)
-            return answer
-
-        code = approve.approve(run=self.tools, ask=None if answer is None else ask, out=out)
-        return code, out.getvalue(), prompts
+    def run_approve(self):
+        out = io.StringIO()
+        code = approve.approve(run=self.tools, out=out)
+        return code, out.getvalue()
 
     def approvals(self):
         return [command[4] for command in self.tools.commands("real-gh", "pr", "review")]
 
-    def test_without_a_terminal_the_list_is_printed_then_every_pr_approved_as_tommy(self):
-        code, out, prompts = self.run_approve()
-        self.assertEqual((0, []), (code, prompts))
+    def test_the_list_is_printed_then_every_pr_approved_as_tommy_with_stdin_at_nul(self):
+        with open(os.devnull, encoding="utf-8") as nul, mock.patch.object(sys, "stdin", nul):
+            code, out = self.run_approve()
+        self.assertEqual(0, code)
         self.assertEqual(["core#1  Change 1", "tomjseery/notes#2  Change 2", "docs#4  Change 4",
                           "approved core#1", "approved tomjseery/notes#2", "approved docs#4"], out.splitlines())
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
@@ -167,22 +163,9 @@ class ApproveTests(unittest.TestCase):
         self.run_approve()
         self.assertEqual([requested], self.approvals())
 
-    def test_with_a_terminal_it_asks_once_and_declining_approves_nothing(self):
-        for answer in ("", "n", "no", "anything"):
-            with self.subTest(answer=answer):
-                self.tools.calls.clear()
-                code, out, prompts = self.run_approve(answer)
-                self.assertEqual((0, ["Approve 3 pull requests? [y/N] "], []), (code, prompts, self.approvals()))
-                self.assertTrue(out.endswith("Nothing approved.\n"))
-
-    def test_with_a_terminal_accepting_approves_each_pr(self):
-        code, _, prompts = self.run_approve("Y")
-        self.assertEqual((0, 1), (code, len(prompts)))
-        self.assertEqual([self.first, self.second, self.stale], self.approvals())
-
     def test_a_failed_approval_fails_the_run_after_trying_every_pr(self):
         self.tools.failing = (self.second,)
-        code, out, _ = self.run_approve()
+        code, out = self.run_approve()
         self.assertEqual(1, code)
         self.assertEqual(3, len(self.approvals()))
         self.assertIn("failed tomjseery/notes#2: GraphQL: Review cannot be submitted", out)
@@ -223,37 +206,26 @@ class ApproveTests(unittest.TestCase):
         for sessions, message in cases:
             with self.subTest(message=message):
                 self.tools.sessions, self.tools.calls = sessions, []
-                self.assertEqual((0, message), self.run_approve()[:2])
+                self.assertEqual((0, message), self.run_approve())
                 self.assertEqual([], [command for command, _ in self.tools.calls if command[0] != "agent-store"])
         del os.environ["CLAUDE_CODE_SESSION_ID"]
         self.tools.calls = []
-        self.assertEqual((0, "No agent session found here; nothing approved.\n"), self.run_approve()[:2])
+        self.assertEqual((0, "No agent session found here; nothing approved.\n"), self.run_approve())
         self.assertEqual([], self.tools.calls)
 
-    def test_nothing_waiting_says_so_without_asking(self):
+    def test_nothing_waiting_says_so_and_approves_nothing(self):
         self.tools.item_prs = {"github:tj-agents/core:10": [(self.approved, "open")]}
-        code, out, prompts = self.run_approve("y")
-        self.assertEqual((0, [], []), (code, prompts, self.approvals()))
+        code, out = self.run_approve()
+        self.assertEqual((0, []), (code, self.approvals()))
         self.assertEqual("No pull requests await your approval.\n", out)
 
 
-class TerminalStub(io.StringIO):
-    def __init__(self, tty):
-        super().__init__()
-        self.tty = tty
-
-    def isatty(self):
-        return self.tty
-
-
 class MainTests(unittest.TestCase):
-    def test_only_an_interactive_stdin_is_asked_and_agent_sessions_are_not_refused(self):
-        for tty in (True, False):
-            with self.subTest(tty=tty), mock.patch.dict(os.environ, {"TJ_AGENT": "1"}), \
-                    mock.patch.object(sys, "stdin", TerminalStub(tty)), \
-                    mock.patch.object(approve, "approve", return_value=0) as run:
-                self.assertEqual(0, approve.main([]))
-                self.assertEqual(input if tty else None, run.call_args.kwargs["ask"])
+    def test_agent_sessions_are_not_refused(self):
+        with mock.patch.dict(os.environ, {"TJ_AGENT": "1"}), \
+                mock.patch.object(approve, "approve", return_value=0) as run:
+            self.assertEqual(0, approve.main([]))
+            run.assert_called_once_with()
 
     def test_tool_failures_exit_2_with_one_line(self):
         error = io.StringIO()

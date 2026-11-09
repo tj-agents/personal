@@ -149,7 +149,7 @@ def pending(items: list[str], gh: str, environment: dict[str, str], run) -> list
     return waiting
 
 
-def approve(run=subprocess.run, ask=None, out=sys.stdout) -> int:
+def approve(run=subprocess.run, out=sys.stdout) -> int:
     session = current_session(run)
     if session is None:
         print("No agent session found here; nothing approved.", file=out)
@@ -168,14 +168,6 @@ def approve(run=subprocess.run, ask=None, out=sys.stdout) -> int:
         return 0
     for item in waiting:
         print(f"{item['name']}  {item['title']}", file=out)
-    if ask is not None:
-        try:
-            answer = ask(f"Approve {len(waiting)} pull requests? [y/N] ")
-        except EOFError:
-            answer = ""
-        if answer.strip().lower() not in ("y", "yes"):
-            print("Nothing approved.", file=out)
-            return 0
     failed = False
     for item in waiting:
         result = captured(run, [gh, "pr", "review", "--approve", item["url"]], environment)
@@ -190,7 +182,7 @@ def approve(run=subprocess.run, ask=None, out=sys.stdout) -> int:
 def main(argv: list[str] | None = None) -> int:
     argparse.ArgumentParser(prog="tj approve", description=__doc__).parse_args(argv)
     try:
-        return approve(ask=input if sys.stdin.isatty() else None)
+        return approve()
     except (ApproveError, bot_identity.IdentityError) as error:
         print(f"tj approve: {error}", file=sys.stderr)
         return 2
