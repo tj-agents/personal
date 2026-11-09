@@ -3,6 +3,7 @@
 
 `token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
 the real gh and `setup` installs the wrapper, the agent-only settings for Claude and Codex and Tommy's `tj approve`.
+`converge` replaces stale wrapper and `tj approve` script copies with this plugin's.
 """
 
 from __future__ import annotations
@@ -978,6 +979,31 @@ def installed_script() -> Path:
     return shim_directory() / Path(__file__).name
 
 
+def converge_shims() -> list[Path]:
+    script = installed_script()
+    if not script.is_file():
+        return []
+    copies = (
+        (script, Path(__file__).resolve()),
+        (script.with_name(descriptor_path().name), descriptor_path()),
+        (shim_directory() / approve_source().name, approve_source()),
+    )
+    replaced: list[Path] = []
+    for target, source in copies:
+        content = source.read_bytes()
+        current = target.is_file() and not is_reparse(target)
+        if current and target.read_bytes() == content:
+            continue
+        temporary = target.with_name(f"{target.name}.{os.getpid()}.next")
+        try:
+            temporary.write_bytes(content)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        replaced.append(target)
+    return replaced
+
+
 def claude_user_settings() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
 
@@ -1062,6 +1088,7 @@ def main(argv: list[str] | None = None) -> int:
         commands = parser.add_subparsers(dest="command", required=True)
         commands.add_parser("token").add_argument("--owner", required=True)
         commands.add_parser("credential").add_argument("operation")
+        commands.add_parser("converge")
         setup_command = commands.add_parser("setup")
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
@@ -1069,6 +1096,9 @@ def main(argv: list[str] | None = None) -> int:
         arguments = parser.parse_args(argv)
         if arguments.command == "credential":
             return credential(arguments.operation)
+        if arguments.command == "converge":
+            converge_shims()
+            return 0
         if arguments.command == "setup":
             setup(check=arguments.check, onboard_key=arguments.onboard)
             return 0

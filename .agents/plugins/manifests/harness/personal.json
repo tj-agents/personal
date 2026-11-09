@@ -14,6 +14,15 @@
     "setup": {
       "script": ".agents/personal/utility/bot-identity/scripts/bot_identity.py"
     },
+    "hooks": [
+      {
+        "path": ".agents/personal/utility/bot-identity/scripts/bot_identity.py",
+        "hosts": [
+          "claude",
+          "codex"
+        ]
+      }
+    ],
     "permissions": {
       "claude_allow": [],
       "codex_prefix_rules": []
