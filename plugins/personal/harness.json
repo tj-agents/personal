@@ -12,7 +12,8 @@
   ],
   "requires": {
     "setup": {
-      "script": ".agents/personal/utility/bot-identity/scripts/bot_identity.py"
+      "script": ".agents/personal/utility/bot-identity/scripts/bot_identity.py",
+      "converge": true
     },
     "permissions": {
       "claude_allow": [],
