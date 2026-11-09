@@ -873,7 +873,8 @@ def script_launcher() -> bytes:
 
 
 def windows_executable(script: Path) -> bytes:
-    main = (f"import runpy, sys\nsys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
+    main = (f"import runpy, sys\nsys.path.insert(0, {str(script.parent)!r})\n"
+            f"sys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
             f"runpy.run_path({str(script)!r}, run_name='__main__')\n")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as payload:

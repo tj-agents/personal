@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import os
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -120,7 +121,8 @@ def test_gh_wrapper_launcher_only_delegates_to_the_converged_copy(
             assert payload.namelist() == ["__main__.py"]
             main = payload.read("__main__.py").decode()
         assert main == (
-            f"import runpy, sys\nsys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
+            f"import runpy, sys\nsys.path.insert(0, {str(script.parent)!r})\n"
+            f"sys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
             f"runpy.run_path({str(script)!r}, run_name='__main__')\n"
         )
     else:
@@ -128,3 +130,18 @@ def test_gh_wrapper_launcher_only_delegates_to_the_converged_copy(
         assert (shim / "gh").read_text(encoding="utf-8") == (
             f'#!/bin/sh\nexec "{python}" -B "{script.as_posix()}" gh "$@"\n'
         )
+
+
+def test_windows_launcher_loads_the_actual_shipped_sibling_module(
+    shim: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot, "WINDOWS", True)
+    bot.install_shims(BOT_IDENTITY)
+    executable = shim / "gh.exe"
+    environment = {**os.environ, "TJ_AGENT": "1"}
+    command = [str(executable)] if os.name == "nt" else [sys.executable, str(executable)]
+    result = subprocess.run([*command, "auth", "login"], env=environment,
+                            capture_output=True, text=True, timeout=15, check=False)
+    assert result.returncode == 2
+    assert "agents may run only `gh auth status`" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
