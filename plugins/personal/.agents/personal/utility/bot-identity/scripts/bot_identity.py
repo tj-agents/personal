@@ -2,8 +2,7 @@
 """Run agent GitHub access as Tommy's GitHub App in personal repositories (Python 3.11+, needs openssl).
 
 `token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
-the real gh, `approval URL...` prints Tommy's approval command and `setup` installs the wrapper and the agent-only
-settings for Claude and Codex.
+the real gh and `setup` installs the wrapper, the agent-only settings for Claude and Codex and Tommy's `tj approve`.
 """
 
 from __future__ import annotations
@@ -88,7 +87,7 @@ COMMAND_PAYLOAD_FLAGS = {
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
-MCP_DENY = (
+AGENT_DENY = (
     "mcp__github__merge_pull_request",
     "mcp__github__create_pull_request",
     "mcp__github__pull_request_review_write",
@@ -97,6 +96,8 @@ MCP_DENY = (
     "mcp__github__delete_file",
     "mcp__github__create_branch",
     "mcp__github__update_pull_request_branch",
+    "Bash(tj approve:*)",
+    "Bash(tj-approve:*)",
 )
 
 
@@ -723,19 +724,6 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     return environment
 
 
-def approval_command(urls: list[str]) -> str:
-    if not urls:
-        raise IdentityError("name at least one pull request URL")
-    for url in urls:
-        match = PULL_REQUEST.fullmatch(url)
-        if not match or match.group(1).lower() not in REQUIRED_OWNERS:
-            raise IdentityError(f"{url} is not a pull request in an account the GitHub App covers")
-    gh = Path(real_gh()).as_posix()
-    body = (f'set -e; g="{gh}"; GH_TOKEN=$("$g" auth token --user tomjseery); export GH_TOKEN; '
-            f'for p in {" ".join(urls)}; do "$g" pr review --approve "$p"; done')
-    return f"!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR bash -c '{body}'"
-
-
 def option_names(arguments: list[str]) -> set[str]:
     names, rest = set(), iter(arguments)
     for argument in rest:
@@ -767,16 +755,10 @@ def ready_selector(arguments: list[str]) -> list[str]:
 def hand_over(output: str) -> None:
     match = PULL_REQUEST.search(output)
     url = match.group(0) if match and match.group(1).lower() in REQUIRED_OWNERS else None
-    builder = f'`python -B "{Path(__file__).resolve().as_posix()}" approval <url>...`'
-    if not url:
-        print(f"bot_identity: REQUIRED IN YOUR REPLY: this PR awaits Tommy's approval. Your reply reporting it "
-              f"must include its link and the command {builder} prints; never run that command yourself.",
-              file=sys.stderr)
-        return
-    print(f"bot_identity: REQUIRED IN YOUR REPLY: {url} awaits Tommy's approval. Your reply reporting it must "
-          f"include that link and this exact command, which Tommy runs; never run it yourself:\n"
-          f"{approval_command([url])}\n"
-          f"Reporting several PRs in one reply? Give one command from {builder} instead.", file=sys.stderr)
+    subject, link = (url, "that link") if url else ("this PR", "its link")
+    print(f"bot_identity: REQUIRED IN YOUR REPLY: {subject} awaits Tommy's approval. Put the line `! tj approve` on "
+          f"Tommy's clipboard with cli:clip, and make your reply include {link} and that line; never run it "
+          f"yourself.", file=sys.stderr)
 
 
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
@@ -872,7 +854,7 @@ def update_claude(path: Path, environment: dict[str, str]) -> None:
         del current[key]
     current.update(environment)
     permissions = settings.setdefault("permissions", {})
-    permissions["deny"] = sorted(set(permissions.get("deny") or []) | set(MCP_DENY))
+    permissions["deny"] = sorted(set(permissions.get("deny") or []) | set(AGENT_DENY))
     if path.is_file():
         shutil.copyfile(path, path.with_name(path.name + ".pre-bot-identity.bak"))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -939,6 +921,36 @@ def install_shims(source: Path) -> Path:
     return script
 
 
+def approve_source() -> Path:
+    return Path(__file__).resolve().parents[2] / "approve" / "scripts" / "approve.py"
+
+
+def tj_bin_directory() -> Path:
+    if configured := os.environ.get("TJ_BIN_DIR"):
+        return Path(configured).expanduser()
+    if WINDOWS:
+        return Path(os.environ["LOCALAPPDATA"]) / "Programs" / "tj"
+    return Path.home() / ".local" / "bin"
+
+
+def approve_launcher() -> tuple[Path, bytes]:
+    script, python = shim_directory() / approve_source().name, Path(sys.executable)
+    if WINDOWS:
+        return tj_bin_directory() / "tj-approve.cmd", f'@"{python}" -B "{script}" %*\r\n'.encode()
+    return tj_bin_directory() / "tj-approve", \
+        f'#!/bin/sh\nexec "{python.as_posix()}" -B "{script.as_posix()}" "$@"\n'.encode()
+
+
+def install_approve() -> Path:
+    shutil.copyfile(approve_source(), shim_directory() / approve_source().name)
+    launcher, content = approve_launcher()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_bytes(content)
+    if not WINDOWS:
+        launcher.chmod(0o755)
+    return launcher
+
+
 def remove_user_path(directory: Path) -> bool:
     if WINDOWS:
         import winreg
@@ -989,6 +1001,11 @@ def verify_host_setup() -> None:
         f"#!/bin/sh\nexec \"{Path(sys.executable).as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n".encode()
     if launcher.read_bytes() != expected_launcher:
         raise IdentityError("the installed GitHub App wrapper is stale; run setup")
+    approve, expected_approve = approve_launcher()
+    for path, expected in ((shim_directory() / approve_source().name, approve_source().read_bytes()),
+                           (approve, expected_approve)):
+        if not path.is_file() or is_reparse(path) or path.read_bytes() != expected:
+            raise IdentityError(f"`tj approve` is not installed at {path}; run setup")
     environment = agent_environment(script, os.environ.get("PATH", ""))
     claude = claude_user_settings()
     codex = codex_user_config()
@@ -1000,7 +1017,7 @@ def verify_host_setup() -> None:
         codex_env = tomllib.loads(codex.read_text(encoding="utf-8-sig"))["shell_environment_policy"]["set"]
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise IdentityError("agent host settings are missing; run setup") from error
-    if not isinstance(claude_denials, list) or any(rule not in claude_denials for rule in MCP_DENY):
+    if not isinstance(claude_denials, list) or any(rule not in claude_denials for rule in AGENT_DENY):
         raise IdentityError("agent host write restrictions are missing; run setup")
     for settings in (claude_env, codex_env):
         if any(settings.get(key) != value for key, value in environment.items()) or any(
@@ -1024,12 +1041,14 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
         print("bot_identity: ready")
         return
     script = install_shims(Path(__file__).resolve())
+    launcher = install_approve()
     gh_config_directory().mkdir(parents=True, exist_ok=True)
     environment = agent_environment(script, os.environ.get("PATH", ""))
     update_claude(claude_user_settings(), environment)
     update_codex(codex_user_config(), environment)
     if remove_user_path(shim_directory()):
         print(f"Removed {shim_directory()} from your user PATH; only agent sessions put it first")
+    print(f"Installed `tj approve` at {launcher}")
     print("Personal agent identity is configured in the Claude and Codex user settings; restart Claude and Codex "
           "to apply, and re-run setup after changing PATH")
 
@@ -1043,7 +1062,6 @@ def main(argv: list[str] | None = None) -> int:
         commands = parser.add_subparsers(dest="command", required=True)
         commands.add_parser("token").add_argument("--owner", required=True)
         commands.add_parser("credential").add_argument("operation")
-        commands.add_parser("approval").add_argument("urls", nargs="+")
         setup_command = commands.add_parser("setup")
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
@@ -1053,9 +1071,6 @@ def main(argv: list[str] | None = None) -> int:
             return credential(arguments.operation)
         if arguments.command == "setup":
             setup(check=arguments.check, onboard_key=arguments.onboard)
-            return 0
-        if arguments.command == "approval":
-            print(approval_command(arguments.urls))
             return 0
         if arguments.owner.lower() not in REQUIRED_OWNERS:
             raise IdentityError("the GitHub App is not authorized for that account")
