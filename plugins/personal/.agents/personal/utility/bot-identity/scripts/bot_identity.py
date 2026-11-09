@@ -672,42 +672,6 @@ def owner_from_checkout(run=subprocess.run) -> str | None:
     return match.group(1) if match else None
 
 
-def tommy_environment() -> dict[str, str]:
-    environment = dict(os.environ)
-    environment.pop(AGENT_FLAG, None)
-    issued = environment.pop(TOKEN_FINGERPRINT, None)
-    token = environment.get("GH_TOKEN", "")
-    if token == UNAUTHENTICATED or (issued and issued == hashlib.sha256(token.encode()).hexdigest()):
-        environment.pop("GH_TOKEN")
-    if environment.get("GH_CONFIG_DIR") == str(gh_config_directory()):
-        environment.pop("GH_CONFIG_DIR")
-    try:
-        count = int(environment.get("GIT_CONFIG_COUNT", "0"))
-        entries = [(environment[f"GIT_CONFIG_KEY_{index}"], environment[f"GIT_CONFIG_VALUE_{index}"])
-                   for index in range(count)]
-    except (ValueError, KeyError):
-        raise IdentityError("inherited Git configuration is malformed") from None
-    helper = "credential.https://github.com.helper"
-    if any(key == helper and value.endswith('" credential') for key, value in entries):
-        managed = {helper, "credential.https://github.com.useHttpPath",
-                   *(f"credential.{url}.helper" for url in CLEARED_HELPERS)}
-        kept = [(key, value) for key, value in entries if key not in managed]
-        environment.pop("GIT_CONFIG_COUNT", None)
-        for index in range(count):
-            environment.pop(f"GIT_CONFIG_KEY_{index}")
-            environment.pop(f"GIT_CONFIG_VALUE_{index}")
-        if kept:
-            environment["GIT_CONFIG_COUNT"] = str(len(kept))
-            for index, (key, value) in enumerate(kept):
-                environment[f"GIT_CONFIG_KEY_{index}"] = key
-                environment[f"GIT_CONFIG_VALUE_{index}"] = value
-    for key in ("PATH", "Path"):
-        if key in environment:
-            environment[key] = os.pathsep.join(entry for entry in environment[key].split(os.pathsep)
-                                                if not is_shim(entry))
-    return environment
-
-
 def shim_directory() -> Path:
     return Path.home() / ".agents-state" / "bin" / "bot-identity"
 
@@ -725,26 +689,6 @@ def real_gh() -> str:
     return found
 
 
-def personal_checkout(root: Path | None = None) -> Path:
-    result = subprocess.run(["git", "-C", str(root or Path.cwd()), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT_SECONDS, check=False,
-                            creationflags=NO_WINDOW)
-    if result.returncode:
-        raise IdentityError("bot identity requires an explicitly adopted personal checkout")
-    checkout = Path(result.stdout.strip()).resolve()
-    try:
-        selection = json.loads((checkout / ".agents/plugins.json").read_text(encoding="utf-8-sig"))
-        plugins = selection["plugins"]
-        marketplace = selection["marketplaces"]["tj-agents"]["repository"]
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        raise IdentityError("bot identity requires an explicitly adopted personal checkout") from error
-    if (not isinstance(plugins, list) or "personal@tj-agents" not in plugins
-            or marketplace != "tj-agents/marketplace"
-            or any(plugin in plugins for plugin in ("work@tj-agents", "infonetica@tj-agents"))):
-        raise IdentityError("bot identity requires an explicitly adopted personal checkout")
-    return checkout
-
-
 def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> dict[str, str]:
     if arguments[:1] == ["auth"] and arguments[1:2] != ["status"]:
         raise IdentityError("agents may run only `gh auth status`")
@@ -759,7 +703,9 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
         return environment
     protected = [owner for owner in owners if owner.lower() in REQUIRED_OWNERS]
     if not protected:
-        return environment if arguments[:1] == ["auth"] else tommy_environment()
+        if arguments[:1] == ["auth"]:
+            return environment
+        raise IdentityError(f"{owners[0]} is not an account the GitHub App covers; agent sessions never use Tommy's credentials")
     hostname = hostname if hostname is not None else os.environ.get("GH_HOST") or "github.com"
     if hostname.lower() != "github.com":
         raise IdentityError("the Personal GitHub App is authorized only for github.com")
@@ -768,15 +714,13 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     missing = [owner for owner in protected if owner.lower() not in covered]
     if missing:
         raise IdentityError("the pinned GitHub App is not installed on " + ", ".join(missing))
-    app_owner = next((owner for owner in owners if owner.lower() in covered), None)
-    if app_owner:
-        token = installation_token(app_owner, record)
-        if not token:
-            raise IdentityError(f"could not get an installation token for {app_owner}")
-        environment["GH_TOKEN"] = token
-        environment[TOKEN_FINGERPRINT] = hashlib.sha256(token.encode()).hexdigest()
-        return environment
-    return environment if arguments[:1] == ["auth"] else tommy_environment()
+    app_owner = next(owner for owner in owners if owner.lower() in covered)
+    token = installation_token(app_owner, record)
+    if not token:
+        raise IdentityError(f"could not get an installation token for {app_owner}")
+    environment["GH_TOKEN"] = token
+    environment[TOKEN_FINGERPRINT] = hashlib.sha256(token.encode()).hexdigest()
+    return environment
 
 
 def approval_command(urls: list[str]) -> str:
@@ -838,10 +782,6 @@ def hand_over(output: str) -> None:
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
-    try:
-        personal_checkout()
-    except IdentityError:
-        return run([real_gh(), *arguments], env=tommy_environment(), check=False).returncode
     environment = agent_gh_environment(arguments, checkout())
     app = environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
     if not (app and awaits_approval(arguments)):
@@ -862,20 +802,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
     return result.returncode
 
 
-def tommy_credential(fields: dict[str, str], run=subprocess.run) -> str:
-    request = "".join(f"{key}={fields[key]}\n" for key in ("protocol", "host", "path")) + "\n"
-    try:
-        result = run(["git", "credential", "fill"], input=request, capture_output=True, text=True,
-                     env={**tommy_environment(), "GIT_TERMINAL_PROMPT": "0"}, timeout=TIMEOUT_SECONDS, check=False,
-                     creationflags=NO_WINDOW)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    if result.returncode:
-        return ""
-    return "".join(f"{line}\n" for line in result.stdout.splitlines() if line.startswith(("username=", "password=")))
-
-
-def credential(operation: str, stream=sys.stdin, out=sys.stdout, run=subprocess.run) -> int:
+def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
     if operation != "get":
         return 0
     fields = {}
@@ -888,13 +815,9 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout, run=subprocess.
     owner = fields.get("path", "").split("/")[0]
     if fields.get("protocol") != "https" or fields.get("host", "").lower() != "github.com" or not owner:
         return 0
-    try:
-        personal_checkout()
-    except IdentityError:
-        out.write(tommy_credential(fields, run))
-        return 0
     if owner.lower() not in REQUIRED_OWNERS:
-        out.write(tommy_credential(fields, run))
+        print(f"bot_identity: {owner} is not an account the GitHub App covers; agent sessions never use Tommy's "
+              "credentials", file=sys.stderr)
         return 0
     try:
         record = app_record()
@@ -1134,7 +1057,6 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "approval":
             print(approval_command(arguments.urls))
             return 0
-        personal_checkout()
         if arguments.owner.lower() not in REQUIRED_OWNERS:
             raise IdentityError("the GitHub App is not authorized for that account")
         token = installation_token(arguments.owner, app_record())

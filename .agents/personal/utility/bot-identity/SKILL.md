@@ -48,14 +48,12 @@ has no login, and git config that clears every github.com credential helper exce
 unchanged; setup removes the wrapper from the user PATH. It also denies the GitHub MCP write tools, which hold
 Tommy's token.
 
-Before every wrapper or credential-helper command, the tool rechecks that the current checkout is explicitly
-personal. A checkout selecting `work@tj-agents` or `infonetica@tj-agents` is never personal: it uses Tommy's own
-gh login or git helpers and never receives an App token. For a selected personal checkout, git takes the account
-from the remote URL, and `gh` takes it first from explicit `-R`/`--repo`/`--owner`, GitHub URLs,
-`repos|orgs|users/<owner>` API paths and `gh repo` arguments; only when none is explicit does it use the checkout's
-`origin`. Commands naming multiple explicit owners are rejected. Only the three named accounts can receive an App
-token; a missing installation for one stops the command and never falls back to Tommy. A command naming no account
-runs unauthenticated, and agents may run only `gh auth status`. `token --owner <account>` prints a token. Restart
+The target account decides the identity, never the current checkout. git takes the account from the remote
+URL, and `gh` takes it first from explicit `-R`/`--repo`/`--owner`, GitHub URLs, `repos|orgs|users/<owner>` API
+paths and `gh repo` arguments; only when none is explicit does it use the checkout's `origin`. Commands naming
+multiple explicit owners are rejected. Only the three named accounts receive an App token, in any checkout; a
+missing installation stops the command. Any other account is refused with its reason: an agent session never
+falls back to Tommy's gh login or git helpers. A command naming no account runs unauthenticated, and agents may run only `gh auth status`. `token --owner <account>` prints a token. Restart
 Claude and Codex after setup.
 
 Every PR handed to Tommy for approval carries the `!` command he invokes in the agent terminal. It bypasses the
