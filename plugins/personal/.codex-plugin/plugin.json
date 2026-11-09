@@ -17,5 +17,6 @@
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": "Apply the personal project standards and selected work-item workflow."
-  }
+  },
+  "version": "cc07131f9bb1"
 }
