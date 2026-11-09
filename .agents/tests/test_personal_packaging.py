@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SKILLS = {
     "use",
     "address-work-item",
+    "approve",
     "bot-identity",
     "create-work-item",
     "revision",

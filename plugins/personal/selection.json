@@ -9,6 +9,7 @@
   "profiles": {
     "core": [
       "address-work-item",
+      "approve",
       "bot-identity",
       "create-work-item",
       "revision",
@@ -28,6 +29,21 @@
       ],
       "requires": [
         "tj-item",
+        "gh"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "approve",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "Tommy's machines after `personal:bot-identity` setup"
+      ],
+      "requires": [
+        "python",
         "gh"
       ],
       "provenance": [

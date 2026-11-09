@@ -354,6 +354,7 @@ class GhWrapperTests(Sandbox):
 
 class ApprovalHandoffTests(GhWrapperTests):
     CORE = "https://github.com/tj-agents/core/pull/7"
+    TJ_APPROVE = "tell Tommy to run `tj approve` in his own terminal; never run it yourself"
 
     def hand_over(self, *arguments, checkout="tj-agents", stdout=None, returncode=0):
         self.gh.stdout, self.gh.returncode = stdout, returncode
@@ -362,25 +363,27 @@ class ApprovalHandoffTests(GhWrapperTests):
             self.assertEqual(returncode, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout))
         return out.getvalue(), err.getvalue()
 
-    def test_a_created_pr_prints_its_filled_approval_command_and_keeps_its_url_on_stdout(self):
+    def test_a_created_pr_points_tommy_at_tj_approve_and_keeps_its_url_on_stdout(self):
         out, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
         self.assertEqual(self.CORE + "\n", out)
         self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
-        self.assertIn(bot.approval_command([self.CORE]), err)
+        self.assertIn(self.TJ_APPROVE, err)
 
     def test_a_payload_url_preserves_bot_authentication_and_the_approval_handoff(self):
         out, err = self.hand_over("pr", "create", "--title", "Fixture", "--body",
                                   "See https://github.com/cli/cli/issues/1", stdout=self.CORE + "\n")
         self.assertEqual(self.CORE + "\n", out)
         self.assertEqual("ghs_tj-agents", self.gh.calls[0][1]["GH_TOKEN"])
-        self.assertIn(bot.approval_command([self.CORE]), err)
+        self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
+        self.assertIn(self.TJ_APPROVE, err)
 
     def test_create_alias_preserves_bot_authentication_and_the_approval_handoff(self):
         out, err = self.hand_over("pr", "new", "-t", "Fixture", "-b",
                                   "See https://github.com/cli/cli/issues/1", stdout=self.CORE + "\n")
         self.assertEqual(self.CORE + "\n", out)
         self.assertEqual("ghs_tj-agents", self.gh.calls[0][1]["GH_TOKEN"])
-        self.assertIn(bot.approval_command([self.CORE]), err)
+        self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
+        self.assertIn(self.TJ_APPROVE, err)
 
     def test_a_readied_pr_is_looked_up_with_its_selector_and_handed_over(self):
         _, err = self.hand_over("pr", "ready", "7", "-R", "tj-agents/core", stdout=self.CORE)
@@ -388,7 +391,8 @@ class ApprovalHandoffTests(GhWrapperTests):
         self.assertEqual(["real-gh", "pr", "view", "7", "-R", "tj-agents/core", "--json", "url", "--jq", ".url"],
                          view)
         self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
-        self.assertIn(bot.approval_command([self.CORE]), err)
+        self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
+        self.assertIn(self.TJ_APPROVE, err)
 
     def test_drafts_undo_failures_and_uncovered_accounts_hand_nothing_over(self):
         for arguments, checkout, returncode in ((("pr", "create", "--draft"), "tj-agents", 0),
@@ -406,25 +410,17 @@ class ApprovalHandoffTests(GhWrapperTests):
 
     def test_flag_spellings_given_as_values_still_hand_the_pr_over(self):
         _, err = self.hand_over("pr", "create", "--title", "--draft", "-b", "-w", stdout=self.CORE)
-        self.assertIn(bot.approval_command([self.CORE]), err)
+        self.assertIn(f"{self.CORE} awaits Tommy's approval", err)
+        self.assertIn(self.TJ_APPROVE, err)
 
-    def test_an_unresolved_url_still_points_at_the_command_builder(self):
+    def test_an_unresolved_url_still_points_tommy_at_tj_approve(self):
         _, err = self.hand_over("pr", "create", stdout="")
-        self.assertIn("approval <url>", err)
+        self.assertIn("this PR awaits Tommy's approval", err)
+        self.assertIn(self.TJ_APPROVE, err)
 
-    def test_one_command_approves_every_named_pr_as_tommy_and_stops_on_failure(self):
-        other = "https://github.com/tomjseery/notes/pull/2"
-        command = bot.approval_command([self.CORE, other])
-        self.assertTrue(command.startswith("!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR bash -c 'set -e; "))
-        self.assertIn('g="real-gh"', command)
-        self.assertIn('auth token --user tomjseery', command)
-        self.assertIn(f"for p in {self.CORE} {other}; do", command)
-
-    def test_only_prs_in_the_apps_accounts_get_an_approval_command(self):
-        for urls in ([], ["https://github.com/Infonetica/cris/pull/3"], ["https://github.com/tj-agents/core"],
-                     [self.CORE + "; rm -rf ~"]):
-            with self.subTest(urls=urls), self.assertRaises(bot.IdentityError):
-                bot.approval_command(urls)
+    def test_the_retired_approval_command_is_gone(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            bot.main(["approval", self.CORE])
 
 
 class AgentEnvironmentTests(Sandbox):
@@ -773,6 +769,7 @@ class FreshSetupTests(unittest.TestCase):
                 launcher.chmod(0o755)
             environment = {**without_agent_settings(os.environ), "HOME": str(home), "USERPROFILE": str(home),
                            "CLAUDE_CONFIG_DIR": str(home / "claude"), "CODEX_HOME": str(home / "codex"),
+                           "TJ_BIN_DIR": str(home / "tj bin"),
                            "PATH": os.pathsep.join([str(real), os.environ["PATH"]])}
             with mock.patch.object(os, "environ", environment):
                 key = bot.store() / "tomjseery-bot.pem"
@@ -801,6 +798,13 @@ class FreshSetupTests(unittest.TestCase):
                     del settings["permissions"]
                     claude.write_text(json.dumps(settings), encoding="utf-8")
                     with self.assertRaisesRegex(bot.IdentityError, "host settings are missing"):
+                        bot.setup(check=True)
+                    bot.setup()
+                    bot.setup(check=True)
+                    tj_approve = home / "tj bin" / ("tj-approve.cmd" if bot.WINDOWS else "tj-approve")
+                    self.assertIn(str(bot.shim_directory() / "approve.py"), tj_approve.read_text(encoding="utf-8"))
+                    tj_approve.unlink()
+                    with self.assertRaisesRegex(bot.IdentityError, "`tj approve` is not installed"):
                         bot.setup(check=True)
                     bot.setup()
                     bot.setup(check=True)
