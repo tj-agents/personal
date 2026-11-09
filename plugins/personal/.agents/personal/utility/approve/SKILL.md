@@ -21,8 +21,7 @@ sessions. For each item, `tj item prs` lists its pull requests; it keeps the ope
 ! tj approve
 ```
 
-With an interactive stdin it lists them and asks once `Approve N pull requests? [y/N]`; without one, as from
-`! tj approve` in an agent prompt, typing the command is the confirmation and it approves the listed PRs. It
+Typing the command is the approval: it lists the PRs, then approves them without asking, whatever stdin is. It
 approves with the real `gh` and tomjseery's own login, prints `approved <repo>#<n>` or
 `failed <repo>#<n>: <reason>` per PR and exits non-zero if any failed. No session, nothing linked or nothing
 waiting is reported in one line and approves nothing.
