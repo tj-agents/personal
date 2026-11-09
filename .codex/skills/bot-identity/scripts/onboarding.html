@@ -1,23 +1,40 @@
-<!doctype html><meta charset="utf-8"><title>TJ Agents setup</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>TJ Agents setup</title>
+<style nonce="$nonce">
+body {font:16px/1.5 system-ui,sans-serif;color:#1e293b;background:#f8fafc;
+max-width:760px;margin:40px auto;padding:0 24px 40px;}
+h1 {font-size:28px;margin-bottom:8px;} h2 {font-size:20px;margin-top:0;}
+section {background:white;border:1px solid #dbe2ea;border-radius:10px;padding:24px;margin-top:20px;}
+label {display:block;margin:12px 0;} input:not([type=checkbox]):not([type=file])
+{display:block;box-sizing:border-box;width:100%;max-width:480px;padding:8px;border:1px solid #94a3b8;border-radius:5px;}
+input[readonly] {background:#f1f5f9;color:#475569;} button {font:inherit;cursor:pointer;
+padding:8px 12px;margin:6px 6px 6px 0;border:1px solid #94a3b8;border-radius:5px;background:#eff6ff;}
+button:disabled {cursor:default;color:#64748b;} a {color:#1d4ed8;}
+pre {white-space:pre-wrap;font:inherit;} #result:not(:empty)
+{padding:12px 16px;background:#e2e8f0;border-radius:6px;}
+</style></head><body>
 <h1>Set up your agent bot</h1><p>$message</p>
 <p>Your human account approves your bot's changes. Secrets stay in this local setup process.</p>
-<label>Your human GitHub login <input id="reviewer" value="$reviewer"></label><br>
+<label>Your human GitHub login <input id="reviewer" value="$reviewer"$readonly></label>
 <label>Permitted accounts (comma separated; defaults to your login)
-<input id="accounts" value="$accounts"></label><br>
-<label><input id="create_repositories" type="checkbox">Also allow creating repositories</label>
+<input id="accounts" value="$accounts"$readonly></label>
+<label id="creation-option"$new_hidden><input id="create_repositories" type="checkbox"$disabled>I need the bot to create repositories</label>
+<pre id="result" role="status"></pre><div id="links">$links</div>
+<section id="existing">
 <h2>I already have a bot</h2>
-<label>App slug or URL <input id="app" value="$slug"></label>
-<button id="select">Select existing App</button>
+<label>App slug or URL <input id="app" value="$slug"$readonly></label>
+<button id="select"$select_hidden>Select existing App</button>
 <p id="key-help">Select an existing protected App PEM directly below. If it is unavailable on this
 computer, issue a key for the same App in GitHub settings. Keep the existing App and installations.</p>
 <input id="key" type="file" accept=".pem,application/x-pem-file"><button id="enroll">Enroll selected key</button>
 <button id="verify">Verify and finish</button>
 <div id="installations"></div>
+</section><section id="new-app"$new_hidden>
 <h2>I need my own bot</h2>
 <label>App-owning organization (optional) <input id="organization"></label>
 <p>GitHub will ask you to review the prefilled permissions, name your App and approve registration.
 The App can be installed on accounts you authorize. This machine only uses the accounts selected above.</p>
-<button id="create"$disabled>Create my bot on GitHub</button><div id="links">$links</div><pre id="result"></pre>
+<button id="create"$disabled>Create my bot on GitHub</button></section>
 <script nonce="$nonce">
 const endpoint='/enroll/$nonce', state='$nonce', result=document.getElementById('result');
 const value=id=>document.getElementById(id).value;
@@ -26,6 +43,10 @@ create_repositories:document.getElementById('create_repositories').checked});
 async function post(path,body,raw=false){
 let r=await fetch(path,{method:'POST',headers:{'X-Bot-Identity-State':state},body:raw?body:JSON.stringify(body)});
 let data=await r.json();result.textContent=data.message||'';
+if(data.selected){document.getElementById('new-app').hidden=true;document.getElementById('select').hidden=true;
+document.getElementById('creation-option').hidden=true;
+for(let id of ['reviewer','accounts','app'])document.getElementById(id).readOnly=true;
+document.getElementById('create').disabled=true;document.getElementById('create_repositories').disabled=true;}
 let installations=document.getElementById('installations');installations.replaceChildren();
 if(data.installed_accounts&&data.installed_accounts.length){
 let title=document.createElement('p');title.textContent='Reuse existing installations. Select the accounts this computer may use:';
@@ -50,3 +71,4 @@ let input=document.createElement('input');input.type='hidden';input.name='manife
 form.append(input);document.body.append(form);form.submit();};
 $verify_on_load
 </script>
+</body></html>

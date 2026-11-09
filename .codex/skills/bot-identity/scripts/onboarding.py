@@ -171,6 +171,8 @@ def page(nonce: str, config: dict[str, object] | None) -> str:
         if config.get("key")
         else "Select an existing App and key, or create your own App."
     )
+    if isinstance(app, dict):
+        state = f"Using {app.get('owner')}/{slug}. Enroll this computer."
     existing_links = ""
     if isinstance(app, dict):
         existing_links = (
@@ -195,6 +197,9 @@ def page(nonce: str, config: dict[str, object] | None) -> str:
         links=existing_links,
         verify_on_load=verify_on_load,
         nonce=nonce,
+        readonly=" readonly" if config else "",
+        new_hidden=" hidden" if config else "",
+        select_hidden=" hidden" if config else "",
     )
 
 
@@ -286,6 +291,7 @@ def onboard(
             self.send_header(
                 "Content-Security-Policy",
                 f"default-src 'none'; script-src 'nonce-{nonce}'; "
+                f"style-src 'nonce-{nonce}'; "
                 "connect-src 'self'; form-action https://github.com; "
                 "base-uri 'none'; frame-ancestors 'none'",
             )
@@ -428,6 +434,7 @@ def onboard(
                         {
                             "message": "App selected. Choose its PEM; "
                             "reuse its existing installations.",
+                            "selected": True,
                             "links": {
                                 "Existing App key settings": settings_url(app_config)
                             },

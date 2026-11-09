@@ -28,16 +28,28 @@ python3 -B <skill-directory>/scripts/bot_identity.py setup
 
 Use `python` instead of `python3` on Windows. Runtime prerequisites are Python 3.12+, OpenSSL and `gh`.
 
+For an existing bot on a new computer, public details can prefill the same page. This example uses
+fictitious identities; repeat `--account` for each intended account. Omit `--reviewer` to detect the
+human's native `gh` username.
+
+```text
+python3 -B <skill-directory>/scripts/bot_identity.py setup --onboard --app sample-dev-bot --reviewer sample-dev --account sample-dev --account sample-projects
+```
+
 The page offers two paths. **Existing App** selects the user's App by its public name or URL and accepts
 an existing or newly issued PEM directly in the browser. A second computer enrolls into that same App;
 it does not create another App or repeat existing GitHub installations. **New App** uses GitHub's
 manifest flow to prefill registration; the user reviews and creates their App on GitHub, then the local
 callback exchanges the one-time code and protects the resulting key. The user completes credential entry
 and GitHub security approvals in the supported UI. Never request, print or paste keys or tokens in chat.
+After key enrollment, the user can explicitly select discovered existing installations; discovery does
+not authorize every account automatically.
 
 A new computer still needs a trusted key or signer for the selected App. A human GitHub login does not
 authenticate as the bot. Valid local enrollment is reused, including after a partial setup: missing
 installations resume at the installation step, while accepted configuration and keys survive cancellation.
+A one-use manifest key interrupted before verification is retained as protected `<slug>.pending.pem`.
+A Verify retry or ordinary setup verifies and promotes it; it cannot authenticate commands while pending.
 Connection and permission failures do not authorize creating another App or replacing a key. If the user
 selects a downloaded PEM, the source file remains in its browser/OS location after enrollment.
 
