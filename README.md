@@ -71,6 +71,14 @@ Readiness also requires `repository_creation:write` on the App and its `tj-agent
 closed if that creation capability is removed, or if `administration:write` is granted; it reports the specific
 App or installation settings page for Tommy to correct and never changes GitHub permissions itself.
 
+## Approving the bot's pull requests
+
+`personal:approve` (`! tj approve`) is Tommy's one fixed command, run as `tomjseery`, never by an agent. It
+resolves only the current session's work from agent-store — its linked items, its launch's item and,
+recursively, the items of the launches it started — and approves the still-open, still-unapproved
+`app/tomjseery-bot` pull requests among them. There is no account- or org-wide sweep: nothing linked means it
+approves nothing. `personal:bot-identity` setup denies the command to agents and installs it on Tommy's PATH.
+
 ## Authoring and verification
 
 ```powershell
