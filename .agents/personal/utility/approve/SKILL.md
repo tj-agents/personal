@@ -19,10 +19,6 @@ sessions. For each item, `tj item prs` lists its pull requests; it keeps the ope
 
 ```text
 ! tj approve
-agent#106  Remove the retired machine-events watcher whenever it reappears
-marketplace#68  Drop the retired preset from the Renovate configuration
-approved agent#106
-approved marketplace#68
 ```
 
 With an interactive stdin it lists them and asks once `Approve N pull requests? [y/N]`; without one, as from
