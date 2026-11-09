@@ -75,9 +75,6 @@ class Sandbox(unittest.TestCase):
         bot.protect(self.home / "github-app", directory=True)
         bot.protect(self.home / "github-app" / "tomjseery-bot.pem")
         bot.protect(self.home / "github-app" / "tomjseery-bot.json")
-        scope = mock.patch.object(bot, "personal_checkout", return_value=self.home)
-        scope.start()
-        self.addCleanup(scope.stop)
 
     def patch_environment(self, values):
         patcher = mock.patch.object(os, "environ", {**os.environ, **values})
@@ -132,59 +129,43 @@ class IdentityTests(Sandbox):
 
 
 class CredentialTests(Sandbox):
-    def ask(self, request, token="ghs_x", fallback="username=tomjseery\npassword=gho_tommy\n"):
-        calls = []
-
-        def tommy(command, **kwargs):
-            calls.append(kwargs)
-            return subprocess.CompletedProcess(command, 0 if fallback else 128, fallback)
-
+    def ask(self, request, token="ghs_x"):
         out = io.StringIO()
         with mock.patch.object(bot, "installed", side_effect=fake_installed), \
                 mock.patch.object(bot, "installation_token", return_value=token):
-            bot.credential("get", io.StringIO(request + "\n"), out, run=tommy)
-        return out.getvalue(), calls
+            bot.credential("get", io.StringIO(request + "\n"), out)
+        return out.getvalue()
 
     def test_installed_accounts_get_only_the_app_token(self):
-        answer, calls = self.ask("protocol=https\nhost=github.com\npath=tj-agents/core.git\n")
+        answer = self.ask("protocol=https\nhost=github.com\npath=tj-agents/core.git\n")
         self.assertEqual("username=x-access-token\npassword=ghs_x\n", answer)
-        self.assertEqual([], calls)
 
     def test_an_installed_account_never_falls_back_when_minting_fails(self):
-        answer, calls = self.ask("protocol=https\nhost=github.com\npath=tomjseery/notes.git\n", token=None)
-        self.assertEqual(("", []), (answer, calls))
+        self.assertEqual("", self.ask("protocol=https\nhost=github.com\npath=tomjseery/notes.git\n", token=None))
 
     def test_requests_without_an_account_get_nothing(self):
         for request in ("protocol=https\nhost=github.com\n", "protocol=http\nhost=github.com\npath=Infonetica/x\n",
                         "protocol=https\nhost=gist.github.com\npath=tj-agents/x\n"):
             with self.subTest(request=request):
-                self.assertEqual(("", []), self.ask(request))
+                self.assertEqual("", self.ask(request))
 
     def test_a_missing_app_record_fails_closed(self):
         (self.home / "github-app" / "tomjseery-bot.json").unlink()
-        with mock.patch.object(bot, "tommy_credential") as tommy:
-            out = io.StringIO()
-            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=tj-agents/x\n\n"), out)
+        out = io.StringIO()
+        bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=tj-agents/x\n\n"), out)
         self.assertEqual("", out.getvalue())
-        tommy.assert_not_called()
 
-    def test_a_work_target_does_not_require_personal_enrollment(self):
-        (self.home / "github-app" / "tomjseery-bot.json").unlink()
-        answer, calls = self.ask("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n")
-        self.assertEqual("username=tomjseery\npassword=gho_tommy\n", answer)
-        self.assertEqual(1, len(calls))
+    def test_an_account_the_app_does_not_cover_is_refused_with_its_reason(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            answer = self.ask("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n")
+        self.assertEqual("", answer)
+        self.assertIn("Infonetica is not an account the GitHub App covers", err.getvalue())
 
-    def test_other_accounts_use_tommys_own_helpers_without_agent_settings(self):
-        self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
-        answer, calls = self.ask("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n")
-        self.assertEqual("username=tomjseery\npassword=gho_tommy\n", answer)
-        environment = calls[0]["env"]
-        self.assertEqual("0", environment["GIT_TERMINAL_PROMPT"])
-        self.assertFalse({"TJ_AGENT", "GH_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT"} & environment.keys())
-        self.assertIn("path=Infonetica/cris.git\n", calls[0]["input"])
+    def test_an_unadopted_tj_agents_checkout_still_gets_the_app_token(self):
+        with mock.patch.object(subprocess, "run", side_effect=AssertionError("no checkout probe")):
+            answer = self.ask("protocol=https\nhost=github.com\npath=tj-agents/infonetica.git\n")
+        self.assertEqual("username=x-access-token\npassword=ghs_x\n", answer)
 
-
-@unittest.skipUnless(shutil.which("git"), "needs git")
 class GitContainmentTests(Sandbox):
     def setUp(self):
         super().setUp()
@@ -222,17 +203,6 @@ class GitContainmentTests(Sandbox):
             with self.subTest(request=request):
                 self.assertEqual(expected, self.fill(request, environment))
 
-    def test_the_fallback_reaches_tommys_helpers_and_never_reenters_the_agent_chain(self):
-        self.patch_environment(self.agent("print('username=x-access-token')\nprint('password=BOT')\n"))
-        os.environ.update({"TJ_AGENT": "1", "GH_TOKEN": bot.UNAUTHENTICATED})
-        for key in ("GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"):
-            os.environ[key] = self.tommy[key]
-        out = io.StringIO()
-        with mock.patch.object(bot, "installed", side_effect=fake_installed):
-            bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=Infonetica/cris.git\n\n"), out)
-        self.assertEqual("username=gh\npassword=TOMMY_GH\n", out.getvalue())
-
-
 class GhWrapperTests(Sandbox):
     def setUp(self):
         super().setUp()
@@ -269,9 +239,8 @@ class GhWrapperTests(Sandbox):
                                        checkout="Infonetica")
         self.assertEqual("ghs_tomjseery", environment["GH_TOKEN"])
 
-    def test_an_explicit_work_target_overrides_a_personal_checkout(self):
-        environment = self.environment("issue", "list", "-R", "Infonetica/cris", checkout="tj-agents")
-        self.assertNotIn("GH_TOKEN", environment)
+    def test_an_explicit_work_target_in_a_tj_agents_checkout_is_refused(self):
+        self.refused("issue", "list", "-R", "Infonetica/cris", checkout="tj-agents")
         self.installed.assert_not_called()
 
     def test_payload_urls_do_not_change_the_target_identity(self):
@@ -285,21 +254,10 @@ class GhWrapperTests(Sandbox):
                 environment = self.environment(*arguments, checkout="tj-agents")
                 self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
 
-    def test_a_personal_token_is_removed_when_a_gh_child_enters_work_scope(self):
-        personal = self.environment("api", "repos/tj-agents/personal")
-        self.patch_environment(personal)
-        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
-            work = self.environment("api", "repos/Infonetica/cris")
-        self.assertNotIn("GH_TOKEN", work)
-        self.assertNotIn(bot.TOKEN_FINGERPRINT, work)
-
-    def test_an_employer_token_replacing_an_inherited_personal_token_is_preserved(self):
+    def test_a_gh_child_entering_another_account_is_refused(self):
         self.patch_environment(self.environment("api", "repos/tj-agents/personal"))
-        self.patch_environment({"GH_TOKEN": "employer-replacement-fixture"})
-        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
-            work = self.environment("api", "repos/Infonetica/cris")
-        self.assertEqual("employer-replacement-fixture", work["GH_TOKEN"])
-        self.assertNotIn(bot.TOKEN_FINGERPRINT, work)
+        self.gh.calls.clear()
+        self.refused("api", "repos/Infonetica/cris")
 
     def test_a_personal_token_is_not_sent_to_a_different_host(self):
         self.refused("api", "repos/tj-agents/personal", "--hostname", "example.test")
@@ -310,15 +268,11 @@ class GhWrapperTests(Sandbox):
                                ("checkout", ("-f",)), ("co", ("-f",))):
             for flag in flags:
                 with self.subTest(command=command, flag=flag):
-                    environment = self.environment("pr", command, flag,
-                                                   "https://github.com/Infonetica/cris/pull/5", checkout="tj-agents")
-                    self.assertNotIn("GH_TOKEN", environment)
+                    self.refused("pr", command, flag, "https://github.com/Infonetica/cris/pull/5", checkout="tj-agents")
         self.installation_token.assert_not_called()
 
     def test_a_boolean_fork_remote_option_preserves_the_explicit_work_target(self):
-        environment = self.environment("repo", "fork", "--remote", "https://github.com/Infonetica/cris",
-                                       checkout="tj-agents")
-        self.assertNotIn("GH_TOKEN", environment)
+        self.refused("repo", "fork", "--remote", "https://github.com/Infonetica/cris", checkout="tj-agents")
         self.installation_token.assert_not_called()
 
     def test_clone_option_values_do_not_replace_the_repository_target(self):
@@ -360,36 +314,20 @@ class GhWrapperTests(Sandbox):
 
     def test_gh_repo_target_overrides_the_checkout(self):
         self.patch_environment({"GH_REPO": "Infonetica/cris"})
-        environment = self.environment("issue", "list", checkout="tj-agents")
-        self.assertNotIn("GH_TOKEN", environment)
+        self.refused("issue", "list", checkout="tj-agents")
         self.installed.assert_not_called()
 
     def test_mixed_explicit_owners_are_rejected_before_minting(self):
         self.refused("pr", "view", "https://github.com/tj-agents/core/pull/1", "-R", "Infonetica/cris")
         self.installation_token.assert_not_called()
 
-    def test_an_unselected_checkout_never_mints_a_personal_token(self):
-        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
-            environment = self.environment("issue", "list", "-R", "tj-agents/infonetica", checkout="tj-agents")
-        self.assertNotIn("GH_TOKEN", environment)
+    def test_an_unadopted_tj_agents_checkout_uses_the_app_by_owner(self):
+        environment = self.environment("issue", "list", checkout="tj-agents")
+        self.assertEqual("ghs_tj-agents", environment["GH_TOKEN"])
+
+    def test_a_repository_outside_the_apps_accounts_is_refused_not_given_tommys_gh(self):
+        self.refused("pr", "list", checkout="Infonetica")
         self.installation_token.assert_not_called()
-
-    def test_an_unselected_checkout_retains_employer_authentication_and_unrelated_git_config(self):
-        index = int(os.environ["GIT_CONFIG_COUNT"])
-        self.patch_environment({"GH_TOKEN": "employer-fixture", "GITHUB_TOKEN": "other-fixture",
-                                f"GIT_CONFIG_KEY_{index}": "core.autocrlf",
-                                f"GIT_CONFIG_VALUE_{index}": "false", "GIT_CONFIG_COUNT": str(index + 1)})
-        with mock.patch.object(bot, "personal_checkout", side_effect=bot.IdentityError("not personal")):
-            environment = self.environment("api", "repos/tj-agents/infonetica")
-        self.assertEqual("employer-fixture", environment["GH_TOKEN"])
-        self.assertEqual("other-fixture", environment["GITHUB_TOKEN"])
-        self.assertEqual("1", environment["GIT_CONFIG_COUNT"])
-        self.assertEqual("core.autocrlf", environment["GIT_CONFIG_KEY_0"])
-        self.assertNotIn(str(bot.shim_directory()), environment["PATH"].split(os.pathsep))
-
-    def test_uncovered_accounts_fall_through_to_tommys_own_gh(self):
-        environment = self.environment("pr", "list", checkout="Infonetica")
-        self.assertFalse({"TJ_AGENT", "GH_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT"} & environment.keys())
 
     def test_commands_without_an_account_stay_unauthenticated(self):
         environment = self.environment("api", "graphql", "-f", "query={viewer{login}}")
@@ -459,7 +397,6 @@ class ApprovalHandoffTests(GhWrapperTests):
                                                 (("pr", "ready", "--undo"), "tj-agents", 0),
                                                 (("pr", "create"), "tj-agents", 1),
                                                 (("pr", "ready", "4"), "tj-agents", 1),
-                                                (("pr", "create"), "Infonetica", 0),
                                                 (("pr", "create"), None, 0)):
             with self.subTest(arguments=arguments, checkout=checkout, returncode=returncode):
                 self.gh.calls.clear()
@@ -704,11 +641,8 @@ class EnrollmentTests(Sandbox):
 
     def test_missing_protected_installation_fails_closed_without_tommy_fallback(self):
         self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
-        with mock.patch.object(bot, "installed", return_value={}), \
-                mock.patch.object(bot, "tommy_environment") as tommy:
-            with self.assertRaises(bot.IdentityError):
-                bot.agent_gh_environment(["pr", "list", "-R", "tomjseery/notes"], None)
-        tommy.assert_not_called()
+        with mock.patch.object(bot, "installed", return_value={}), self.assertRaises(bot.IdentityError):
+            bot.agent_gh_environment(["pr", "list", "-R", "tomjseery/notes"], None)
 
     def test_failed_readiness_does_not_mutate_agent_hosts(self):
         with mock.patch.object(bot, "verify_ready", side_effect=bot.IdentityError("missing installation")), \
