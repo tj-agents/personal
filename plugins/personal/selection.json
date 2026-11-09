@@ -44,7 +44,9 @@
       ],
       "requires": [
         "python",
-        "gh"
+        "gh",
+        "agent-store",
+        "tj-item"
       ],
       "provenance": [
         "house"

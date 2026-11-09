@@ -87,7 +87,7 @@ COMMAND_PAYLOAD_FLAGS = {
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
-MCP_DENY = (
+AGENT_DENY = (
     "mcp__github__merge_pull_request",
     "mcp__github__create_pull_request",
     "mcp__github__pull_request_review_write",
@@ -96,6 +96,8 @@ MCP_DENY = (
     "mcp__github__delete_file",
     "mcp__github__create_branch",
     "mcp__github__update_pull_request_branch",
+    "Bash(tj approve:*)",
+    "Bash(tj-approve:*)",
 )
 
 
@@ -754,9 +756,9 @@ def hand_over(output: str) -> None:
     match = PULL_REQUEST.search(output)
     url = match.group(0) if match and match.group(1).lower() in REQUIRED_OWNERS else None
     subject, link = (url, "that link") if url else ("this PR", "its link")
-    print(f"bot_identity: REQUIRED IN YOUR REPLY: {subject} awaits Tommy's approval. Your reply reporting it must "
-          f"include {link} and tell Tommy to run `tj approve` in his own terminal; never run it yourself.",
-          file=sys.stderr)
+    print(f"bot_identity: REQUIRED IN YOUR REPLY: {subject} awaits Tommy's approval. Put the line `! tj approve` on "
+          f"Tommy's clipboard with cli:clip, and make your reply include {link} and that line; never run it "
+          f"yourself.", file=sys.stderr)
 
 
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
@@ -852,7 +854,7 @@ def update_claude(path: Path, environment: dict[str, str]) -> None:
         del current[key]
     current.update(environment)
     permissions = settings.setdefault("permissions", {})
-    permissions["deny"] = sorted(set(permissions.get("deny") or []) | set(MCP_DENY))
+    permissions["deny"] = sorted(set(permissions.get("deny") or []) | set(AGENT_DENY))
     if path.is_file():
         shutil.copyfile(path, path.with_name(path.name + ".pre-bot-identity.bak"))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1015,7 +1017,7 @@ def verify_host_setup() -> None:
         codex_env = tomllib.loads(codex.read_text(encoding="utf-8-sig"))["shell_environment_policy"]["set"]
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise IdentityError("agent host settings are missing; run setup") from error
-    if not isinstance(claude_denials, list) or any(rule not in claude_denials for rule in MCP_DENY):
+    if not isinstance(claude_denials, list) or any(rule not in claude_denials for rule in AGENT_DENY):
         raise IdentityError("agent host write restrictions are missing; run setup")
     for settings in (claude_env, codex_env):
         if any(settings.get(key) != value for key, value in environment.items()) or any(

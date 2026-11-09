@@ -23,6 +23,7 @@ EXTERNAL_SKILLS = {
         "feature",
     },
     "agent": {"plugins"},
+    "cli": {"clip"},
     "workflow": {"run"},
     "docs": {"layout"},
 }
