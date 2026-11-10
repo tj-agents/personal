@@ -105,9 +105,10 @@ class FakeTools:
             found = self.sessions.get(arguments[1])
             return self.store(command, found and {"session": found})
         if tool == "tj":
+            assert arguments[:4] == ["item", "--profile", "github", "prs"]
             pulls = [{"url": address, "state": state, "head": "Feature/x", "title": ""}
-                     for address, state in self.item_prs.get(arguments[2], [])]
-            return completed(command, json.dumps({"ref": arguments[2], "prs": pulls, "all_merged": False}))
+                     for address, state in self.item_prs.get(arguments[4], [])]
+            return completed(command, json.dumps({"ref": arguments[4], "prs": pulls, "all_merged": False}))
         if arguments[:3] == ["auth", "token", "--user"]:
             return completed(command, "gho_alex\n")
         if arguments == ["api", "user", "--jq", ".login"]:
@@ -175,8 +176,8 @@ class ApproveTests(unittest.TestCase):
     def test_each_linked_item_and_pr_is_read_once(self):
         self.tools.sessions["claude:me"] = session("claude:me", 10, 11, 10)
         self.run_approve()
-        self.assertEqual([["tj", "item", "prs", "github:github.com/example-tools/core:10"],
-                          ["tj", "item", "prs", "github:github.com/example-tools/core:11"]], self.tools.commands("tj"))
+        self.assertEqual([["tj", "item", "--profile", "github", "prs", "github:github.com/example-tools/core:10"],
+                          ["tj", "item", "--profile", "github", "prs", "github:github.com/example-tools/core:11"]], self.tools.commands("tj"))
         viewed = [command[3] for command in self.tools.commands("real-gh", "pr", "view")]
         self.assertEqual([self.first, self.approved, self.second, self.stale], viewed)
 
@@ -204,7 +205,7 @@ class ApproveTests(unittest.TestCase):
         self.run_approve()
         self.assertEqual([["agent-store", "show", "--launch-id", "L1"]], self.tools.commands("agent-store", "show"))
         self.assertEqual(["github:github.com/example-tools/core:11", "github:github.com/example-tools/core:10"],
-                         [command[3] for command in self.tools.commands("tj")])
+                         [command[5] for command in self.tools.commands("tj")])
 
     def test_a_codex_thread_resolves_its_native_session(self):
         del os.environ["CLAUDE_CODE_SESSION_ID"]
@@ -223,7 +224,7 @@ class ApproveTests(unittest.TestCase):
                                launch("L4", parent="claude:someone-else", item=12)]
         self.run_approve()
         self.assertEqual(["github:github.com/example-tools/core:10", "github:github.com/example-tools/core:11"],
-                         [command[3] for command in self.tools.commands("tj")])
+                         [command[5] for command in self.tools.commands("tj")])
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
 
     def test_a_parent_without_items_approves_children_that_record_it_as_their_session_parent(self):
@@ -234,7 +235,7 @@ class ApproveTests(unittest.TestCase):
         code, _ = self.run_approve()
         self.assertEqual(0, code)
         self.assertEqual(["github:github.com/example-tools/core:10", "github:github.com/example-tools/core:11"],
-                         [command[3] for command in self.tools.commands("tj")])
+                         [command[5] for command in self.tools.commands("tj")])
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
 
     def test_no_session_or_nothing_linked_says_so_and_approves_nothing(self):

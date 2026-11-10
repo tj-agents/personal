@@ -166,7 +166,7 @@ def display_name(url: str) -> str:
 def pending(items: list[str], gh: str, environment: dict[str, str], configuration: dict, run) -> list[dict]:
     urls = []
     for item in dict.fromkeys(items):
-        found = json_output([tool("tj"), "item", "prs", item], environment, run)
+        found = json_output([tool("tj"), "item", "--profile", "github", "prs", item], environment, run)
         urls += [pull["url"] for pull in found["prs"] if pull.get("state") == "open"]
     waiting = []
     accounts = {account.casefold() for account in configuration["accounts"]}
