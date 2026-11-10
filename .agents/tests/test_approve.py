@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,7 @@ SESSION_VARIABLES = ("TJ_RUN_LAUNCH_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD
 
 
 def ref(number):
-    return {"ref": f"github:example-tools/core:{number}", "provider": "github", "scope": "example-tools/core",
+    return {"ref": f"github:github.com/example-tools/core:{number}", "provider": "github", "scope": "github.com/example-tools/core",
             "native_id": str(number)}
 
 
@@ -81,8 +82,23 @@ class FakeTools:
         if tool == "agent-store":
             if arguments == ["launches"]:
                 return self.store(command, {"launches": self.launches})
-            if arguments == ["sessions"]:
-                return self.store(command, {"sessions": list(self.sessions.values())})
+            if arguments == ["items"]:
+                items = {}
+                for value in self.sessions.values():
+                    for link in value.get("links") or []:
+                        entry = items.setdefault(link["item"]["ref"], {"item": link["item"], "sessions": []})
+                        entry["sessions"].append({"session": value["session"], "role": link["role"]})
+                return self.store(command, {"items": list(items.values())})
+            if arguments[:1] == ["sessions"]:
+                if len(arguments) != 3 or arguments[1] not in ("--item", "--title"):
+                    return completed(command, json.dumps({"ok": False, "schema_version": 1,
+                        "error": {"code": "invalid-input", "message": "sessions requires --item or --title"}}), 2)
+                if arguments[1] == "--item":
+                    values = [value for value in self.sessions.values()
+                              if any(link["item"]["ref"] == arguments[2] for link in value.get("links") or [])]
+                else:
+                    values = [value for value in self.sessions.values() if value.get("title") == arguments[2]]
+                return self.store(command, {"sessions": values})
             if arguments[:2] == ["show", "--launch-id"]:
                 found = next((item for item in self.launches if item["launch_id"] == arguments[2]), None)
                 return self.store(command, found and {"launch": found, "session": self.sessions.get(found["session"])})
@@ -125,8 +141,8 @@ class ApproveTests(unittest.TestCase):
                                                              url("example-tools/cli", 3), url("example-tools/docs", 4))
         self.tools = FakeTools(
             sessions={"claude:me": session("claude:me", 10, 11)},
-            item_prs={"github:example-tools/core:10": [(self.first, "open"), (self.approved, "open")],
-                      "github:example-tools/core:11": [(self.first, "open"), (self.second, "open"),
+            item_prs={"github:github.com/example-tools/core:10": [(self.first, "open"), (self.approved, "open")],
+                      "github:github.com/example-tools/core:11": [(self.first, "open"), (self.second, "open"),
                                                    (self.stale, "open"), (url("example-tools/core", 5), "merged")]},
             pulls={self.first: details(self.first),
                    self.second: details(self.second),
@@ -159,14 +175,14 @@ class ApproveTests(unittest.TestCase):
     def test_each_linked_item_and_pr_is_read_once(self):
         self.tools.sessions["claude:me"] = session("claude:me", 10, 11, 10)
         self.run_approve()
-        self.assertEqual([["tj", "item", "prs", "github:example-tools/core:10"],
-                          ["tj", "item", "prs", "github:example-tools/core:11"]], self.tools.commands("tj"))
+        self.assertEqual([["tj", "item", "prs", "github:github.com/example-tools/core:10"],
+                          ["tj", "item", "prs", "github:github.com/example-tools/core:11"]], self.tools.commands("tj"))
         viewed = [command[3] for command in self.tools.commands("real-gh", "pr", "view")]
         self.assertEqual([self.first, self.approved, self.second, self.stale], viewed)
 
     def test_only_open_bot_prs_without_the_reviewers_approval_at_head_are_kept(self):
         other, closed, requested = url("example-tools/core", 6), url("example-tools/core", 7), url("example-tools/core", 8)
-        self.tools.item_prs = {"github:example-tools/core:10": [(other, "open"), (closed, "open"), (requested, "open")]}
+        self.tools.item_prs = {"github:github.com/example-tools/core:10": [(other, "open"), (closed, "open"), (requested, "open")]}
         self.tools.pulls = {other: details(other, author="alex"), closed: details(closed, state="CLOSED"),
                             requested: details(requested, reviews=[review("alex")], requests=["alex"])}
         self.tools.sessions["claude:me"] = session("claude:me", 10)
@@ -187,7 +203,7 @@ class ApproveTests(unittest.TestCase):
         self.tools.sessions = {"claude:bound": session("claude:bound", 10)}
         self.run_approve()
         self.assertEqual([["agent-store", "show", "--launch-id", "L1"]], self.tools.commands("agent-store", "show"))
-        self.assertEqual(["github:example-tools/core:11", "github:example-tools/core:10"],
+        self.assertEqual(["github:github.com/example-tools/core:11", "github:github.com/example-tools/core:10"],
                          [command[3] for command in self.tools.commands("tj")])
 
     def test_a_codex_thread_resolves_its_native_session(self):
@@ -206,7 +222,7 @@ class ApproveTests(unittest.TestCase):
                                launch("L3", parent="codex:grandchild", item=11),
                                launch("L4", parent="claude:someone-else", item=12)]
         self.run_approve()
-        self.assertEqual(["github:example-tools/core:10", "github:example-tools/core:11"],
+        self.assertEqual(["github:github.com/example-tools/core:10", "github:github.com/example-tools/core:11"],
                          [command[3] for command in self.tools.commands("tj")])
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
 
@@ -217,7 +233,7 @@ class ApproveTests(unittest.TestCase):
                                "claude:stranger": session("claude:stranger", 12, parent="claude:someone-else")}
         code, _ = self.run_approve()
         self.assertEqual(0, code)
-        self.assertEqual(["github:example-tools/core:10", "github:example-tools/core:11"],
+        self.assertEqual(["github:github.com/example-tools/core:10", "github:github.com/example-tools/core:11"],
                          [command[3] for command in self.tools.commands("tj")])
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
 
@@ -235,7 +251,7 @@ class ApproveTests(unittest.TestCase):
         self.assertEqual([], self.tools.calls)
 
     def test_nothing_waiting_says_so_and_approves_nothing(self):
-        self.tools.item_prs = {"github:example-tools/core:10": [(self.approved, "open")]}
+        self.tools.item_prs = {"github:github.com/example-tools/core:10": [(self.approved, "open")]}
         code, out = self.run_approve()
         self.assertEqual((0, []), (code, self.approvals()))
         self.assertEqual("No pull requests await your approval.\n", out)
@@ -289,7 +305,7 @@ def test_another_users_bot_and_reviewer_are_used_and_other_accounts_are_not_read
     configuration = {**CONFIGURATION, "app": {**CONFIGURATION["app"], "slug": "mira-helper"},
                      "reviewer": "mira", "accounts": ["mira-projects"]}
     tools = FakeTools(sessions={"codex:mira-thread": session("codex:mira-thread", 1)},
-                      item_prs={"github:example-tools/core:1": [(address, "open")
+                      item_prs={"github:github.com/example-tools/core:1": [(address, "open")
                                                              for address in (own, other_bot, unauthorized, human)]},
                       pulls={own: details(own, author="app/mira-helper"),
                              other_bot: details(other_bot, author="app/someone-else"), human: spoofed})
@@ -335,6 +351,57 @@ def test_a_human_cannot_impersonate_the_configured_app_slug(author_type: dict[st
     pull = details(url("example-tools/core", 1), author="alex-bot")
     pull["author"].update(author_type)
     assert not approve.bot_authored(pull, "alex-bot")
+
+
+def test_descendant_discovery_walks_unlinked_ancestors_and_ignores_unrelated_cycles() -> None:
+    tools = FakeTools(sessions={
+        "codex:root": session("codex:root"),
+        "codex:middle": session("codex:middle", parent="codex:root"),
+        "claude:child": session("claude:child", 11, parent="codex:middle"),
+        "codex:cycle-a": session("codex:cycle-a", 12, parent="codex:cycle-b"),
+        "codex:cycle-b": session("codex:cycle-b", parent="codex:cycle-a"),
+        "codex:orphan": session("codex:orphan", 13, parent="codex:missing"),
+    }, launches=[launch("unbound-child", parent="codex:middle", item=10),
+                 launch("unrelated", parent="codex:stranger", item=14)])
+    with mock.patch.object(approve, "tool", return_value="agent-store"):
+        found = approve.descendant_items("codex:root", tools)
+    assert set(found) == {ref(10)["ref"], ref(11)["ref"]}
+    queries = tools.commands("agent-store", "show")
+    assert len(queries) == len({command[2] for command in queries})
+    assert ["agent-store", "show", "codex:middle"] in queries
+    assert not tools.commands("agent-store", "sessions")
+
+
+def test_descendant_discovery_uses_the_installed_agent_store_contract(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    executable = shutil.which("agent-store")
+    if executable is None:
+        pytest.skip("the real agent-store CLI is required for this integration check")
+    database = tmp_path / "agent-store.db"
+    monkeypatch.setenv("AGENT_STORE_DATABASE", str(database))
+
+    def command(*arguments: str) -> dict:
+        result = subprocess.run([executable, "--database", str(database), *arguments],
+                                capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
+        assert result.returncode == 0, result.stdout or result.stderr
+        document = json.loads(result.stdout)
+        assert document["ok"]
+        return document["data"]
+
+    for handle, parent in (("codex:root", None), ("claude:middle", "codex:root"),
+                           ("codex:child", "claude:middle"), ("codex:unrelated", None)):
+        arguments = ["register", "--session", handle, "--cwd", str(tmp_path)]
+        if parent:
+            arguments += ["--parent", parent]
+        command(*arguments)
+    command("link", "--session", "codex:child", "--item", ref(11)["ref"])
+    command("link", "--session", "codex:unrelated", "--item", ref(12)["ref"])
+    command("launch", "--launch-id", "unbound-descendant", "--host", "codex", "--title", "child",
+            "--cwd", str(tmp_path), "--wrapper-pid", str(os.getpid()), "--wrapper-started-at", "2026-11-10T00:00:00Z",
+            "--parent", "claude:middle", "--item", ref(10)["ref"])
+    with mock.patch.object(approve, "tool", return_value=executable):
+        found = approve.descendant_items("codex:root", subprocess.run)
+    assert set(found) == {ref(10)["ref"], ref(11)["ref"]}
 
 
 if __name__ == "__main__":
