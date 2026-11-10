@@ -59,7 +59,17 @@ def linked(session: dict) -> list[str]:
     return [link["item"]["ref"] for link in session.get("links") or []]
 
 
-def current_session(run) -> tuple[str | None, list[str]] | None:
+def current_session(
+    run, session_handle: str | None = None
+) -> tuple[str | None, list[str]] | None:
+    if session_handle is not None:
+        data = agent_store(["show", session_handle], run)
+        if data is None:
+            raise ApproveError(
+                f"unknown agent session {session_handle}; nothing approved"
+            )
+        session = data["session"]
+        return session["session"], linked(session)
     if launch_id := os.environ.get("TJ_RUN_LAUNCH_ID"):
         data = agent_store(["show", "--launch-id", launch_id], run)
         if data is None:
@@ -184,8 +194,10 @@ def pending(items: list[str], gh: str, environment: dict[str, str], configuratio
     return waiting
 
 
-def approve(run=subprocess.run, out=sys.stdout) -> int:
-    session = current_session(run)
+def approve(
+    run=subprocess.run, out=sys.stdout, session_handle: str | None = None
+) -> int:
+    session = current_session(run, session_handle)
     if session is None:
         print("No agent session found here; nothing approved.", file=out)
         return 0
@@ -216,9 +228,13 @@ def approve(run=subprocess.run, out=sys.stdout) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argparse.ArgumentParser(prog="tj approve", description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(prog="tj approve", description=__doc__)
+    parser.add_argument(
+        "--session", metavar="HOST:ID", help="registered originating agent session"
+    )
+    arguments = parser.parse_args(argv)
     try:
-        return approve()
+        return approve(session_handle=arguments.session)
     except (ApproveError, bot_identity.IdentityError) as error:
         print(f"tj approve: {error}", file=sys.stderr)
         return 2
