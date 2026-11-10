@@ -40,7 +40,9 @@ bot, in configured accounts, and awaiting the configured reviewer's approval at 
 eligible. A pending review request also makes a matching PR eligible. It never sweeps an account or
 organization, and never approves a human-authored PR as a substitute for correct bot authorship.
 
-The command prints an approval or failure for each PR and exits nonzero if any approval fails. Missing
+After each approval it arms squash auto-merge pinned to the approved head, so the PR merges as soon as its
+required checks pass and no session has to come back to merge it. A new push cancels it. The command
+prints the approval and merge result for each PR and exits nonzero if any approval or auto-merge fails. Missing
 or mismatched human sign-ins fail before review writes. No current session, no linked work or no
 eligible PRs produces a short result and approves nothing.
 

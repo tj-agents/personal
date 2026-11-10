@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Approve the configured bot's PRs as its human reviewer for this session's work items (Python 3.12+)."""
+"""Approve the configured bot's PRs as its human reviewer for this session's work items and arm their auto-merge
+(Python 3.12+)."""
 
 from __future__ import annotations
 
@@ -209,7 +210,8 @@ def pending(items: list[str], gh: str, environment: dict[str, str], configuratio
             continue
         if (details.get("state") == "OPEN" and bot_authored(details, configuration["app"]["slug"])
                 and awaits_reviewer(details, configuration["reviewer"])):
-            waiting.append({"name": display_name(url), "title": details.get("title", ""), "url": url})
+            waiting.append({"name": display_name(url), "title": details.get("title", ""), "url": url,
+                            "head": details["headRefOid"]})
     return waiting
 
 
@@ -241,8 +243,15 @@ def approve(
         if result.returncode:
             failed = True
             print(f"failed {item['name']}: {reason(result)}", file=out)
+            continue
+        print(f"approved {item['name']}", file=out)
+        merge = captured(run, [gh, "pr", "merge", "--auto", "--squash", "--match-head-commit", item["head"],
+                               item["url"]], environment)
+        if merge.returncode:
+            failed = True
+            print(f"not merging {item['name']}: {reason(merge)}", file=out)
         else:
-            print(f"approved {item['name']}", file=out)
+            print(f"merging {item['name']} when its checks pass", file=out)
     return 1 if failed else 0
 
 
