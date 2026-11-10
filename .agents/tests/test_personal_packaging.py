@@ -65,10 +65,12 @@ class PersonalPackagingTests(unittest.TestCase):
     ) -> None:
         for path in (ROOT / "plugins/personal").rglob("*"):
             if path.is_file() and "bot-identity" not in path.parts:
+                self.assertNotIn("credential", path.parts, str(path))
+                self.assertNotEqual("credential", path.stem.casefold(), str(path))
                 text = path.read_text(encoding="utf-8").casefold()
                 for retired in (
                     "azure",
-                    "credential",
+                    "personal:credential",
                     "mcp",
                 ):
                     self.assertNotIn(retired, text, str(path))

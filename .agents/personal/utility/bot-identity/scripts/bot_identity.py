@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run agent GitHub access as Tommy's GitHub App in personal repositories (Python 3.11+, needs openssl).
+"""Run agent GitHub access as the configured GitHub App in personal repositories (Python 3.12+, needs openssl).
 
 `token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
-the real gh and `setup` installs the wrapper, the agent-only settings for Claude and Codex and Tommy's `tj approve`.
+the real gh and `setup` installs the wrapper, the agent-only settings for Claude and Codex and the human's `tj approve`.
 `converge` replaces stale wrapper and `tj approve` script copies with this plugin's.
 """
 
@@ -27,9 +27,10 @@ import webbrowser
 import zipfile
 from datetime import datetime
 from enum import StrEnum
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import assert_never
+
+import onboarding
 
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
@@ -39,9 +40,6 @@ TIMEOUT_SECONDS = 30
 TOKEN_MARGIN_SECONDS = 300
 ENROLLMENT_SECONDS = 600
 MAX_ENROLLMENT_BYTES = 32 * 1024
-REQUIRED_OWNERS = ("tomjseery", "tj-agents", "concertable")
-REQUIRED_CAPABILITY_VERSION = 1
-REQUIRED_CAPABILITIES = {REQUIRED_CAPABILITY_VERSION: {"tj-agents": {"repository_creation": "write"}}}
 FORBIDDEN_WRITE_PERMISSIONS = ("administration",)
 WINDOWS = os.name == "nt"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
@@ -117,6 +115,14 @@ class IdentityError(Exception):
     pass
 
 
+class KeyVerificationError(IdentityError):
+    pass
+
+
+class OnboardingRequired(IdentityError):
+    pass
+
+
 class GitHubError(IdentityError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
@@ -127,21 +133,78 @@ def store() -> Path:
     return Path.home() / ".agents-state" / "github-app"
 
 
-def descriptor_path() -> Path:
-    return Path(__file__).with_name("tomjseery-bot.json")
+def validate_identity(value: object) -> dict:
+    fields = {"schema_version", "app", "reviewer", "accounts", "permissions", "key"}
+    if not isinstance(value, dict) or set(value) != fields or (type(value["schema_version"]) is not int or value["schema_version"] != 1):
+        raise IdentityError("the local GitHub identity configuration is invalid")
+    app = value["app"]
+    if not isinstance(app, dict) or set(app) != {"id", "client_id", "slug", "owner", "owner_type"} or \
+            app["owner_type"] not in ("User", "Organization") or type(app["id"]) is not int or app["id"] <= 0 or any(
+                not isinstance(app[name], str) or not re.fullmatch(r"[A-Za-z0-9_-]+", app[name])
+                for name in ("client_id", "slug", "owner")):
+        raise IdentityError("the configured GitHub App descriptor is invalid")
+    reviewer, accounts = value["reviewer"], value["accounts"]
+    if not isinstance(reviewer, str) or not re.fullmatch(r"[A-Za-z0-9-]+", reviewer) or \
+            not isinstance(accounts, list) or not accounts or any(
+                not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9-]+", owner) for owner in accounts) or \
+            len({owner.lower() for owner in accounts}) != len(accounts):
+        raise IdentityError("configure a human reviewer and distinct permitted GitHub accounts")
+    permissions = value["permissions"]
+    if not isinstance(permissions, dict) or any(
+            not isinstance(owner, str) or owner.lower() not in {account.lower() for account in accounts}
+            or not isinstance(required, dict) or any(
+                not isinstance(name, str) or not re.fullmatch(r"[a-z_]+", name) or level not in ("read", "write")
+                for name, level in required.items()) for owner, required in permissions.items()):
+        raise IdentityError("the configured account permissions are invalid")
+    key = value["key"]
+    if key is not None and (not isinstance(key, str) or not Path(key).is_absolute() or
+                            Path(key).parent != store() or Path(key).name != f"{app['slug']}.pem"):
+        raise IdentityError("the local GitHub App key location is invalid")
+    return value
+
+
+def identity_config() -> dict:
+    if is_reparse(store()):
+        raise IdentityError("the GitHub App enrollment directory is unsafe")
+    path = store() / "identity.json"
+    if not path.exists():
+        raise OnboardingRequired("identity setup required: run `bot_identity.py setup --onboard`")
+    safe_existing_file(path)
+    require_private_permissions(store(), directory=True)
+    require_private_permissions(path)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise IdentityError("the local GitHub identity configuration is invalid") from error
+    return validate_identity(value)
+
+
+def configure_identity(config: dict) -> None:
+    config = validate_identity(config)
+    try:
+        previous = identity_config()
+    except OnboardingRequired:
+        previous = None
+    if previous is not None and previous["key"] is not None:
+        if previous["app"] != config["app"]:
+            raise IdentityError("a different GitHub App is already enrolled; preserve its enrollment")
+        if config["key"] is None:
+            config = {**config, "key": previous["key"]}
+    if previous != config:
+        write_private(store() / "identity.json", config)
 
 
 def app_descriptor() -> dict:
-    try:
-        value = json.loads(descriptor_path().read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise IdentityError("the bundled GitHub App descriptor is unavailable") from error
-    required = {"id", "client_id", "slug", "owner"}
-    if set(value) != required or not isinstance(value["id"], int) or any(
-        not isinstance(value[key], str) or not value[key] for key in required - {"id"}
-    ):
-        raise IdentityError("the bundled GitHub App descriptor is invalid")
-    return value
+    return identity_config()["app"]
+
+
+def required_owners() -> tuple[str, ...]:
+    return tuple(owner.lower() for owner in identity_config()["accounts"])
+
+
+def required_permissions(owner: str) -> dict[str, str]:
+    return next((required for account, required in identity_config()["permissions"].items()
+                 if account.lower() == owner.lower()), {})
 
 
 def gh_config_directory() -> Path:
@@ -173,28 +236,15 @@ def require_private_permissions(path: Path, directory: bool = False) -> None:
 
 
 def app_record() -> dict:
-    descriptor = app_descriptor()
-    if is_reparse(store()):
-        raise IdentityError("the GitHub App enrollment directory is unsafe")
-    path = store() / f"{descriptor['slug']}.json"
-    if not path.exists():
-        raise IdentityError("enrollment required: run `bot_identity.py setup --onboard` with Tommy present")
-    safe_existing_file(path)
-    require_private_permissions(store(), directory=True)
-    require_private_permissions(path)
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise IdentityError("the local GitHub App enrollment is invalid") from error
-    if any(record.get(key) != value for key, value in descriptor.items()):
-        raise IdentityError("the local GitHub App enrollment does not match the pinned App")
-    key = Path(record.get("key", ""))
-    if not key.is_absolute() or key.parent != store() or key.name != f"{descriptor['slug']}.pem":
-        raise IdentityError("the local GitHub App key location is invalid")
+    config = identity_config()
+    if config["key"] is None:
+        raise OnboardingRequired("enrollment required: run `bot_identity.py setup --onboard`")
+    key = Path(config["key"])
+    if not key.exists():
+        raise OnboardingRequired("enrollment key is missing: run `bot_identity.py setup --onboard`")
     safe_existing_file(key)
     require_private_permissions(key)
-    record["key"] = str(key)
-    return record
+    return {**config["app"], "key": str(key)}
 
 
 def b64(data: bytes) -> str:
@@ -211,13 +261,15 @@ def app_jwt(record: dict, now: float | None = None, run=subprocess.run) -> str:
     result = run([openssl, "dgst", "-sha256", "-sign", record["key"]], input=signing.encode(), capture_output=True,
                  timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
     if result.returncode:
-        raise IdentityError("openssl could not sign with the enrolled GitHub App key")
+        raise KeyVerificationError("openssl could not sign with the enrolled GitHub App key")
     return f"{signing}.{b64(result.stdout)}"
 
 
-def api(path: str, bearer: str, method: str = "GET") -> object:
-    request = urllib.request.Request(f"{API}{path}", method=method, headers={
-        "Authorization": f"Bearer {bearer}", "Accept": "application/vnd.github+json"})
+def api(path: str, bearer: str | None, method: str = "GET") -> object:
+    headers = {"Accept": "application/vnd.github+json"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+    request = urllib.request.Request(f"{API}{path}", method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             return json.load(response)
@@ -232,18 +284,21 @@ def validate_remote_app(record: dict, fetch=api, sign=app_jwt) -> dict:
     descriptor = app_descriptor()
     if not isinstance(actual, dict) or actual.get("id") != descriptor["id"] or \
             actual.get("client_id") != descriptor["client_id"] or actual.get("slug") != descriptor["slug"] or \
-            actual.get("owner", {}).get("login", "").lower() != descriptor["owner"].lower():
-        raise IdentityError("the enrolled key does not authenticate the pinned GitHub App")
+            actual.get("owner", {}).get("login", "").lower() != descriptor["owner"].lower() or \
+            actual.get("owner", {}).get("type") != descriptor["owner_type"]:
+        raise KeyVerificationError("the enrolled key does not authenticate the configured GitHub App")
     return actual
 
 
 def app_settings_url(descriptor: dict) -> str:
+    if descriptor["owner_type"] == "Organization":
+        return f"https://github.com/organizations/{descriptor['owner']}/settings/apps/{descriptor['slug']}"
     return f"https://github.com/settings/apps/{descriptor['slug']}"
 
 
 def installation_settings_url(installation: dict) -> str:
     account = installation.get("account", {})
-    login = account.get("login", "tj-agents")
+    login = account.get("login", "")
     if installation.get("target_type") == "User":
         return f"https://github.com/settings/installations/{installation['id']}"
     return f"https://github.com/organizations/{login}/settings/installations/{installation['id']}"
@@ -261,41 +316,42 @@ def capability_error(subject: str, permissions: object, required: dict[str, str]
 
 def validate_app_capabilities(actual: dict) -> None:
     descriptor = app_descriptor()
-    capability_error("pinned GitHub App", actual.get("permissions"),
-                     REQUIRED_CAPABILITIES[REQUIRED_CAPABILITY_VERSION]["tj-agents"], app_settings_url(descriptor))
+    for owner in required_owners():
+        capability_error("configured GitHub App", actual.get("permissions"),
+                         required_permissions(owner), app_settings_url(descriptor))
 
 
 def remote_installations(record: dict, fetch=api, sign=app_jwt) -> dict[str, dict]:
     values = fetch("/app/installations", sign(record))
     if not isinstance(values, list):
-        raise IdentityError("the pinned GitHub App installations response is invalid")
+        raise IdentityError("the configured GitHub App installations response is invalid")
     known = {}
     for item in values:
         if not isinstance(item, dict) or not isinstance(item.get("id"), int) or \
                 not isinstance(item.get("account"), dict) or \
                 not isinstance(item["account"].get("login"), str):
-            raise IdentityError("the pinned GitHub App installations response is invalid")
+            raise IdentityError("the configured GitHub App installations response is invalid")
         known[item["account"]["login"].lower()] = item
     return known
 
 
 def missing_required_installations(record: dict, fetch=api, sign=app_jwt) -> list[str]:
     known = remote_installations(record, fetch=fetch, sign=sign)
-    return [owner for owner in REQUIRED_OWNERS if owner not in known]
+    return [owner for owner in required_owners() if owner not in known]
 
 
 def verify_ready(record: dict, fetch=api, sign=app_jwt) -> None:
     actual = validate_remote_app(record, fetch=fetch, sign=sign)
     validate_app_capabilities(actual)
     known = remote_installations(record, fetch=fetch, sign=sign)
-    missing = [owner for owner in REQUIRED_OWNERS if owner not in known]
+    missing = [owner for owner in required_owners() if owner not in known]
     if missing:
-        raise IdentityError("the pinned GitHub App is not installed on: " + ", ".join(missing) +
-                            "; install it at https://github.com/apps/tomjseery-bot/installations/new")
-    tj_agents = known["tj-agents"]
-    capability_error("tj-agents App installation", tj_agents.get("permissions"),
-                     REQUIRED_CAPABILITIES[REQUIRED_CAPABILITY_VERSION]["tj-agents"],
-                     installation_settings_url(tj_agents))
+        raise OnboardingRequired("the configured GitHub App is not installed on: " + ", ".join(missing) +
+                                 f"; install it at https://github.com/apps/{record['slug']}/installations/new")
+    for owner in required_owners():
+        installation = known[owner]
+        capability_error(f"{owner} App installation", installation.get("permissions"),
+                         required_permissions(owner), installation_settings_url(installation))
 
 
 def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
@@ -304,9 +360,12 @@ def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
         raise IdentityError("the selected file is not a supported GitHub App private key")
     descriptor = app_descriptor()
     directory = secure_store()
-    candidate = directory / ".candidate.pem"
-    if candidate.exists() or is_reparse(candidate):
-        candidate.unlink(missing_ok=True)
+    pending = directory / f"{descriptor['slug']}.pending.pem"
+    if is_reparse(pending):
+        raise IdentityError("the pending GitHub App key location is unsafe")
+    candidate = directory / ".replacement.pem" if pending.exists() else pending
+    if is_reparse(candidate):
+        raise IdentityError("the replacement GitHub App key location is unsafe")
     write_key(candidate, key)
     record = {**descriptor, "key": str(candidate)}
     try:
@@ -317,107 +376,32 @@ def persist_enrollment(key: bytes, fetch=api, sign=app_jwt) -> dict:
         os.replace(candidate, destination)
         protect(destination)
         record["key"] = str(destination)
-        write_private(directory / f"{descriptor['slug']}.json", record)
+        configure_identity({**identity_config(), "key": str(destination)})
+        if candidate != pending:
+            pending.unlink(missing_ok=True)
         return record
     finally:
-        candidate.unlink(missing_ok=True)
-
-
-def enrollment_page(port: int, nonce: str) -> bytes:
-    descriptor = app_descriptor()
-    endpoint = f"/enroll/{nonce}"
-    return f"""<!doctype html><meta charset=utf-8><title>GitHub App enrollment</title>
-<h1>Enroll this machine for {descriptor['slug']}</h1>
-<p>This connects only to the existing GitHub App <strong>{descriptor['owner']}/{descriptor['slug']}</strong>
-(App ID {descriptor['id']}). Your browser keeps the downloaded PEM; remove it yourself through your browser or OS after success.</p>
-<p>Create a new private key at <a href=\"https://github.com/settings/apps/tomjseery-bot\">GitHub App settings</a>, then select that PEM file.</p>
-<input id=key type=file accept=\".pem,application/x-pem-file\"><button id=enroll>Enroll key</button>
-<button id=verify>Verify required installations</button><pre id=result></pre>
-<script>const endpoint={endpoint!r}, state={nonce!r}, result=document.getElementById('result');
-async function post(body) {{ let r=await fetch(endpoint,{{method:'POST',headers:{{'X-Bot-Identity-State':state}},body}}); result.textContent=await r.text(); }}
-document.getElementById('enroll').onclick=async()=>{{let f=document.getElementById('key').files[0];if(!f){{result.textContent='Select the newly downloaded PEM file.';return}};await post(await f.arrayBuffer())}};
-document.getElementById('verify').onclick=()=>post('');</script>""".encode("utf-8")
+        if candidate != pending:
+            candidate.unlink(missing_ok=True)
 
 
 def onboard(open_browser=webbrowser.open, fetch=api, sign=app_jwt, clock=time.monotonic) -> None:
-    import secrets
-    nonce = secrets.token_urlsafe(32)
+    def ready() -> None:
+        verify_enrollment(fetch=fetch, sign=sign)
 
-    class EnrollmentHandler(BaseHTTPRequestHandler):
-        def log_message(self, format: str, *args: object) -> None:
-            return
-
-        def setup(self) -> None:
-            super().setup()
-            self.connection.settimeout(5)
-
-        def allowed(self) -> bool:
-            return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
-
-        def reply(self, code: int, text: str, content_type: str = "text/plain; charset=utf-8") -> None:
-            payload = text.encode("utf-8")
-            self.send_response(code)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def do_GET(self) -> None:
-            if not self.allowed() or self.path != f"/enroll/{nonce}":
-                self.reply(404, "Not found")
-                return
-            payload = enrollment_page(self.server.server_port, nonce)
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def do_POST(self) -> None:
-            origin = f"http://127.0.0.1:{self.server.server_port}"
-            if not self.allowed() or self.path != f"/enroll/{nonce}" or \
-                    self.headers.get("Origin") != origin or self.headers.get("X-Bot-Identity-State") != nonce:
-                self.reply(403, "Enrollment request rejected")
-                return
-            try:
-                length = int(self.headers.get("Content-Length", "-1"))
-            except ValueError:
-                length = -1
-            if length < 0 or length > MAX_ENROLLMENT_BYTES:
-                self.reply(413, "Enrollment upload rejected")
-                return
-            key = self.rfile.read(length)
-            try:
-                if key:
-                    persist_enrollment(key, fetch=fetch, sign=sign)
-                missing = missing_required_installations(app_record(), fetch=fetch, sign=sign)
-                if missing:
-                    self.reply(200, "Key enrolled. Install the App for " + ", ".join(missing) +
-                               " at https://github.com/apps/tomjseery-bot/installations/new, then rerun setup.")
-                    self.server.finished = True
-                else:
-                    self.reply(200, "Enrollment verified. Return to the terminal to finish setup.")
-                    self.server.finished = True
-            except IdentityError:
-                self.reply(400, "Enrollment could not be verified. Check the connection and that the selected key belongs to this App, then retry.")
-
-    server = HTTPServer(("127.0.0.1", 0), EnrollmentHandler)
-    server.timeout = 1
-    server.finished = False
-    url = f"http://127.0.0.1:{server.server_port}/enroll/{nonce}"
-    print("Opening a local GitHub App enrollment page. It expires in 10 minutes.")
-    print(url)
-    open_browser(url)
-    deadline = clock() + ENROLLMENT_SECONDS
     try:
-        while clock() < deadline and not server.finished:
-            server.handle_request()
-    finally:
-        server.server_close()
-    if not server.finished:
-        raise IdentityError("GitHub App enrollment did not complete within 10 minutes")
+        onboarding.onboard(
+            load=identity_config,
+            configure=configure_identity,
+            enroll=lambda key: persist_enrollment(key, fetch=fetch, sign=sign),
+            ready=ready,
+            error_type=IdentityError,
+            open_browser=open_browser,
+            clock=clock,
+            discover=lambda: sorted(remote_installations(app_record(), fetch=fetch, sign=sign)),
+        )
+    except onboarding.OnboardingError as error:
+        raise IdentityError(str(error)) from error
 
 
 def protect(path: Path, directory: bool = False, *, check: bool = False) -> None:
@@ -605,7 +589,7 @@ def installed(owners: list[str], record: dict, fetch=api, sign=app_jwt) -> dict[
 
 
 def installation_token(owner: str, record: dict, now: float | None = None, fetch=api, sign=app_jwt) -> str | None:
-    if owner.lower() not in REQUIRED_OWNERS:
+    if owner.lower() not in required_owners():
         raise IdentityError("the GitHub App is not authorized for that account")
     installation = installed([owner], record, fetch=fetch, sign=sign).get(owner.lower())
     if installation is None:
@@ -714,11 +698,11 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     environment = dict(os.environ)
     if not owners:
         return environment
-    protected = [owner for owner in owners if owner.lower() in REQUIRED_OWNERS]
+    protected = [owner for owner in owners if owner.lower() in required_owners()]
     if not protected:
         if arguments[:1] == ["auth"]:
             return environment
-        raise IdentityError(f"{owners[0]} is not an account the GitHub App covers; agent sessions never use Tommy's credentials")
+        raise IdentityError(f"{owners[0]} is not an account the GitHub App covers; agent sessions never use the human's credentials")
     hostname = hostname if hostname is not None else os.environ.get("GH_HOST") or "github.com"
     if hostname.lower() != "github.com":
         raise IdentityError("the Personal GitHub App is authorized only for github.com")
@@ -726,7 +710,7 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     covered = installed(protected, record) if protected else {}
     missing = [owner for owner in protected if owner.lower() not in covered]
     if missing:
-        raise IdentityError("the pinned GitHub App is not installed on " + ", ".join(missing))
+        raise IdentityError("the configured GitHub App is not installed on " + ", ".join(missing))
     app_owner = next(owner for owner in owners if owner.lower() in covered)
     token = installation_token(app_owner, record)
     if not token:
@@ -766,10 +750,10 @@ def ready_selector(arguments: list[str]) -> list[str]:
 
 def hand_over(output: str) -> None:
     match = PULL_REQUEST.search(output)
-    url = match.group(0) if match and match.group(1).lower() in REQUIRED_OWNERS else None
+    url = match.group(0) if match and match.group(1).lower() in required_owners() else None
     subject, link = (url, "that link") if url else ("this PR", "its link")
-    print(f"bot_identity: REQUIRED IN YOUR REPLY: {subject} awaits Tommy's approval. Put the line `! tj approve` on "
-          f"Tommy's clipboard with cli:clip, and make your reply include {link} and that line; never run it "
+    print(f"bot_identity: REQUIRED IN YOUR REPLY: {subject} awaits {identity_config()['reviewer']}'s approval. Put the line `! tj approve` on "
+          f"the human's clipboard with cli:clip, and make your reply include {link} and that line; never run it "
           f"yourself.", file=sys.stderr)
 
 
@@ -809,11 +793,11 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
     owner = fields.get("path", "").split("/")[0]
     if fields.get("protocol") != "https" or fields.get("host", "").lower() != "github.com" or not owner:
         return 0
-    if owner.lower() not in REQUIRED_OWNERS:
-        print(f"bot_identity: {owner} is not an account the GitHub App covers; agent sessions never use Tommy's "
-              "credentials", file=sys.stderr)
-        return 0
     try:
+        if owner.lower() not in required_owners():
+            print(f"bot_identity: {owner} is not an account the GitHub App covers; agent sessions never use the human's "
+                  "credentials", file=sys.stderr)
+            return 0
         record = app_record()
         if not installed([owner], record):
             return 0
@@ -867,10 +851,13 @@ def update_claude(path: Path, environment: dict[str, str]) -> None:
     current.update(environment)
     permissions = settings.setdefault("permissions", {})
     permissions["deny"] = sorted(set(permissions.get("deny") or []) | set(AGENT_DENY))
+    content = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+    if path.is_file() and path.read_text(encoding="utf-8") == content:
+        return
     if path.is_file():
         shutil.copyfile(path, path.with_name(path.name + ".pre-bot-identity.bak"))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(content, encoding="utf-8")
 
 
 def toml_string(value: str) -> str:
@@ -890,10 +877,13 @@ def update_codex(path: Path, environment: dict[str, str]) -> None:
         body.pop()
     body += [f"{key} = {toml_string(value)}" for key, value in environment.items()]
     lines = lines[:start] + body + ([""] if end < len(lines) else []) + lines[end:]
+    content = "\n".join(lines) + "\n"
+    if path.is_file() and path.read_text(encoding="utf-8") == content:
+        return
     if path.is_file():
         shutil.copyfile(path, path.with_name(path.name + ".pre-bot-identity.bak"))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    path.write_text(content, encoding="utf-8", newline="\n")
 
 
 def script_launcher() -> bytes:
@@ -907,7 +897,8 @@ def script_launcher() -> bytes:
 
 
 def windows_executable(script: Path) -> bytes:
-    main = (f"import runpy, sys\nsys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
+    main = (f"import runpy, sys\nsys.path.insert(0, {str(script.parent)!r})\n"
+            f"sys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
             f"runpy.run_path({str(script)!r}, run_name='__main__')\n")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as payload:
@@ -915,25 +906,36 @@ def windows_executable(script: Path) -> bytes:
     return script_launcher() + f'#!"{sys.executable}" -B\n'.encode() + archive.getvalue()
 
 
+def write_changed(path: Path, content: bytes, *, executable: bool = False) -> None:
+    if is_reparse(path):
+        raise IdentityError("refusing to replace a redirected identity launcher")
+    if not path.is_file() or path.read_bytes() != content:
+        path.write_bytes(content)
+    if executable and not WINDOWS and path.stat().st_mode & 0o777 != 0o755:
+        path.chmod(0o755)
+
+
 def install_shims(source: Path) -> Path:
     directory = shim_directory()
     directory.mkdir(parents=True, exist_ok=True)
     script = directory / source.name
-    shutil.copyfile(source, script)
-    shutil.copyfile(descriptor_path(), script.with_name("tomjseery-bot.json"))
+    write_changed(script, source.read_bytes())
+    for name in ("onboarding.py", "onboarding.html"):
+        write_changed(script.with_name(name), Path(__file__).with_name(name).read_bytes())
     if WINDOWS:
-        (directory / "gh.exe").write_bytes(windows_executable(script))
+        write_changed(directory / "gh.exe", windows_executable(script))
         for retired in ("gh", "gh.cmd"):
             (directory / retired).unlink(missing_ok=True)
         return script
     python = Path(sys.executable)
-    (directory / "gh").write_text(f"#!/bin/sh\nexec \"{python.as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n",
-                                  encoding="utf-8", newline="\n")
-    (directory / "gh").chmod(0o755)
+    write_changed(directory / "gh", f"#!/bin/sh\nexec \"{python.as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n".encode(), executable=True)
     return script
 
 
 def approve_source() -> Path:
+    source = Path(__file__).resolve()
+    if source.parent == shim_directory().resolve():
+        return source.with_name("approve.py")
     return Path(__file__).resolve().parents[2] / "approve" / "scripts" / "approve.py"
 
 
@@ -954,12 +956,10 @@ def approve_launcher() -> tuple[Path, bytes]:
 
 
 def install_approve() -> Path:
-    shutil.copyfile(approve_source(), shim_directory() / approve_source().name)
+    write_changed(shim_directory() / approve_source().name, approve_source().read_bytes())
     launcher, content = approve_launcher()
     launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_bytes(content)
-    if not WINDOWS:
-        launcher.chmod(0o755)
+    write_changed(launcher, content, executable=True)
     return launcher
 
 
@@ -996,7 +996,7 @@ def converge_shims() -> list[Path]:
         return []
     copies = (
         (script, Path(__file__).resolve()),
-        (script.with_name(descriptor_path().name), descriptor_path()),
+        *((script.with_name(name), Path(__file__).with_name(name)) for name in ("onboarding.py", "onboarding.html")),
         (shim_directory() / approve_source().name, approve_source()),
     )
     replaced: list[Path] = []
@@ -1026,9 +1026,9 @@ def codex_user_config() -> Path:
 def verify_host_setup() -> None:
     source = Path(__file__).resolve()
     script = installed_script()
-    descriptor = script.with_name("tomjseery-bot.json")
     for path, expected in ((script, source.read_bytes()),
-                           (descriptor, source.with_name("tomjseery-bot.json").read_bytes())):
+                           *((script.with_name(name), source.with_name(name).read_bytes())
+                             for name in ("onboarding.py", "onboarding.html"))):
         safe_existing_file(path)
         if path.read_bytes() != expected:
             raise IdentityError("the installed GitHub App wrapper is stale; run setup")
@@ -1062,17 +1062,95 @@ def verify_host_setup() -> None:
             raise IdentityError("agent host settings are stale; run setup")
 
 
+def human_reviewer(run=subprocess.run) -> str:
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in AGENT_ONLY and not name.startswith("GIT_CONFIG_")}
+    environment["GH_HOST"] = "github.com"
+    result = run([real_gh(), "api", "user", "--jq", ".login"], env=environment,
+                 capture_output=True, text=True, encoding="utf-8", errors="replace",
+                 timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    login = (result.stdout or "").strip()
+    if result.returncode or not re.fullmatch(r"[A-Za-z0-9-]+", login):
+        raise IdentityError("a human GitHub login is required; sign in through `gh auth login --web`, or supply --reviewer")
+    return login
+
+
+def configure_existing_app(slug: str, reviewer: str | None = None, accounts: list[str] | None = None,
+                           fetch=api) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9-]+", slug):
+        raise IdentityError("the GitHub App slug is invalid")
+    actual = fetch(f"/apps/{slug}", None)
+    if not isinstance(actual, dict) or actual.get("slug") != slug or not isinstance(actual.get("owner"), dict):
+        raise IdentityError("GitHub returned an invalid App descriptor")
+    try:
+        previous = identity_config()
+    except OnboardingRequired:
+        previous = None
+    if previous is not None and previous["app"]["slug"] != slug:
+        raise IdentityError("a different GitHub App is already configured; preserve its enrollment")
+    login = reviewer or (previous["reviewer"] if previous else human_reviewer())
+    permitted = accounts or (previous["accounts"] if previous else [login])
+    configure_identity({
+        "schema_version": 1,
+        "app": {"id": actual.get("id"), "client_id": actual.get("client_id"),
+                "slug": actual.get("slug"), "owner": actual["owner"].get("login"),
+                "owner_type": actual["owner"].get("type")},
+        "reviewer": login,
+        "accounts": permitted,
+        "permissions": previous["permissions"] if previous and not accounts else
+                       {owner: dict(onboarding.PERMISSIONS) for owner in permitted},
+        "key": previous["key"] if previous else None,
+    })
+
+
+def reuse_local_key(fetch=api, sign=app_jwt, prefer_pending: bool = False) -> None:
+    config = identity_config()
+    destination = store() / f"{config['app']['slug']}.pem"
+    pending = store() / f"{config['app']['slug']}.pending.pem"
+    if config["key"] is not None and Path(config["key"]).exists() and not prefer_pending:
+        return
+    path = pending if pending.exists() else destination
+    if not path.exists():
+        return
+    safe_existing_file(path)
+    require_private_permissions(path)
+    record = {**config["app"], "key": str(path)}
+    validate_remote_app(record, fetch=fetch, sign=sign)
+    if path == pending:
+        if is_reparse(destination):
+            raise IdentityError("the local GitHub App key location is unsafe")
+        os.replace(pending, destination)
+        protect(destination)
+    configure_identity({**config, "key": str(destination)})
+
+
+def verify_enrollment(fetch=api, sign=app_jwt) -> None:
+    reuse_local_key(fetch=fetch, sign=sign)
+    try:
+        verify_ready(app_record(), fetch=fetch, sign=sign)
+    except GitHubError as error:
+        config = identity_config()
+        pending = store() / f"{config['app']['slug']}.pending.pem"
+        if error.status != 401 or not pending.exists():
+            raise
+        reuse_local_key(fetch=fetch, sign=sign, prefer_pending=True)
+        verify_ready(app_record(), fetch=fetch, sign=sign)
+
+
 def setup(check: bool = False, onboard_key: bool = False) -> None:
     if onboard_key:
         try:
-            candidate = app_record()
-            validate_remote_app(candidate)
-        except IdentityError as error:
-            if isinstance(error, GitHubError) and error.status != 401:
+            verify_enrollment()
+        except (OnboardingRequired, KeyVerificationError):
+            onboard()
+        except GitHubError as error:
+            if error.status != 401:
                 raise
             onboard()
-    record = app_record()
-    verify_ready(record)
+    if check:
+        verify_ready(app_record())
+    else:
+        verify_enrollment()
     if check:
         verify_host_setup()
         print("bot_identity: ready")
@@ -1110,6 +1188,9 @@ def main(argv: list[str] | None = None) -> int:
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
         setup_flags.add_argument("--onboard", action="store_true")
+        setup_command.add_argument("--app", metavar="SLUG", help="select an existing GitHub App during explicit onboarding")
+        setup_command.add_argument("--reviewer", metavar="LOGIN", help="human account used by tj approve")
+        setup_command.add_argument("--account", action="append", metavar="ACCOUNT", help="permitted target account; repeat for organizations")
         arguments = parser.parse_args(argv)
         match arguments.command:
             case Command.CREDENTIAL:
@@ -1118,18 +1199,20 @@ def main(argv: list[str] | None = None) -> int:
                 converge_shims()
                 return 0
             case Command.SETUP:
+                if (arguments.app or arguments.reviewer or arguments.account) and not arguments.onboard:
+                    parser.error("identity selection requires explicit setup --onboard")
+                if (arguments.reviewer or arguments.account) and not arguments.app:
+                    parser.error("--reviewer and --account require --app")
+                if arguments.app:
+                    configure_existing_app(arguments.app, arguments.reviewer, arguments.account)
                 setup(check=arguments.check, onboard_key=arguments.onboard)
                 return 0
             case Command.TOKEN:
-                if arguments.owner.lower() not in REQUIRED_OWNERS:
-                    raise IdentityError(
-                        "the GitHub App is not authorized for that account"
-                    )
+                if arguments.owner.lower() not in required_owners():
+                    raise IdentityError("the GitHub App is not authorized for that account")
                 token = installation_token(arguments.owner, app_record())
                 if not token:
-                    raise IdentityError(
-                        f"the GitHub App is not installed on {arguments.owner}"
-                    )
+                    raise IdentityError(f"the GitHub App is not installed on {arguments.owner}")
                 print(token)
                 return 0
             case command:
