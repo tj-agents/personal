@@ -777,6 +777,7 @@ class EnrollmentTests(Sandbox):
                     bot.setup(onboard_key=True)
                 self.assertEqual(starts, onboard.called)
 
+    @pytest.mark.allow_hosts(["127.0.0.1"])
     def test_loopback_enrollment_rejects_host_origin_state_and_large_uploads(self):
         url, started, errors = [], threading.Event(), []
         elapsed = [0]
