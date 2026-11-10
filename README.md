@@ -78,6 +78,10 @@ only the configured bot's eligible PRs in the current session's linked work. It 
 account-wide approval sweep or runs as the bot. An agent gives the user the command and PR links;
 the user executes it.
 
+When the human shell does not inherit the conversation's session variables, the agent supplies
+`tj approve --session <host:id>` using its registered session and verified linked work. This needs
+no machine-specific helper or session environment setup.
+
 ## Authoring and verification
 
 ```powershell
