@@ -18,6 +18,7 @@ import bot_identity
 PULL_URL = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 NATIVE_SESSIONS = (("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID"))
 PR_FIELDS = "url,title,state,author,headRefOid,reviews,reviewRequests"
+ITEM_LOOKUP_TIMEOUT_SECONDS = 120
 
 
 class ApproveError(Exception):
@@ -31,9 +32,16 @@ def tool(name: str) -> str:
     return found
 
 
-def captured(run, command: list[str], environment: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace",
-               timeout=bot_identity.TIMEOUT_SECONDS)
+def captured(
+    run, command: list[str], environment: dict[str, str] | None = None,
+    *, timeout_seconds: int = bot_identity.TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess:
+    try:
+        return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace",
+                   timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        label = " ".join([Path(command[0]).stem, *command[1:2]])
+        raise ApproveError(f"{label} timed out after {timeout_seconds} seconds") from error
 
 
 def reason(result: subprocess.CompletedProcess) -> str:
@@ -143,8 +151,11 @@ def reviewer_environment(gh: str, reviewer: str, run) -> dict[str, str]:
     return environment
 
 
-def json_output(command: list[str], environment: dict[str, str], run) -> object:
-    result = captured(run, command, environment)
+def json_output(
+    command: list[str], environment: dict[str, str], run,
+    *, timeout_seconds: int = bot_identity.TIMEOUT_SECONDS,
+) -> object:
+    result = captured(run, command, environment, timeout_seconds=timeout_seconds)
     label = " ".join([Path(command[0]).stem, *command[1:3]])
     if result.returncode:
         raise ApproveError(f"{label} failed: {reason(result)}")
@@ -182,7 +193,10 @@ def display_name(url: str) -> str:
 def pending(items: list[str], gh: str, environment: dict[str, str], configuration: dict, run) -> list[dict]:
     urls = []
     for item in dict.fromkeys(items):
-        found = json_output([tool("tj"), "item", "--profile", "github", "prs", item], environment, run)
+        found = json_output(
+            [tool("tj"), "item", "--profile", "github", "prs", item], environment, run,
+            timeout_seconds=ITEM_LOOKUP_TIMEOUT_SECONDS,
+        )
         urls += [pull["url"] for pull in found["prs"] if pull.get("state") == "open"]
     waiting = []
     accounts = {account.casefold() for account in configuration["accounts"]}

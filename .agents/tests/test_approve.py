@@ -404,6 +404,63 @@ def test_failed_native_token_lookup_never_includes_credential_output_in_the_erro
     assert "credential-must-stay-private" not in str(failure.value)
 
 
+def test_item_discovery_can_outlast_one_provider_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address = url("example-tools/core", 1)
+    tools = FakeTools(
+        sessions={"codex:thread": session("codex:thread", 1)},
+        item_prs={ref(1)["ref"]: [(address, "open")]},
+        pulls={address: details(address)},
+    )
+
+    def slow_item_lookup(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if command[0] == "tj":
+            timeout = kwargs["timeout"]
+            assert isinstance(timeout, (int, float))
+            if timeout <= 60:
+                raise subprocess.TimeoutExpired(command, timeout)
+        return tools(command, **kwargs)
+
+    monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
+    monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
+    monkeypatch.setattr(approve, "tool", lambda name: name)
+    assert approve.approve(
+        run=slow_item_lookup, out=io.StringIO(), session_handle="codex:thread"
+    ) == 0
+    assert tools.commands("real-gh", "pr", "review") == [
+        ["real-gh", "pr", "review", "--approve", address]
+    ]
+
+
+def test_discovery_timeout_stops_before_approval_without_exposing_subprocess_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = FakeTools(sessions={"codex:thread": session("codex:thread", 1)})
+
+    def expired_lookup(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if command[0] == "tj":
+            raise subprocess.TimeoutExpired(
+                command, 120, output="gho_alex", stderr="credential-must-stay-private"
+            )
+        return tools(command, **kwargs)
+
+    monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
+    monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
+    monkeypatch.setattr(approve, "tool", lambda name: name)
+    with pytest.raises(approve.ApproveError, match="tj item.*timed out") as failure:
+        approve.approve(
+            run=expired_lookup, out=io.StringIO(), session_handle="codex:thread"
+        )
+    assert "gho_alex" not in str(failure.value)
+    assert "credential-must-stay-private" not in str(failure.value)
+    assert not tools.commands("real-gh", "pr", "review")
+
+
 @pytest.mark.parametrize(
     ("failure_detail", "expected_detail"),
     [
