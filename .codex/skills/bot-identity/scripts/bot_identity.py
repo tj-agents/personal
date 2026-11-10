@@ -922,6 +922,9 @@ def install_shims(source: Path) -> Path:
 
 
 def approve_source() -> Path:
+    source = Path(__file__).resolve()
+    if source.parent == shim_directory().resolve():
+        return source.with_name("approve.py")
     return Path(__file__).resolve().parents[2] / "approve" / "scripts" / "approve.py"
 
 

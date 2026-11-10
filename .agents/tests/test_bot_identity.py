@@ -887,6 +887,14 @@ class FreshSetupTests(unittest.TestCase):
                         bot.setup(check=True)
                     bot.setup()
                     bot.setup(check=True)
+                    result = subprocess.run(
+                        [sys.executable, "-B", "-c",
+                         "import sys; sys.path.insert(0, sys.argv[1]); import bot_identity as bot; "
+                         "bot.verify_host_setup(); bot.install_approve(); bot.verify_host_setup()",
+                         str(bot.shim_directory())],
+                        cwd=home, env=environment, capture_output=True, text=True, timeout=30,
+                    )
+                    self.assertEqual(0, result.returncode, result.stderr)
                 bot.write_private(bot.store() / "tokens/alex-bot-installations.json", INSTALLED)
                 bot.write_private(bot.store() / "tokens/alex-bot-alex.json",
                                   {"token": "fixture-token", "expires": 4102444800})
