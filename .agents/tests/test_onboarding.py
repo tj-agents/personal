@@ -153,6 +153,7 @@ def selection() -> dict[str, object]:
     return {"reviewer": "casey", "accounts": "casey, casey-labs", "organization": ""}
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_existing_bot_on_new_machine_never_recreates_app(wizard: Wizard) -> None:
     status, result = wizard.post(
         "select", {**selection(), "app": "https://github.com/apps/casey-agent"}
@@ -173,6 +174,7 @@ def test_existing_bot_on_new_machine_never_recreates_app(wizard: Wizard) -> None
     assert not wizard.errors
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_manifest_creation_exchanges_code_without_printing_key(
     wizard: Wizard, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -205,6 +207,7 @@ def test_manifest_creation_exchanges_code_without_printing_key(
     assert wizard.backend.api_calls == ["POST /app-manifests/fixture-code/conversions"]
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_partial_existing_enrollment_retains_key_and_resumes_installation(
     wizard: Wizard,
 ) -> None:
@@ -231,6 +234,7 @@ def test_partial_existing_enrollment_retains_key_and_resumes_installation(
     assert wizard.backend.api_calls == ["GET /apps/casey-agent"]
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_cross_origin_and_callback_state_cannot_configure_identity(
     wizard: Wizard,
 ) -> None:
@@ -252,6 +256,7 @@ def test_cross_origin_and_callback_state_cannot_configure_identity(
     assert not wizard.backend.keys
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_network_failure_preserves_app_selection_without_creating_an_app(
     wizard: Wizard,
     monkeypatch: pytest.MonkeyPatch,
@@ -296,6 +301,7 @@ def test_known_identity_page_disables_new_app_and_escapes_fields() -> None:
     assert "post(endpoint,new Uint8Array(),true);" in document
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_existing_organization_installation_can_be_reused_without_installing_again(
     wizard: Wizard,
 ) -> None:
@@ -314,6 +320,7 @@ def test_existing_organization_installation_can_be_reused_without_installing_aga
     assert wizard.backend.api_calls == ["GET /apps/casey-agent"]
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_installed_account_selection_cannot_authorize_unknown_accounts(
     wizard: Wizard,
 ) -> None:
@@ -325,6 +332,7 @@ def test_installed_account_selection_cannot_authorize_unknown_accounts(
     assert wizard.backend.config == saved
 
 
+@pytest.mark.allow_hosts(["127.0.0.1"])
 def test_cancelled_wizard_retains_selected_app_and_key(
     enrollment: Enrollment,
     monkeypatch: pytest.MonkeyPatch,
