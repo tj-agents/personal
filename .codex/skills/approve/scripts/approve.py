@@ -76,21 +76,25 @@ def current_session(run) -> tuple[str | None, list[str]] | None:
 
 def descendant_items(handle: str, run) -> list[str]:
     launches = agent_store(["launches"], run)["launches"]
+    sessions = {session["session"]: session for session in agent_store(["sessions"], run)["sessions"]}
     items, frontier, seen = [], [handle], {handle}
     while frontier:
         parent = frontier.pop()
+        children = [child for child, session in sessions.items() if session.get("parent") == parent]
         for launch in launches:
             if launch.get("parent") != parent:
                 continue
             if launch.get("item"):
                 items.append(launch["item"]["ref"])
-            child = launch.get("session")
-            if child and child not in seen:
-                seen.add(child)
-                frontier.append(child)
-                data = agent_store(["show", child], run)
-                if data is not None:
-                    items += linked(data["session"])
+            if launch.get("session"):
+                children.append(launch["session"])
+        for child in children:
+            if child in seen:
+                continue
+            seen.add(child)
+            frontier.append(child)
+            if child in sessions:
+                items += linked(sessions[child])
     return items
 
 

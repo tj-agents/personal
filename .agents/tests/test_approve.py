@@ -33,8 +33,8 @@ def ref(number):
             "native_id": str(number)}
 
 
-def session(handle, *items):
-    return {"session": handle, "links": [{"item": ref(item), "role": "owner"} for item in items]}
+def session(handle, *items, parent=None):
+    return {"session": handle, "parent": parent, "links": [{"item": ref(item), "role": "owner"} for item in items]}
 
 
 def launch(launch_id, parent=None, child=None, item=None):
@@ -81,6 +81,8 @@ class FakeTools:
         if tool == "agent-store":
             if arguments == ["launches"]:
                 return self.store(command, {"launches": self.launches})
+            if arguments == ["sessions"]:
+                return self.store(command, {"sessions": list(self.sessions.values())})
             if arguments[:2] == ["show", "--launch-id"]:
                 found = next((item for item in self.launches if item["launch_id"] == arguments[2]), None)
                 return self.store(command, found and {"launch": found, "session": self.sessions.get(found["session"])})
@@ -204,6 +206,17 @@ class ApproveTests(unittest.TestCase):
                                launch("L3", parent="codex:grandchild", item=11),
                                launch("L4", parent="claude:someone-else", item=12)]
         self.run_approve()
+        self.assertEqual(["github:example-tools/core:10", "github:example-tools/core:11"],
+                         [command[3] for command in self.tools.commands("tj")])
+        self.assertEqual([self.first, self.second, self.stale], self.approvals())
+
+    def test_a_parent_without_items_approves_children_that_record_it_as_their_session_parent(self):
+        self.tools.sessions = {"claude:me": session("claude:me"),
+                               "claude:child": session("claude:child", 10, parent="claude:me"),
+                               "codex:grandchild": session("codex:grandchild", 11, parent="claude:child"),
+                               "claude:stranger": session("claude:stranger", 12, parent="claude:someone-else")}
+        code, _ = self.run_approve()
+        self.assertEqual(0, code)
         self.assertEqual(["github:example-tools/core:10", "github:example-tools/core:11"],
                          [command[3] for command in self.tools.commands("tj")])
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
