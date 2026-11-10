@@ -1,10 +1,10 @@
 ---
 name: bot-identity
-description: Make agents push, open PRs and call GitHub as Tommy's GitHub App in his personal accounts, so only Tommy can approve and merge. Use when giving Tommy PRs to approve, setting up a machine for agents, when a push or gh call from an agent fails to authenticate, or when changing which accounts the App covers.
+description: Configure agent GitHub access through the user's own GitHub App. Use when setting up a new or existing bot on a machine, repairing agent authentication, or changing the accounts the bot may access.
 kind: utility
 domain: personal
 profile: core
-applicability: Tommy's machines; GitHub accounts where the App is installed
+applicability: explicitly adopted personal projects using GitHub App authorship
 requires: python
 provenance: house
 ---
