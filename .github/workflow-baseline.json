@@ -1,0 +1,14 @@
+[
+  {
+    "path": ".github/workflows/ci.yml",
+    "rule": "naming",
+    "message": "job 'verify' name 'verify' must start with an uppercase letter",
+    "reason": "Preserves the existing GitHub check context consumed by branch protection and release qualification."
+  },
+  {
+    "path": ".github/workflows/personal-policy.yml",
+    "rule": "naming",
+    "message": "job 'check' name 'check' must start with an uppercase letter",
+    "reason": "Preserves the existing GitHub check context consumed by branch protection and release qualification."
+  }
+]
