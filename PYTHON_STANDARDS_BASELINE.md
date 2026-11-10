@@ -113,3 +113,35 @@ Additional exact legacy formatter paths:
 | `.agents/tests/test_use.py` | `test_use` | `no-untyped-call` | 5 | Call to untyped function "git" in typed context |
 | `.agents/tests/test_use.py` | `test_use` | `no-untyped-def` | 22 | Function is missing a return type annotation |
 | `.agents/tests/test_use.py` | `test_use` | `union-attr` | 2 | Item "None" of "ModuleSpec \| None" has no attribute "loader" |
+
+## Portable onboarding merge
+
+Diagnostics introduced by the broader standards scope were checked against `250dfd3`. Files without rollout edits match that base in full; the loopback-marked tests use byte-identical diagnostic-line mapping, excluding the approved decorator-only additions.
+
+### Ruff
+
+| File | Rule | Existing count | Required repair |
+| --- | --- | ---: | --- |
+| .agents/personal/utility/bot-identity/scripts/bot_identity.py | N818 | 1 | Repair the existing N818 diagnostic and remove this exact ignore. |
+| .agents/personal/utility/bot-identity/scripts/onboarding.py | PLR6301 | 1 | Repair the existing PLR6301 diagnostic and remove this exact ignore. |
+| .agents/tests/onboarding_browser.py | TID251 | 2 | Repair the existing TID251 diagnostic and remove this exact ignore. |
+| .agents/tests/test_approve.py | RUF043 | 1 | Repair the existing RUF043 diagnostic and remove this exact ignore. |
+| .agents/tests/test_bot_identity.py | C420 | 1 | Repair the existing C420 diagnostic and remove this exact ignore. |
+| .agents/tests/test_onboarding.py | PT011 | 1 | Repair the existing PT011 diagnostic and remove this exact ignore. |
+
+### Mypy
+
+| Module | Rule | Existing count | Required repair |
+| --- | --- | ---: | --- |
+| onboarding_browser | import-not-found | 1 | Repair the existing import-not-found diagnostic and remove this exact override. |
+| test_approve | dict-item | 1 | Repair the existing dict-item diagnostic and remove this exact override. |
+| test_approve | no-any-return | 1 | Repair the existing no-any-return diagnostic and remove this exact override. |
+| test_approve | type-arg | 1 | Repair the existing type-arg diagnostic and remove this exact override. |
+| test_bot_identity | dict-item | 7 | Repair the existing dict-item diagnostic and remove this exact override. |
+| test_bot_identity | type-arg | 12 | Repair the existing type-arg diagnostic and remove this exact override. |
+| test_bot_identity | var-annotated | 2 | Repair the existing var-annotated diagnostic and remove this exact override. |
+
+| .agents/personal/utility/approve/scripts/approve.py | PY001 | 2 | Rewrite the existing nested comprehensions and remove this exact exception. |
+| .agents/tests/onboarding_browser.py | PY017 | 1 | Inject a controlled clock into the browser-support test and remove this exact exception. |
+| .agents/tests/test_approve.py | PY001 | 1 | Rewrite the existing nested comprehension and remove this exact exception. |
+| .agents/tests/test_personal_shims.py | PY016 | 1 | Inject process state or confine the read to an entry point and remove this exact exception. |
