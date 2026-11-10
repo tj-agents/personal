@@ -133,7 +133,12 @@ def reviewer_environment(gh: str, reviewer: str, run) -> dict[str, str]:
                            f"before approving as {reviewer}")
     environment["GH_TOKEN"] = token
     actual = captured(run, [gh, "api", "user", "--jq", ".login"], environment)
-    if actual.returncode or (actual.stdout or "").strip().casefold() != reviewer.casefold():
+    if actual.returncode:
+        detail = reason(actual).replace(token, "[redacted]")
+        raise ApproveError(
+            f"gh could not verify the configured human reviewer {reviewer}: {detail}; nothing approved"
+        )
+    if (actual.stdout or "").strip().casefold() != reviewer.casefold():
         raise ApproveError(f"gh did not authenticate the configured human reviewer {reviewer}; nothing approved")
     return environment
 
