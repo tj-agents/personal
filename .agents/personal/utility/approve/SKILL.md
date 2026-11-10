@@ -25,8 +25,15 @@ The user runs this command. It lists the pending PRs and approves them without a
 an agent never executes it on the user's behalf. When approval is required, put the command on the
 user's clipboard with `cli:clip` and include it and the exact PR links in the reply.
 
+For a separate human shell that does not inherit the conversation's session variables, give
+`tj approve --session <host:id>` with the originating conversation's exact registered session handle.
+Verify that registration and its linked work before the handoff. This selector takes precedence over
+inherited launch and native session variables; an unknown explicit session fails without approving.
+Do not create machine-specific helper scripts or ask the user to configure session environment variables.
+
 The scope is the current agent session's work. It resolves the session in agent-store from
-`TJ_RUN_LAUNCH_ID`, else `claude:<CLAUDE_CODE_SESSION_ID>` or `codex:<CODEX_THREAD_ID>`. It takes the
+`--session` when supplied, else `TJ_RUN_LAUNCH_ID`, then `claude:<CLAUDE_CODE_SESSION_ID>` or
+`codex:<CODEX_THREAD_ID>`. It takes the
 session's linked items, its launch's item, and recursively the items and bound sessions of launches it
 started. For each item, `tj item prs` supplies candidate PRs. Only open PRs authored by the configured
 bot, in configured accounts, and awaiting the configured reviewer's approval at the current head are
