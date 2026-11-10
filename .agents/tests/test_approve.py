@@ -61,12 +61,13 @@ def completed(command, stdout="", returncode=0, stderr=""):
 
 
 class FakeTools:
-    def __init__(self, sessions=None, launches=(), item_prs=None, pulls=None, failing=()):
+    def __init__(self, sessions=None, launches=(), item_prs=None, pulls=None, failing=(), unmergeable=()):
         self.sessions = sessions or {}
         self.launches = list(launches)
         self.item_prs = item_prs or {}
         self.pulls = pulls or {}
         self.failing = failing
+        self.unmergeable = unmergeable
         self.login = "alex"
         self.calls = []
 
@@ -121,6 +122,10 @@ class FakeTools:
             if arguments[3] in self.failing:
                 return completed(command, returncode=1, stderr="GraphQL: Review cannot be submitted\n")
             return completed(command)
+        if arguments[:3] == ["pr", "merge", "--auto"]:
+            if arguments[-1] in self.unmergeable:
+                return completed(command, returncode=1, stderr="Auto merge is not allowed for this repository\n")
+            return completed(command)
         raise AssertionError(command)
 
     def commands(self, *prefix):
@@ -165,7 +170,10 @@ class ApproveTests(unittest.TestCase):
             code, out = self.run_approve()
         self.assertEqual(0, code)
         self.assertEqual(["example-tools/core#1  Change 1", "alex/notes#2  Change 2", "example-tools/docs#4  Change 4",
-                          "approved example-tools/core#1", "approved alex/notes#2", "approved example-tools/docs#4"], out.splitlines())
+                          "approved example-tools/core#1", "merging example-tools/core#1 when its checks pass",
+                          "approved alex/notes#2", "merging alex/notes#2 when its checks pass",
+                          "approved example-tools/docs#4", "merging example-tools/docs#4 when its checks pass"],
+                         out.splitlines())
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
         token = self.tools.commands("real-gh", "auth", "token")
         self.assertEqual([["real-gh", "auth", "token", "--hostname", "github.com"]], token)
@@ -199,6 +207,20 @@ class ApproveTests(unittest.TestCase):
         self.assertEqual(3, len(self.approvals()))
         self.assertIn("failed alex/notes#2: GraphQL: Review cannot be submitted", out)
         self.assertIn("approved example-tools/docs#4", out)
+
+    def test_each_approved_pr_arms_squash_auto_merge_at_the_approved_head(self):
+        self.tools.failing = (self.second,)
+        self.run_approve()
+        self.assertEqual([["real-gh", "pr", "merge", "--auto", "--squash", "--match-head-commit", HEAD, address]
+                          for address in (self.first, self.stale)], self.tools.commands("real-gh", "pr", "merge"))
+
+    def test_a_failed_auto_merge_is_reported_and_fails_the_run_after_every_pr(self):
+        self.tools.unmergeable = (self.first,)
+        code, out = self.run_approve()
+        self.assertEqual(1, code)
+        self.assertIn("approved example-tools/core#1", out)
+        self.assertIn("not merging example-tools/core#1: Auto merge is not allowed for this repository", out)
+        self.assertIn("merging example-tools/docs#4 when its checks pass", out)
 
     def test_a_launch_id_resolves_the_launch_item_and_its_bound_session(self):
         os.environ["TJ_RUN_LAUNCH_ID"] = "L1"
