@@ -1039,6 +1039,8 @@ def converge_shims() -> list[Path]:
         temporary = target.with_name(f"{target.name}.{os.getpid()}.next")
         try:
             temporary.write_bytes(content)
+            if target == launcher and not WINDOWS:
+                temporary.chmod(0o755)
             temporary.replace(target)
         finally:
             temporary.unlink(missing_ok=True)
