@@ -116,10 +116,11 @@ def reviewer_environment(gh: str, reviewer: str, run) -> dict[str, str]:
     environment = {key: value for key, value in os.environ.items()
                    if key not in bot_identity.AGENT_ONLY and not key.startswith("GIT_CONFIG_")}
     environment["GH_HOST"] = "github.com"
-    result = captured(run, [gh, "auth", "token", "--user", reviewer], environment)
+    result = captured(run, [gh, "auth", "token", "--hostname", "github.com"], environment)
     token = (result.stdout or "").strip()
     if result.returncode or not token:
-        raise ApproveError(f"gh has no {reviewer} login; sign in to that account before approving")
+        raise ApproveError(f"gh could not read the native github.com credential; check gh auth status "
+                           f"before approving as {reviewer}")
     environment["GH_TOKEN"] = token
     actual = captured(run, [gh, "api", "user", "--jq", ".login"], environment)
     if actual.returncode or (actual.stdout or "").strip().casefold() != reviewer.casefold():

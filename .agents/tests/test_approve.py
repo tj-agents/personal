@@ -109,8 +109,10 @@ class FakeTools:
             pulls = [{"url": address, "state": state, "head": "Feature/x", "title": ""}
                      for address, state in self.item_prs.get(arguments[4], [])]
             return completed(command, json.dumps({"ref": arguments[4], "prs": pulls, "all_merged": False}))
-        if arguments[:3] == ["auth", "token", "--user"]:
+        if arguments == ["auth", "token", "--hostname", "github.com"]:
             return completed(command, "gho_alex\n")
+        if arguments[:2] == ["auth", "token"]:
+            return completed(command, returncode=1, stderr="no oauth token found for named account")
         if arguments == ["api", "user", "--jq", ".login"]:
             return completed(command, self.login + "\n")
         if arguments[:2] == ["pr", "view"]:
@@ -166,7 +168,7 @@ class ApproveTests(unittest.TestCase):
                           "approved example-tools/core#1", "approved alex/notes#2", "approved example-tools/docs#4"], out.splitlines())
         self.assertEqual([self.first, self.second, self.stale], self.approvals())
         token = self.tools.commands("real-gh", "auth", "token")
-        self.assertEqual([["real-gh", "auth", "token", "--user", "alex"]], token)
+        self.assertEqual([["real-gh", "auth", "token", "--hostname", "github.com"]], token)
         for command, env in self.tools.calls:
             if command[0] in ("real-gh", "tj"):
                 self.assertTrue(all(key not in env for key in ("TJ_AGENT", "GITHUB_TOKEN", "GH_CONFIG_DIR")))
@@ -318,7 +320,7 @@ def test_another_users_bot_and_reviewer_are_used_and_other_accounts_are_not_read
             mock.patch.object(bot, "real_gh", return_value="real-gh"), \
             mock.patch.object(approve, "tool", side_effect=lambda name: name):
         assert approve.approve(run=tools, out=io.StringIO()) == 0
-    assert tools.commands("real-gh", "auth", "token") == [["real-gh", "auth", "token", "--user", "mira"]]
+    assert tools.commands("real-gh", "auth", "token") == [["real-gh", "auth", "token", "--hostname", "github.com"]]
     assert tools.commands("real-gh", "pr", "review") == [["real-gh", "pr", "review", "--approve", own]]
     assert unauthorized not in [command[3] for command in tools.commands("real-gh", "pr", "view")]
 
@@ -342,7 +344,7 @@ def test_failed_native_token_lookup_never_includes_credential_output_in_the_erro
     def failed_lookup(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 1, stdout="credential-must-stay-private", stderr="failed")
 
-    with pytest.raises(approve.ApproveError, match="gh has no alex login") as failure:
+    with pytest.raises(approve.ApproveError, match="could not read the native github.com credential") as failure:
         approve.reviewer_environment("real-gh", "alex", failed_lookup)
     assert "credential-must-stay-private" not in str(failure.value)
 
