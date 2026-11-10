@@ -217,6 +217,55 @@ class ApproveTests(unittest.TestCase):
         self.assertEqual([["agent-store", "show", "codex:thread"]], self.tools.commands("agent-store", "show"))
         self.assertEqual([self.first], self.approvals())
 
+    def test_explicit_session_works_without_host_environment_and_overrides_unrelated_launches(
+        self,
+    ) -> None:
+        for inherited in (
+            {},
+            {"TJ_RUN_LAUNCH_ID": "unrelated", "CLAUDE_CODE_SESSION_ID": "someone-else"},
+        ):
+            with self.subTest(inherited=inherited):
+                environment = {
+                    key: value
+                    for key, value in os.environ.items()
+                    if key not in SESSION_VARIABLES
+                }
+                environment.update(inherited)
+                self.tools.sessions = {
+                    "codex:chosen": session("codex:chosen", 10),
+                    "claude:someone-else": session("claude:someone-else", 11),
+                }
+                self.tools.launches = [
+                    launch("unrelated", child="claude:someone-else", item=11)
+                ]
+                self.tools.calls = []
+                with mock.patch.dict(os.environ, environment, clear=True):
+                    code = approve.approve(
+                        run=self.tools, out=io.StringIO(), session_handle="codex:chosen"
+                    )
+                self.assertEqual(0, code)
+                self.assertEqual([self.first], self.approvals())
+                self.assertEqual(
+                    [ref(10)["ref"]],
+                    [command[5] for command in self.tools.commands("tj")],
+                )
+                self.assertNotIn(
+                    ["agent-store", "show", "--launch-id", "unrelated"],
+                    self.tools.commands("agent-store", "show"),
+                )
+
+    def test_unknown_explicit_session_fails_without_using_inherited_session_or_credentials(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(approve.ApproveError, "unknown.*codex:missing"):
+            approve.approve(
+                run=self.tools, out=io.StringIO(), session_handle="codex:missing"
+            )
+        self.assertEqual(
+            [["agent-store", "show", "codex:missing"]],
+            [command for command, _ in self.tools.calls],
+        )
+
     def test_children_are_collected_recursively_through_bound_sessions(self):
         self.tools.sessions = {"claude:me": session("claude:me"), "claude:child": session("claude:child", 10),
                                "codex:grandchild": session("codex:grandchild", 11)}
@@ -265,7 +314,12 @@ class MainTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"TJ_AGENT": "1"}), \
                 mock.patch.object(approve, "approve", return_value=0) as run:
             self.assertEqual(0, approve.main([]))
-            run.assert_called_once_with()
+            run.assert_called_once_with(session_handle=None)
+
+    def test_explicit_session_is_passed_from_the_human_command(self) -> None:
+        with mock.patch.object(approve, "approve", return_value=0) as run:
+            self.assertEqual(0, approve.main(["--session", "codex:chosen"]))
+            run.assert_called_once_with(session_handle="codex:chosen")
 
     def test_tool_failures_exit_2_with_one_line(self):
         error = io.StringIO()
@@ -296,6 +350,7 @@ class LauncherTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=60, check=False)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("usage: tj approve", result.stdout)
+            self.assertIn("--session HOST:ID", result.stdout)
 
 
 def test_another_users_bot_and_reviewer_are_used_and_other_accounts_are_not_read() -> None:
@@ -347,6 +402,94 @@ def test_failed_native_token_lookup_never_includes_credential_output_in_the_erro
     with pytest.raises(approve.ApproveError, match="could not read the native github.com credential") as failure:
         approve.reviewer_environment("real-gh", "alex", failed_lookup)
     assert "credential-must-stay-private" not in str(failure.value)
+
+
+def test_item_discovery_can_outlast_one_provider_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address = url("example-tools/core", 1)
+    tools = FakeTools(
+        sessions={"codex:thread": session("codex:thread", 1)},
+        item_prs={ref(1)["ref"]: [(address, "open")]},
+        pulls={address: details(address)},
+    )
+
+    def slow_item_lookup(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if command[0] == "tj":
+            timeout = kwargs["timeout"]
+            assert isinstance(timeout, (int, float))
+            if timeout <= 60:
+                raise subprocess.TimeoutExpired(command, timeout)
+        return tools(command, **kwargs)
+
+    monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
+    monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
+    monkeypatch.setattr(approve, "tool", lambda name: name)
+    assert approve.approve(
+        run=slow_item_lookup, out=io.StringIO(), session_handle="codex:thread"
+    ) == 0
+    assert tools.commands("real-gh", "pr", "review") == [
+        ["real-gh", "pr", "review", "--approve", address]
+    ]
+
+
+def test_discovery_timeout_stops_before_approval_without_exposing_subprocess_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = FakeTools(sessions={"codex:thread": session("codex:thread", 1)})
+
+    def expired_lookup(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if command[0] == "tj":
+            raise subprocess.TimeoutExpired(
+                command, 120, output="gho_alex", stderr="credential-must-stay-private"
+            )
+        return tools(command, **kwargs)
+
+    monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
+    monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
+    monkeypatch.setattr(approve, "tool", lambda name: name)
+    with pytest.raises(approve.ApproveError, match="tj item.*timed out") as failure:
+        approve.approve(
+            run=expired_lookup, out=io.StringIO(), session_handle="codex:thread"
+        )
+    assert "gho_alex" not in str(failure.value)
+    assert "credential-must-stay-private" not in str(failure.value)
+    assert not tools.commands("real-gh", "pr", "review")
+
+
+@pytest.mark.parametrize(
+    ("failure_detail", "expected_detail"),
+    [
+        ("HTTP 502: Bad Gateway", "HTTP 502: Bad Gateway"),
+        ("connection reset by peer", "connection reset by peer"),
+        ("request failed for gho_alex", "request failed for [redacted]"),
+    ],
+)
+def test_failed_reviewer_lookup_reports_the_lookup_failure_without_approving(
+    failure_detail: str, expected_detail: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools = FakeTools(sessions={"codex:thread": session("codex:thread", 1)})
+
+    def failed_lookup(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if command[1:] == ["api", "user", "--jq", ".login"]:
+            return completed(command, returncode=1, stderr=failure_detail)
+        return tools(command, **kwargs)
+
+    monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
+    monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
+    monkeypatch.setattr(approve, "tool", lambda name: name)
+    with pytest.raises(approve.ApproveError, match="could not verify the configured human reviewer alex") as failure:
+        approve.approve(run=failed_lookup, out=io.StringIO(), session_handle="codex:thread")
+    assert expected_detail in str(failure.value)
+    assert "gho_alex" not in str(failure.value)
+    assert not tools.commands("real-gh", "pr")
+    assert not tools.commands("tj")
 
 
 @pytest.mark.parametrize("author_type", [{"type": "User"}, {"__typename": "User"}, {"is_bot": False}])
