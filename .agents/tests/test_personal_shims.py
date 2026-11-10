@@ -48,6 +48,10 @@ def installed(shim: Path, approve: bytes) -> None:
     (shim / "onboarding.py").write_bytes(ONBOARDING.read_bytes())
     (shim / "onboarding.html").write_bytes(PAGE.read_bytes())
     (shim / "approve.py").write_bytes(approve)
+    launcher, content = bot.gh_launcher(shim / "bot_identity.py")
+    launcher.write_bytes(content)
+    if os.name != "nt":
+        launcher.chmod(0o755)
     for path in shim.iterdir():
         os.utime(path, ns=(PAST, PAST))
 
@@ -65,6 +69,7 @@ def test_converge_replaces_a_stale_copy_and_leaves_identical_ones_untouched(
     assert sorted(path.name for path in shim.iterdir()) == [
         "approve.py",
         "bot_identity.py",
+        "gh.exe" if bot.WINDOWS else "gh",
         "onboarding.html",
         "onboarding.py",
     ]
@@ -84,6 +89,24 @@ def test_converge_entry_point_replaces_a_stale_wrapper_script(shim: Path) -> Non
 def test_converge_installs_nothing_before_setup(shim: Path) -> None:
     assert bot.converge_shims() == []
     assert not shim.exists()
+
+
+@pytest.mark.parametrize("windows", [True, False])
+def test_converge_rebuilds_stale_gh_launchers(
+    shim: Path, monkeypatch: pytest.MonkeyPatch, windows: bool
+) -> None:
+    monkeypatch.setattr(bot, "WINDOWS", windows)
+    installed(shim, APPROVE.read_bytes())
+    launcher, expected = bot.gh_launcher(shim / "bot_identity.py")
+    launcher.write_bytes(b"stale launcher")
+
+    assert bot.converge_shims() == [launcher]
+    assert launcher.read_bytes() == expected
+    if not windows and os.name != "nt":
+        assert launcher.stat().st_mode & 0o777 == 0o755
+    changed = launcher.stat().st_mtime_ns
+    assert bot.converge_shims() == []
+    assert launcher.stat().st_mtime_ns == changed
 
 
 @pytest.mark.parametrize("windows", [True, False])
@@ -137,8 +160,21 @@ def test_windows_launcher_loads_the_actual_shipped_sibling_module(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(bot, "WINDOWS", True)
-    bot.install_shims(BOT_IDENTITY)
+    installed(shim, APPROVE.read_bytes())
     executable = shim / "gh.exe"
+    with zipfile.ZipFile(
+        io.BytesIO(bot.windows_executable(shim / "bot_identity.py"))
+    ) as payload:
+        stale_main = payload.read("__main__.py").decode().splitlines(keepends=True)
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as payload:
+        payload.writestr("__main__.py", "".join(stale_main[:1] + stale_main[2:]))
+    executable.write_bytes(
+        bot.script_launcher()
+        + f'#!"{sys.executable}" -B\n'.encode()
+        + archive.getvalue()
+    )
+    assert executable in bot.converge_shims()
     environment = {**os.environ, "TJ_AGENT": "1"}
     command = (
         [str(executable)] if os.name == "nt" else [sys.executable, str(executable)]

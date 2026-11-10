@@ -152,6 +152,41 @@ def validate_identity(value: object) -> dict:
     return value
 
 
+def migrate_legacy_identity() -> None:
+    directory = store()
+    legacy = directory / "tomjseery-bot.json"
+    current = directory / "identity.json"
+    if current.exists() or not legacy.exists():
+        return
+    if is_reparse(directory):
+        raise IdentityError("the GitHub App enrollment directory is unsafe")
+    safe_existing_file(legacy)
+    require_private_permissions(directory, directory=True)
+    require_private_permissions(legacy)
+    try:
+        descriptor = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise IdentityError("the legacy GitHub App descriptor is invalid") from error
+    fields = {"id", "client_id", "slug", "owner"}
+    if not isinstance(descriptor, dict) or set(descriptor) not in (fields, fields | {"key"}):
+        raise IdentityError("the legacy GitHub App descriptor is invalid")
+    if descriptor["slug"] != legacy.stem or descriptor["owner"] != "tomjseery" or descriptor.get("key", True) is None:
+        raise IdentityError("the legacy GitHub App descriptor is invalid")
+    config = validate_identity({
+        "schema_version": 1,
+        "app": {**{name: descriptor[name] for name in fields}, "owner_type": "User"},
+        "reviewer": "tomjseery",
+        "accounts": ["tomjseery", "tj-agents", "concertable"],
+        "permissions": {"tj-agents": {"repository_creation": "write"}},
+        "key": descriptor.get("key", str(directory / f"{descriptor['slug']}.pem")),
+    })
+    key = Path(config["key"])
+    safe_existing_file(key)
+    require_private_permissions(key)
+    write_private(current, config)
+    legacy.unlink()
+
+
 def identity_config() -> dict:
     if is_reparse(store()):
         raise IdentityError("the GitHub App enrollment directory is unsafe")
@@ -895,6 +930,13 @@ def windows_executable(script: Path) -> bytes:
     return script_launcher() + f'#!"{sys.executable}" -B\n'.encode() + archive.getvalue()
 
 
+def gh_launcher(script: Path) -> tuple[Path, bytes]:
+    if WINDOWS:
+        return script.with_name("gh.exe"), windows_executable(script)
+    python = Path(sys.executable).as_posix()
+    return script.with_name("gh"), f'#!/bin/sh\nexec "{python}" -B "{script.as_posix()}" gh "$@"\n'.encode()
+
+
 def write_changed(path: Path, content: bytes, *, executable: bool = False) -> None:
     if is_reparse(path):
         raise IdentityError("refusing to replace a redirected identity launcher")
@@ -911,13 +953,11 @@ def install_shims(source: Path) -> Path:
     write_changed(script, source.read_bytes())
     for name in ("onboarding.py", "onboarding.html"):
         write_changed(script.with_name(name), Path(__file__).with_name(name).read_bytes())
+    launcher, content = gh_launcher(script)
+    write_changed(launcher, content, executable=True)
     if WINDOWS:
-        write_changed(directory / "gh.exe", windows_executable(script))
         for retired in ("gh", "gh.cmd"):
             (directory / retired).unlink(missing_ok=True)
-        return script
-    python = Path(sys.executable)
-    write_changed(directory / "gh", f"#!/bin/sh\nexec \"{python.as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n".encode(), executable=True)
     return script
 
 
@@ -980,17 +1020,19 @@ def installed_script() -> Path:
 
 
 def converge_shims() -> list[Path]:
+    migrate_legacy_identity()
     script = installed_script()
     if not script.is_file():
         return []
+    launcher, launcher_content = gh_launcher(script)
     copies = (
-        (script, Path(__file__).resolve()),
-        *((script.with_name(name), Path(__file__).with_name(name)) for name in ("onboarding.py", "onboarding.html")),
-        (shim_directory() / approve_source().name, approve_source()),
+        (script, Path(__file__).read_bytes()),
+        *((script.with_name(name), Path(__file__).with_name(name).read_bytes()) for name in ("onboarding.py", "onboarding.html")),
+        (shim_directory() / approve_source().name, approve_source().read_bytes()),
+        (launcher, launcher_content),
     )
     replaced: list[Path] = []
-    for target, source in copies:
-        content = source.read_bytes()
+    for target, content in copies:
         current = target.is_file() and not is_reparse(target)
         if current and target.read_bytes() == content:
             continue
@@ -1001,6 +1043,8 @@ def converge_shims() -> list[Path]:
         finally:
             temporary.unlink(missing_ok=True)
         replaced.append(target)
+    if not WINDOWS and launcher.stat().st_mode & 0o777 != 0o755:
+        launcher.chmod(0o755)
     return replaced
 
 
@@ -1021,10 +1065,8 @@ def verify_host_setup() -> None:
         safe_existing_file(path)
         if path.read_bytes() != expected:
             raise IdentityError("the installed GitHub App wrapper is stale; run setup")
-    launcher = shim_directory() / ("gh.exe" if WINDOWS else "gh")
+    launcher, expected_launcher = gh_launcher(script)
     safe_existing_file(launcher)
-    expected_launcher = windows_executable(script) if WINDOWS else \
-        f"#!/bin/sh\nexec \"{Path(sys.executable).as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n".encode()
     if launcher.read_bytes() != expected_launcher:
         raise IdentityError("the installed GitHub App wrapper is stale; run setup")
     approve, expected_approve = approve_launcher()
@@ -1127,6 +1169,8 @@ def verify_enrollment(fetch=api, sign=app_jwt) -> None:
 
 
 def setup(check: bool = False, onboard_key: bool = False) -> None:
+    if not check:
+        migrate_legacy_identity()
     if onboard_key:
         try:
             verify_enrollment()
