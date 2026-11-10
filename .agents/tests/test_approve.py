@@ -404,6 +404,37 @@ def test_failed_native_token_lookup_never_includes_credential_output_in_the_erro
     assert "credential-must-stay-private" not in str(failure.value)
 
 
+@pytest.mark.parametrize(
+    ("failure_detail", "expected_detail"),
+    [
+        ("HTTP 502: Bad Gateway", "HTTP 502: Bad Gateway"),
+        ("connection reset by peer", "connection reset by peer"),
+        ("request failed for gho_alex", "request failed for [redacted]"),
+    ],
+)
+def test_failed_reviewer_lookup_reports_the_lookup_failure_without_approving(
+    failure_detail: str, expected_detail: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools = FakeTools(sessions={"codex:thread": session("codex:thread", 1)})
+
+    def failed_lookup(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if command[1:] == ["api", "user", "--jq", ".login"]:
+            return completed(command, returncode=1, stderr=failure_detail)
+        return tools(command, **kwargs)
+
+    monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
+    monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
+    monkeypatch.setattr(approve, "tool", lambda name: name)
+    with pytest.raises(approve.ApproveError, match="could not verify the configured human reviewer alex") as failure:
+        approve.approve(run=failed_lookup, out=io.StringIO(), session_handle="codex:thread")
+    assert expected_detail in str(failure.value)
+    assert "gho_alex" not in str(failure.value)
+    assert not tools.commands("real-gh", "pr")
+    assert not tools.commands("tj")
+
+
 @pytest.mark.parametrize("author_type", [{"type": "User"}, {"__typename": "User"}, {"is_bot": False}])
 def test_a_human_cannot_impersonate_the_configured_app_slug(author_type: dict[str, object]) -> None:
     pull = details(url("example-tools/core", 1), author="alex-bot")
