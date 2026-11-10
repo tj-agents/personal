@@ -11,23 +11,25 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from datetime import datetime
 import io
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 import webbrowser
 import zipfile
-import stat
+from datetime import datetime
+from enum import StrEnum
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from typing import assert_never
 
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
@@ -43,6 +45,15 @@ REQUIRED_CAPABILITIES = {REQUIRED_CAPABILITY_VERSION: {"tj-agents": {"repository
 FORBIDDEN_WRITE_PERMISSIONS = ("administration",)
 WINDOWS = os.name == "nt"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
+
+
+class Command(StrEnum):
+    TOKEN = "token"
+    CREDENTIAL = "credential"
+    CONVERGE = "converge"
+    SETUP = "setup"
+
+
 GITHUB_URL = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)")
 API_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([A-Za-z0-9-]+)")
 REPOSITORY = re.compile(r"([A-Za-z0-9-]+)/[\w.-]+")
@@ -1086,29 +1097,43 @@ def main(argv: list[str] | None = None) -> int:
             return run_gh(argv[1:])
         parser = argparse.ArgumentParser(description=__doc__)
         commands = parser.add_subparsers(dest="command", required=True)
-        commands.add_parser("token").add_argument("--owner", required=True)
-        commands.add_parser("credential").add_argument("operation")
-        commands.add_parser("converge")
-        setup_command = commands.add_parser("setup")
+        token_command = commands.add_parser(Command.TOKEN)
+        token_command.add_argument("--owner", required=True)
+        token_command.set_defaults(command=Command.TOKEN)
+        credential_command = commands.add_parser(Command.CREDENTIAL)
+        credential_command.add_argument("operation")
+        credential_command.set_defaults(command=Command.CREDENTIAL)
+        converge_command = commands.add_parser(Command.CONVERGE)
+        converge_command.set_defaults(command=Command.CONVERGE)
+        setup_command = commands.add_parser(Command.SETUP)
+        setup_command.set_defaults(command=Command.SETUP)
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
         setup_flags.add_argument("--onboard", action="store_true")
         arguments = parser.parse_args(argv)
-        if arguments.command == "credential":
-            return credential(arguments.operation)
-        if arguments.command == "converge":
-            converge_shims()
-            return 0
-        if arguments.command == "setup":
-            setup(check=arguments.check, onboard_key=arguments.onboard)
-            return 0
-        if arguments.owner.lower() not in REQUIRED_OWNERS:
-            raise IdentityError("the GitHub App is not authorized for that account")
-        token = installation_token(arguments.owner, app_record())
-        if not token:
-            raise IdentityError(f"the GitHub App is not installed on {arguments.owner}")
-        print(token)
-        return 0
+        match arguments.command:
+            case Command.CREDENTIAL:
+                return credential(arguments.operation)
+            case Command.CONVERGE:
+                converge_shims()
+                return 0
+            case Command.SETUP:
+                setup(check=arguments.check, onboard_key=arguments.onboard)
+                return 0
+            case Command.TOKEN:
+                if arguments.owner.lower() not in REQUIRED_OWNERS:
+                    raise IdentityError(
+                        "the GitHub App is not authorized for that account"
+                    )
+                token = installation_token(arguments.owner, app_record())
+                if not token:
+                    raise IdentityError(
+                        f"the GitHub App is not installed on {arguments.owner}"
+                    )
+                print(token)
+                return 0
+            case command:
+                assert_never(command)
     except IdentityError as error:
         print(f"bot_identity: {error}", file=sys.stderr)
         return 2
