@@ -109,6 +109,35 @@ def test_converge_rebuilds_stale_gh_launchers(
     assert launcher.stat().st_mtime_ns == changed
 
 
+def test_converge_sets_posix_launcher_permissions_before_publishing(
+    shim: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot, "WINDOWS", False)
+    installed(shim, APPROVE.read_bytes())
+    launcher = shim / "gh"
+    launcher.write_bytes(b"stale launcher")
+    chmod, replace = Path.chmod, Path.replace
+    events: list[str] = []
+
+    def set_mode(path: Path, mode: int, *, follow_symlinks: bool = True) -> None:
+        if path.name.endswith(".next"):
+            events.append("executable" if mode == 0o755 else "wrong-mode")
+        chmod(path, mode, follow_symlinks=follow_symlinks)
+
+    def publish(path: Path, target: str | Path) -> Path:
+        if target == launcher:
+            events.append("published")
+            if os.name != "nt":
+                assert path.stat().st_mode & 0o777 == 0o755
+        return replace(path, target)
+
+    monkeypatch.setattr(Path, "chmod", set_mode)
+    monkeypatch.setattr(Path, "replace", publish)
+
+    assert bot.converge_shims() == [launcher]
+    assert events == ["executable", "published"]
+
+
 @pytest.mark.parametrize("windows", [True, False])
 def test_tj_approve_launcher_only_delegates_to_the_converged_copy(
     shim: Path, monkeypatch: pytest.MonkeyPatch, windows: bool
