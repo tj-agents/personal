@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".agents/personal/utility/bot-identity/scripts/bot_identity.py"
 spec = importlib.util.spec_from_file_location("bot_identity", SCRIPT)
@@ -703,6 +705,7 @@ class EnrollmentTests(Sandbox):
                     bot.setup(onboard_key=True)
                 self.assertEqual(starts, onboard.called)
 
+    @pytest.mark.allow_hosts(["127.0.0.1"])
     def test_loopback_enrollment_rejects_host_origin_state_and_large_uploads(self):
         url, started, errors = [], threading.Event(), []
         elapsed = [0]
