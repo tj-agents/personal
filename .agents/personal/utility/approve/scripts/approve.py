@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Approve the configured bot's PRs as its human reviewer for this session's work items (Python 3.12+)."""
+"""Approve the configured bot's PRs as its human reviewer for this session's work items and arm their auto-merge
+(Python 3.12+)."""
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import bot_identity
 PULL_URL = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 NATIVE_SESSIONS = (("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID"))
 PR_FIELDS = "url,title,state,author,headRefOid,reviews,reviewRequests"
+ITEM_LOOKUP_TIMEOUT_SECONDS = 120
 
 
 class ApproveError(Exception):
@@ -31,9 +33,16 @@ def tool(name: str) -> str:
     return found
 
 
-def captured(run, command: list[str], environment: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace",
-               timeout=bot_identity.TIMEOUT_SECONDS)
+def captured(
+    run, command: list[str], environment: dict[str, str] | None = None,
+    *, timeout_seconds: int = bot_identity.TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess:
+    try:
+        return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace",
+                   timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        label = " ".join([Path(command[0]).stem, *command[1:2]])
+        raise ApproveError(f"{label} timed out after {timeout_seconds} seconds") from error
 
 
 def reason(result: subprocess.CompletedProcess) -> str:
@@ -59,7 +68,17 @@ def linked(session: dict) -> list[str]:
     return [link["item"]["ref"] for link in session.get("links") or []]
 
 
-def current_session(run) -> tuple[str | None, list[str]] | None:
+def current_session(
+    run, session_handle: str | None = None
+) -> tuple[str | None, list[str]] | None:
+    if session_handle is not None:
+        data = agent_store(["show", session_handle], run)
+        if data is None:
+            raise ApproveError(
+                f"unknown agent session {session_handle}; nothing approved"
+            )
+        session = data["session"]
+        return session["session"], linked(session)
     if launch_id := os.environ.get("TJ_RUN_LAUNCH_ID"):
         data = agent_store(["show", "--launch-id", launch_id], run)
         if data is None:
@@ -123,13 +142,21 @@ def reviewer_environment(gh: str, reviewer: str, run) -> dict[str, str]:
                            f"before approving as {reviewer}")
     environment["GH_TOKEN"] = token
     actual = captured(run, [gh, "api", "user", "--jq", ".login"], environment)
-    if actual.returncode or (actual.stdout or "").strip().casefold() != reviewer.casefold():
+    if actual.returncode:
+        detail = reason(actual).replace(token, "[redacted]")
+        raise ApproveError(
+            f"gh could not verify the configured human reviewer {reviewer}: {detail}; nothing approved"
+        )
+    if (actual.stdout or "").strip().casefold() != reviewer.casefold():
         raise ApproveError(f"gh did not authenticate the configured human reviewer {reviewer}; nothing approved")
     return environment
 
 
-def json_output(command: list[str], environment: dict[str, str], run) -> object:
-    result = captured(run, command, environment)
+def json_output(
+    command: list[str], environment: dict[str, str], run,
+    *, timeout_seconds: int = bot_identity.TIMEOUT_SECONDS,
+) -> object:
+    result = captured(run, command, environment, timeout_seconds=timeout_seconds)
     label = " ".join([Path(command[0]).stem, *command[1:3]])
     if result.returncode:
         raise ApproveError(f"{label} failed: {reason(result)}")
@@ -167,7 +194,10 @@ def display_name(url: str) -> str:
 def pending(items: list[str], gh: str, environment: dict[str, str], configuration: dict, run) -> list[dict]:
     urls = []
     for item in dict.fromkeys(items):
-        found = json_output([tool("tj"), "item", "--profile", "github", "prs", item], environment, run)
+        found = json_output(
+            [tool("tj"), "item", "--profile", "github", "prs", item], environment, run,
+            timeout_seconds=ITEM_LOOKUP_TIMEOUT_SECONDS,
+        )
         urls += [pull["url"] for pull in found["prs"] if pull.get("state") == "open"]
     waiting = []
     accounts = {account.casefold() for account in configuration["accounts"]}
@@ -180,12 +210,15 @@ def pending(items: list[str], gh: str, environment: dict[str, str], configuratio
             continue
         if (details.get("state") == "OPEN" and bot_authored(details, configuration["app"]["slug"])
                 and awaits_reviewer(details, configuration["reviewer"])):
-            waiting.append({"name": display_name(url), "title": details.get("title", ""), "url": url})
+            waiting.append({"name": display_name(url), "title": details.get("title", ""), "url": url,
+                            "head": details["headRefOid"]})
     return waiting
 
 
-def approve(run=subprocess.run, out=sys.stdout) -> int:
-    session = current_session(run)
+def approve(
+    run=subprocess.run, out=sys.stdout, session_handle: str | None = None
+) -> int:
+    session = current_session(run, session_handle)
     if session is None:
         print("No agent session found here; nothing approved.", file=out)
         return 0
@@ -210,15 +243,26 @@ def approve(run=subprocess.run, out=sys.stdout) -> int:
         if result.returncode:
             failed = True
             print(f"failed {item['name']}: {reason(result)}", file=out)
+            continue
+        print(f"approved {item['name']}", file=out)
+        merge = captured(run, [gh, "pr", "merge", "--auto", "--squash", "--match-head-commit", item["head"],
+                               item["url"]], environment)
+        if merge.returncode:
+            failed = True
+            print(f"not merging {item['name']}: {reason(merge)}", file=out)
         else:
-            print(f"approved {item['name']}", file=out)
+            print(f"merging {item['name']} when its checks pass", file=out)
     return 1 if failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    argparse.ArgumentParser(prog="tj approve", description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(prog="tj approve", description=__doc__)
+    parser.add_argument(
+        "--session", metavar="HOST:ID", help="registered originating agent session"
+    )
+    arguments = parser.parse_args(argv)
     try:
-        return approve()
+        return approve(session_handle=arguments.session)
     except (ApproveError, bot_identity.IdentityError) as error:
         print(f"tj approve: {error}", file=sys.stderr)
         return 2

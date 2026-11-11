@@ -25,15 +25,24 @@ The user runs this command. It lists the pending PRs and approves them without a
 an agent never executes it on the user's behalf. When approval is required, put the command on the
 user's clipboard with `cli:clip` and include it and the exact PR links in the reply.
 
+For a separate human shell that does not inherit the conversation's session variables, give
+`tj approve --session <host:id>` with the originating conversation's exact registered session handle.
+Verify that registration and its linked work before the handoff. This selector takes precedence over
+inherited launch and native session variables; an unknown explicit session fails without approving.
+Do not create machine-specific helper scripts or ask the user to configure session environment variables.
+
 The scope is the current agent session's work. It resolves the session in agent-store from
-`TJ_RUN_LAUNCH_ID`, else `claude:<CLAUDE_CODE_SESSION_ID>` or `codex:<CODEX_THREAD_ID>`. It takes the
+`--session` when supplied, else `TJ_RUN_LAUNCH_ID`, then `claude:<CLAUDE_CODE_SESSION_ID>` or
+`codex:<CODEX_THREAD_ID>`. It takes the
 session's linked items, its launch's item, and recursively the items and bound sessions of launches it
 started. For each item, `tj item prs` supplies candidate PRs. Only open PRs authored by the configured
 bot, in configured accounts, and awaiting the configured reviewer's approval at the current head are
 eligible. A pending review request also makes a matching PR eligible. It never sweeps an account or
 organization, and never approves a human-authored PR as a substitute for correct bot authorship.
 
-The command prints an approval or failure for each PR and exits nonzero if any approval fails. Missing
+After each approval it arms squash auto-merge pinned to the approved head, so the PR merges as soon as its
+required checks pass and no session has to come back to merge it. A new push cancels it. The command
+prints the approval and merge result for each PR and exits nonzero if any approval or auto-merge fails. Missing
 or mismatched human sign-ins fail before review writes. No current session, no linked work or no
 eligible PRs produces a short result and approves nothing.
 
