@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run agent GitHub access as the configured GitHub App in personal repositories (Python 3.12+, needs openssl).
 
-`token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
-the real gh and `setup` installs the wrapper, the agent-only settings for Claude and Codex and the human's `tj approve`.
+`token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` and `git ...`
+wrap their real commands and `setup` installs the wrappers, repository-local settings for Claude and Codex and the
+human's `tj approve`.
 `converge` replaces stale wrapper and `tj approve` script copies with this plugin's.
 """
 
@@ -32,6 +33,7 @@ import onboarding
 
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
+PUSH_OWNER = "TJ_BOT_PUSH_OWNER"
 TOKEN_FINGERPRINT = "TJ_BOT_TOKEN_SHA256"
 UNAUTHENTICATED = "bot-identity-unauthenticated"
 TIMEOUT_SECONDS = 30
@@ -83,7 +85,7 @@ COMMAND_PAYLOAD_FLAGS = {
     ("repo", "edit"): ("-d", "-h"),
     ("repo", "view"): ("-q", "-t"),
 }
-AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+AGENT_ONLY = (AGENT_FLAG, PUSH_OWNER, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
 AGENT_DENY = (
@@ -675,26 +677,42 @@ def real_gh() -> str:
     return found
 
 
+def real_git() -> str:
+    path = os.pathsep.join(entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+                           if entry and not is_shim(entry))
+    found = shutil.which("git", path=path)
+    if not found:
+        raise IdentityError("the real git CLI is not on PATH")
+    return found
+
+
+def human_environment() -> dict[str, str]:
+    return {name: value for name, value in os.environ.items()
+            if name not in AGENT_ONLY and not name.startswith("GIT_CONFIG_")}
+
+
+def creates_pull_request(arguments: list[str]) -> bool:
+    return normalized_arguments(arguments)[:2] == ["pr", "create"]
+
+
 def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> dict[str, str]:
-    if arguments[:1] == ["auth"] and arguments[1:2] != ["status"]:
-        raise IdentityError("agents may run only `gh auth status`")
+    if not creates_pull_request(arguments):
+        return human_environment()
     explicit_owners, hostname = argument_context(arguments)
     owners = (explicit_owners
               or owners_from_arguments(["-R", os.environ.get("GH_REPO", "")])
               or ([checkout_owner] if checkout_owner else []))
     if len({owner.lower() for owner in owners}) > 1:
-        raise IdentityError("one GitHub command must target a single account")
+        return human_environment()
     environment = dict(os.environ)
     if not owners:
-        return environment
+        return human_environment()
     protected = [owner for owner in owners if owner.lower() in required_owners()]
     if not protected:
-        if arguments[:1] == ["auth"]:
-            return environment
-        raise IdentityError(f"{owners[0]} is not an account the GitHub App covers; agent sessions never use the human's credentials")
+        return human_environment()
     hostname = hostname if hostname is not None else os.environ.get("GH_HOST") or "github.com"
     if hostname.lower() != "github.com":
-        raise IdentityError("the Personal GitHub App is authorized only for github.com")
+        return human_environment()
     record = app_record()
     covered = installed(protected, record) if protected else {}
     missing = [owner for owner in protected if owner.lower() not in covered]
@@ -707,6 +725,45 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
     environment["GH_TOKEN"] = token
     environment[TOKEN_FINGERPRINT] = hashlib.sha256(token.encode()).hexdigest()
     return environment
+
+
+def git_subcommand(arguments: list[str]) -> str | None:
+    value_options = {"-C", "-c", "--config-env", "--exec-path", "--git-dir", "--namespace", "--work-tree"}
+    iterator = iter(arguments)
+    for argument in iterator:
+        if argument in value_options:
+            next(iterator, None)
+        elif argument == "--":
+            return next(iterator, None)
+        elif not argument.startswith("-"):
+            return argument
+    return None
+
+
+def push_owner(arguments: list[str], checkout_owner: str | None) -> str | None:
+    matches = [match.group(1) for argument in arguments for match in GITHUB_URL.finditer(argument)]
+    if len({owner.lower() for owner in matches}) == 1:
+        return matches[0]
+    return checkout_owner if not matches else None
+
+
+def agent_git_environment(owner: str) -> dict[str, str]:
+    if owner.lower() not in required_owners():
+        return human_environment()
+    record = app_record()
+    if owner.lower() not in installed([owner], record) or not installation_token(owner, record):
+        raise IdentityError(f"could not get an installation token for {owner}")
+    environment = dict(os.environ)
+    environment[PUSH_OWNER] = owner
+    return environment
+
+
+def run_git(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
+    environment = human_environment()
+    if os.environ.get(AGENT_FLAG) == "1" and git_subcommand(arguments) == "push" and \
+            (owner := push_owner(arguments, checkout())):
+        environment = agent_git_environment(owner)
+    return run([real_git(), *arguments], env=environment, check=False).returncode
 
 
 def option_names(arguments: list[str]) -> set[str]:
@@ -783,9 +840,9 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
     if fields.get("protocol") != "https" or fields.get("host", "").lower() != "github.com" or not owner:
         return 0
     try:
+        if owner.lower() != os.environ.get(PUSH_OWNER, "").lower():
+            return 0
         if owner.lower() not in required_owners():
-            print(f"bot_identity: {owner} is not an account the GitHub App covers; agent sessions never use the human's "
-                  "credentials", file=sys.stderr)
             return 0
         record = app_record()
         if not installed([owner], record):
@@ -885,9 +942,9 @@ def script_launcher() -> bytes:
         return wheel.read(f"pip/_vendor/distlib/{name}")
 
 
-def windows_executable(script: Path) -> bytes:
+def windows_executable(script: Path, command: str = "gh") -> bytes:
     main = (f"import runpy, sys\nsys.path.insert(0, {str(script.parent)!r})\n"
-            f"sys.argv = [{str(script)!r}, 'gh', *sys.argv[1:]]\n"
+            f"sys.argv = [{str(script)!r}, {command!r}, *sys.argv[1:]]\n"
             f"runpy.run_path({str(script)!r}, run_name='__main__')\n")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as payload:
@@ -913,11 +970,13 @@ def install_shims(source: Path) -> Path:
         write_changed(script.with_name(name), Path(__file__).with_name(name).read_bytes())
     if WINDOWS:
         write_changed(directory / "gh.exe", windows_executable(script))
-        for retired in ("gh", "gh.cmd"):
+        write_changed(directory / "git.exe", windows_executable(script, "git"))
+        for retired in ("gh", "gh.cmd", "git", "git.cmd"):
             (directory / retired).unlink(missing_ok=True)
         return script
     python = Path(sys.executable)
     write_changed(directory / "gh", f"#!/bin/sh\nexec \"{python.as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n".encode(), executable=True)
+    write_changed(directory / "git", f"#!/bin/sh\nexec \"{python.as_posix()}\" -B \"{script.as_posix()}\" git \"$@\"\n".encode(), executable=True)
     return script
 
 
@@ -1004,15 +1063,23 @@ def converge_shims() -> list[Path]:
     return replaced
 
 
-def claude_user_settings() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+def repository_root(run=subprocess.run) -> Path:
+    try:
+        result = run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                     timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    except OSError as error:
+        raise IdentityError("repository-local setup requires a Git checkout") from error
+    root = Path(result.stdout.strip()) if result.returncode == 0 else None
+    if root is None or not root.is_dir():
+        raise IdentityError("repository-local setup requires a Git checkout")
+    return root.resolve()
 
 
-def codex_user_config() -> Path:
-    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+def host_settings(root: Path) -> tuple[Path, Path]:
+    return root / ".claude" / "settings.json", root / ".codex" / "config.toml"
 
 
-def verify_host_setup() -> None:
+def verify_host_setup(root: Path) -> None:
     source = Path(__file__).resolve()
     script = installed_script()
     for path, expected in ((script, source.read_bytes()),
@@ -1021,20 +1088,20 @@ def verify_host_setup() -> None:
         safe_existing_file(path)
         if path.read_bytes() != expected:
             raise IdentityError("the installed GitHub App wrapper is stale; run setup")
-    launcher = shim_directory() / ("gh.exe" if WINDOWS else "gh")
-    safe_existing_file(launcher)
-    expected_launcher = windows_executable(script) if WINDOWS else \
-        f"#!/bin/sh\nexec \"{Path(sys.executable).as_posix()}\" -B \"{script.as_posix()}\" gh \"$@\"\n".encode()
-    if launcher.read_bytes() != expected_launcher:
-        raise IdentityError("the installed GitHub App wrapper is stale; run setup")
+    for command in ("gh", "git"):
+        launcher = shim_directory() / (f"{command}.exe" if WINDOWS else command)
+        safe_existing_file(launcher)
+        expected_launcher = windows_executable(script, command) if WINDOWS else \
+            f"#!/bin/sh\nexec \"{Path(sys.executable).as_posix()}\" -B \"{script.as_posix()}\" {command} \"$@\"\n".encode()
+        if launcher.read_bytes() != expected_launcher:
+            raise IdentityError("the installed GitHub App wrapper is stale; run setup")
     approve, expected_approve = approve_launcher()
     for path, expected in ((shim_directory() / approve_source().name, approve_source().read_bytes()),
                            (approve, expected_approve)):
         if not path.is_file() or is_reparse(path) or path.read_bytes() != expected:
             raise IdentityError(f"`tj approve` is not installed at {path}; run setup")
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    claude = claude_user_settings()
-    codex = codex_user_config()
+    claude, codex = host_settings(root)
     try:
         claude_settings = json.loads(claude.read_text(encoding="utf-8-sig"))
         claude_env = claude_settings["env"]
@@ -1136,25 +1203,27 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
             if error.status != 401:
                 raise
             onboard()
+    root = repository_root()
     if check:
         verify_ready(app_record())
     else:
         verify_enrollment()
     if check:
-        verify_host_setup()
+        verify_host_setup(root)
         print("bot_identity: ready")
         return
     script = install_shims(Path(__file__).resolve())
     launcher = install_approve()
     gh_config_directory().mkdir(parents=True, exist_ok=True)
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    update_claude(claude_user_settings(), environment)
-    update_codex(codex_user_config(), environment)
+    claude, codex = host_settings(root)
+    update_claude(claude, environment)
+    update_codex(codex, environment)
     if remove_user_path(shim_directory()):
         print(f"Removed {shim_directory()} from your user PATH; only agent sessions put it first")
     print(f"Installed `tj approve` at {launcher}")
-    print("Personal agent identity is configured in the Claude and Codex user settings; restart Claude and Codex "
-          "to apply, and re-run setup after changing PATH")
+    print(f"Personal agent identity is configured in {root}; restart Claude and Codex to apply, and re-run setup "
+          "after changing PATH")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1162,6 +1231,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if argv[:1] == ["gh"]:
             return run_gh(argv[1:])
+        if argv[:1] == ["git"]:
+            return run_git(argv[1:])
         parser = argparse.ArgumentParser(description=__doc__)
         commands = parser.add_subparsers(dest="command", required=True)
         commands.add_parser("token").add_argument("--owner", required=True)
