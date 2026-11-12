@@ -65,10 +65,10 @@ for Agent's installer and refresh. See the
 [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md) for commands, credential handling,
 required permissions and recovery.
 
-The current integration writes machine-specific identity settings to the user's Claude and Codex
-configuration. It is not checkout-local; agent sessions using those settings share that environment.
-Repository adoption remains the source of Personal scope, and the wrapper only authorizes configured
-GitHub accounts. Human terminals retain their native login.
+The integration writes identity settings to the current repository's `.claude/settings.json` and
+`.codex/config.toml`. It never changes user-home Claude or Codex configuration. The App authors pull
+requests and their required pushes only for configured accounts; reads, reviews, comments, API calls,
+merges and every other account use the human's native login.
 
 ## Approving the bot's pull requests
 
