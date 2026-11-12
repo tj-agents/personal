@@ -11,10 +11,6 @@
     ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
-    "setup": {
-      "script": ".agents/personal/utility/bot-identity/scripts/bot_identity.py",
-      "converge": true
-    },
     "permissions": {
       "claude_allow": [],
       "codex_prefix_rules": []

@@ -2,7 +2,7 @@
 """Run agent GitHub access as the configured GitHub App in personal repositories (Python 3.12+, needs openssl).
 
 `token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
-the real gh and `setup` installs the wrapper, the agent-only settings for Claude and Codex and the human's `tj approve`.
+the real gh and `setup --project ROOT` installs the wrapper, repository host settings and the human's `tj approve`.
 `converge` replaces stale wrapper and `tj approve` script copies with this plugin's.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from dataclasses import dataclass
 import hashlib
 from datetime import datetime
 import io
@@ -33,6 +34,7 @@ import onboarding
 API = "https://api.github.com"
 AGENT_FLAG = "TJ_AGENT"
 TOKEN_FINGERPRINT = "TJ_BOT_TOKEN_SHA256"
+GIT_FINGERPRINT = "TJ_BOT_GIT_CONFIG_SHA256"
 UNAUTHENTICATED = "bot-identity-unauthenticated"
 TIMEOUT_SECONDS = 30
 TOKEN_MARGIN_SECONDS = 300
@@ -42,6 +44,8 @@ FORBIDDEN_WRITE_PERMISSIONS = ("administration",)
 WINDOWS = os.name == "nt"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
 GITHUB_URL = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)")
+GITHUB_REPOSITORY = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?(?:$|[?#])")
+API_REPOSITORY = re.compile(r"(?:^|/)repos/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)(?:/|$)")
 API_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([A-Za-z0-9-]+)")
 REPOSITORY = re.compile(r"([A-Za-z0-9-]+)/[\w.-]+")
 PULL_REQUEST = re.compile(r"https://github\.com/([A-Za-z0-9-]+)/[\w.-]+/pull/\d+")
@@ -83,8 +87,9 @@ COMMAND_PAYLOAD_FLAGS = {
     ("repo", "edit"): ("-d", "-h"),
     ("repo", "view"): ("-q", "-t"),
 }
-AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
-MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
+AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", TOKEN_FINGERPRINT,
+              GIT_FINGERPRINT)
+MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path", TOKEN_FINGERPRINT, GIT_FINGERPRINT)
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
 AGENT_DENY = (
     "mcp__github__merge_pull_request",
@@ -116,6 +121,18 @@ class GitHubError(IdentityError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryTarget:
+    root: Path | None
+    owner: str | None
+    name: str | None
+    bot_enabled: bool
+
+    @property
+    def identity(self) -> str | None:
+        return f"{self.owner}/{self.name}" if self.owner and self.name else None
 
 
 def store() -> Path:
@@ -658,6 +675,115 @@ def owner_from_checkout(run=subprocess.run) -> str | None:
     return match.group(1) if match else None
 
 
+def repository_from_value(value: str) -> tuple[str, str] | None:
+    match = GITHUB_REPOSITORY.search(value)
+    if match:
+        return match.group(1), match.group(2)
+    match = REPOSITORY.fullmatch(value.removesuffix(".git").strip("/"))
+    return (match.group(1), match.group(0).split("/", 1)[1]) if match else None
+
+
+def target_repository(arguments: list[str]) -> tuple[str, str] | None:
+    arguments = normalized_arguments(arguments)
+    command = tuple(arguments[:1] if arguments[:1] == ["api"] else arguments[:2])
+    payload_flags = (*PAYLOAD_FLAGS, *COMMAND_PAYLOAD_FLAGS.get(command, ()))
+    positional: list[str] = []
+    remaining = iter(arguments)
+    for argument in remaining:
+        flag, equals, inline = argument.partition("=")
+        if flag in OWNER_FLAGS:
+            value = inline if equals else next(remaining, "")
+            target = repository_from_value(value)
+            if target:
+                return target
+            continue
+        if argument.startswith("-R") and len(argument) > 2:
+            target = repository_from_value(argument[2:])
+            if target:
+                return target
+            continue
+        if flag in payload_flags:
+            if not equals:
+                next(remaining, None)
+            continue
+        if not argument.startswith("-"):
+            positional.append(argument)
+    candidates: list[str]
+    if arguments[:1] == ["api"]:
+        candidates = positional[1:2]
+    elif tuple(arguments[:2]) in (("pr", "view"), ("pr", "review"), ("issue", "view")):
+        candidates = positional[2:]
+    elif arguments[:1] == ["repo"]:
+        candidates = positional[2:3]
+    else:
+        candidates = []
+    for candidate in candidates:
+        match = API_REPOSITORY.search(candidate)
+        target = (match.group(1), match.group(2)) if match else repository_from_value(candidate)
+        if target:
+            return target
+    return None
+
+
+def repository_root(directory: Path, run=subprocess.run) -> Path | None:
+    try:
+        result = run(["git", "-C", str(directory), "rev-parse", "--show-toplevel"], capture_output=True,
+                     text=True, timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    except OSError:
+        return None
+    return Path(result.stdout.strip()).resolve() if result.returncode == 0 and result.stdout.strip() else None
+
+
+def selection_includes_personal(root: Path) -> bool:
+    try:
+        selection = json.loads((root / ".agents" / "plugins.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(selection, dict):
+        return False
+    plugins = selection.get("plugins")
+    marketplaces = selection.get("marketplaces")
+    marketplace = marketplaces.get("tj-agents") if isinstance(marketplaces, dict) else None
+    return (isinstance(plugins, list) and "personal@tj-agents" in plugins
+            and isinstance(marketplace, dict) and marketplace.get("repository") == "tj-agents/marketplace")
+
+
+def bot_identity_enabled(root: Path) -> bool:
+    if not selection_includes_personal(root):
+        return False
+    try:
+        settings = json.loads((root / ".agents" / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    configuration = settings.get("configuration") if isinstance(settings, dict) else None
+    personal = configuration.get("personal") if isinstance(configuration, dict) else None
+    return isinstance(personal, dict) and personal.get("bot_identity") is True
+
+
+def repository_target(directory: Path | None = None, run=subprocess.run) -> RepositoryTarget:
+    root = repository_root(directory or Path.cwd(), run=run)
+    if root is None:
+        return RepositoryTarget(None, None, None, False)
+    try:
+        result = run(["git", "-C", str(root), "remote", "get-url", "origin"], capture_output=True, text=True,
+                     timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    except OSError:
+        result = subprocess.CompletedProcess([], 1, "")
+    target = repository_from_value(result.stdout.strip()) if result.returncode == 0 else None
+    owner, name = target if target else (None, None)
+    return RepositoryTarget(root, owner, name, bot_identity_enabled(root))
+
+
+def configured_project(project: Path) -> Path:
+    root = repository_root(project)
+    if root is None or not (project / ".git").exists():
+        raise IdentityError("--project must name the repository root")
+    project = project.resolve(strict=True)
+    if not bot_identity_enabled(project):
+        raise IdentityError("the repository must select personal@tj-agents and set configuration.personal.bot_identity to true")
+    return project
+
+
 def shim_directory() -> Path:
     return Path.home() / ".agents-state" / "bin" / "bot-identity"
 
@@ -675,35 +801,100 @@ def real_gh() -> str:
     return found
 
 
-def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> dict[str, str]:
+def git_config_entries(script: Path) -> list[tuple[str, str]]:
+    return [
+        ("credential.https://github.com.useHttpPath", "true"),
+        ("credential.https://github.com.helper", ""),
+        ("credential.https://github.com.helper", helper_command(script)),
+        *((f"credential.{url}.helper", "") for url in CLEARED_HELPERS),
+    ]
+
+
+def git_config_fingerprint(entries: list[tuple[str, str]]) -> str:
+    return hashlib.sha256(json.dumps(entries, separators=(",", ":")).encode()).hexdigest()
+
+
+def owned_git_configuration(environment: dict[str, str]) -> bool:
+    try:
+        count = int(environment.get("GIT_CONFIG_COUNT", ""))
+    except ValueError:
+        return False
+    entries = [(environment.get(f"GIT_CONFIG_KEY_{index}"), environment.get(f"GIT_CONFIG_VALUE_{index}"))
+               for index in range(count)]
+    if any(key is None or value is None for key, value in entries):
+        return False
+    typed = [(key, value) for key, value in entries if key is not None and value is not None]
+    return environment.get(GIT_FINGERPRINT) == git_config_fingerprint(typed)
+
+
+def native_path(path: str) -> str:
+    return os.pathsep.join(entry for entry in path.split(os.pathsep) if entry and not is_shim(entry))
+
+
+def native_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+    native = dict(os.environ if environment is None else environment)
+    fingerprint = native.pop(TOKEN_FINGERPRINT, None)
+    native.pop(AGENT_FLAG, None)
+    if native.get("GH_TOKEN") == UNAUTHENTICATED or (
+        isinstance(fingerprint, str)
+        and native.get("GH_TOKEN") is not None
+        and hashlib.sha256(native["GH_TOKEN"].encode()).hexdigest() == fingerprint
+    ):
+        native.pop("GH_TOKEN", None)
+    if native.get("GH_CONFIG_DIR") == str(gh_config_directory()):
+        native.pop("GH_CONFIG_DIR", None)
+    if owned_git_configuration(native):
+        count = int(native.pop("GIT_CONFIG_COUNT"))
+        for index in range(count):
+            native.pop(f"GIT_CONFIG_KEY_{index}", None)
+            native.pop(f"GIT_CONFIG_VALUE_{index}", None)
+        native.pop("GIT_CONFIG_PARAMETERS", None)
+    native.pop(GIT_FINGERPRINT, None)
+    for name in ("PATH", "Path"):
+        if name in native:
+            native[name] = native_path(native[name])
+    return native
+
+
+def targets_current_repository(arguments: list[str], target: RepositoryTarget) -> bool:
+    if target.identity is None:
+        return False
+    if tuple(arguments[:2]) == ("api", "graphql"):
+        return False
+    explicit = target_repository(arguments)
+    gh_value = os.environ.get("GH_REPO", "")
+    gh_repository = repository_from_value(gh_value)
+    if gh_value and gh_repository is None:
+        return False
+    if explicit is None and any(arguments):
+        owners, _ = argument_context(arguments)
+        if owners:
+            return False
+    expected = explicit or gh_repository
+    return expected is None or (
+        expected[0].lower() == target.owner.lower()
+        and expected[1].lower() == target.name.lower()
+    )
+
+
+def agent_gh_environment(arguments: list[str], target: RepositoryTarget) -> dict[str, str]:
+    if not target.bot_enabled or not targets_current_repository(arguments, target):
+        return native_environment()
+    if target.owner is None or target.owner.lower() not in required_owners():
+        return native_environment()
     if arguments[:1] == ["auth"] and arguments[1:2] != ["status"]:
         raise IdentityError("agents may run only `gh auth status`")
-    explicit_owners, hostname = argument_context(arguments)
-    owners = (explicit_owners
-              or owners_from_arguments(["-R", os.environ.get("GH_REPO", "")])
-              or ([checkout_owner] if checkout_owner else []))
-    if len({owner.lower() for owner in owners}) > 1:
-        raise IdentityError("one GitHub command must target a single account")
-    environment = dict(os.environ)
-    if not owners:
-        return environment
-    protected = [owner for owner in owners if owner.lower() in required_owners()]
-    if not protected:
-        if arguments[:1] == ["auth"]:
-            return environment
-        raise IdentityError(f"{owners[0]} is not an account the GitHub App covers; agent sessions never use the human's credentials")
+    _, hostname = argument_context(arguments)
     hostname = hostname if hostname is not None else os.environ.get("GH_HOST") or "github.com"
     if hostname.lower() != "github.com":
         raise IdentityError("the Personal GitHub App is authorized only for github.com")
     record = app_record()
-    covered = installed(protected, record) if protected else {}
-    missing = [owner for owner in protected if owner.lower() not in covered]
-    if missing:
-        raise IdentityError("the configured GitHub App is not installed on " + ", ".join(missing))
-    app_owner = next(owner for owner in owners if owner.lower() in covered)
-    token = installation_token(app_owner, record)
+    if target.owner.lower() not in installed([target.owner], record):
+        raise IdentityError("the configured GitHub App is not installed on " + target.owner)
+    token = installation_token(target.owner, record)
     if not token:
-        raise IdentityError(f"could not get an installation token for {app_owner}")
+        raise IdentityError(f"could not get an installation token for {target.owner}")
+    environment = dict(os.environ)
     environment["GH_TOKEN"] = token
     environment[TOKEN_FINGERPRINT] = hashlib.sha256(token.encode()).hexdigest()
     return environment
@@ -746,11 +937,11 @@ def hand_over(output: str) -> None:
           f"yourself.", file=sys.stderr)
 
 
-def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
+def run_gh(arguments: list[str], run=subprocess.run, checkout=repository_target) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
     environment = agent_gh_environment(arguments, checkout())
-    app = environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
+    app = isinstance(environment.get(TOKEN_FINGERPRINT), str) and environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
     if not (app and awaits_approval(arguments)):
         return run([real_gh(), *arguments], env=environment, check=False).returncode
     if normalized_arguments(arguments)[1] == "create":
@@ -769,7 +960,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
     return result.returncode
 
 
-def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
+def credential(operation: str, stream=sys.stdin, out=sys.stdout, checkout=repository_target) -> int:
     if operation != "get":
         return 0
     fields = {}
@@ -779,18 +970,20 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
             break
         key, _, value = line.partition("=")
         fields[key] = value
-    owner = fields.get("path", "").split("/")[0]
-    if fields.get("protocol") != "https" or fields.get("host", "").lower() != "github.com" or not owner:
+    repository = repository_from_value(fields.get("path", ""))
+    if fields.get("protocol") != "https" or fields.get("host", "").lower() != "github.com" or repository is None:
+        return 0
+    target = checkout()
+    if (not target.bot_enabled or target.owner is None or target.name is None
+            or (target.owner.lower(), target.name.lower()) != (repository[0].lower(), repository[1].lower())):
         return 0
     try:
-        if owner.lower() not in required_owners():
-            print(f"bot_identity: {owner} is not an account the GitHub App covers; agent sessions never use the human's "
-                  "credentials", file=sys.stderr)
+        if target.owner.lower() not in required_owners():
             return 0
         record = app_record()
-        if not installed([owner], record):
+        if not installed([target.owner], record):
             return 0
-        token = installation_token(owner, record)
+        token = installation_token(target.owner, record)
         if token:
             out.write(f"username=x-access-token\npassword={token}\n")
     except IdentityError:
@@ -815,12 +1008,9 @@ def agent_path(path: str) -> str:
 
 
 def agent_environment(script: Path, path: str) -> dict[str, str]:
-    entries = [("credential.https://github.com.useHttpPath", "true"),
-               ("credential.https://github.com.helper", ""),
-               ("credential.https://github.com.helper", helper_command(script)),
-               *((f"credential.{url}.helper", "") for url in CLEARED_HELPERS)]
+    entries = git_config_entries(script)
     environment = {AGENT_FLAG: "1", "GH_TOKEN": UNAUTHENTICATED, "GH_CONFIG_DIR": str(gh_config_directory()),
-                   "GIT_CONFIG_COUNT": str(len(entries))}
+                   "GIT_CONFIG_COUNT": str(len(entries)), GIT_FINGERPRINT: git_config_fingerprint(entries)}
     for index, (key, value) in enumerate(entries):
         environment[f"GIT_CONFIG_KEY_{index}"] = key
         environment[f"GIT_CONFIG_VALUE_{index}"] = value
@@ -952,29 +1142,6 @@ def install_approve() -> Path:
     return launcher
 
 
-def remove_user_path(directory: Path) -> bool:
-    if WINDOWS:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
-            try:
-                current, kind = winreg.QueryValueEx(key, "Path")
-            except FileNotFoundError:
-                return False
-            entries = [entry for entry in current.split(";") if entry]
-            kept = [entry for entry in entries if os.path.normcase(entry) != os.path.normcase(str(directory))]
-            if kept == entries:
-                return False
-            winreg.SetValueEx(key, "Path", 0, kind, ";".join(kept))
-        return True
-    profile = Path.home() / ".profile"
-    line = f'export PATH="{directory}:$PATH"  # bot-identity'
-    text = profile.read_text(encoding="utf-8") if profile.is_file() else ""
-    if line not in text.splitlines():
-        return False
-    profile.write_text("".join(kept + "\n" for kept in text.splitlines() if kept != line), encoding="utf-8")
-    return True
-
-
 def installed_script() -> Path:
     return shim_directory() / Path(__file__).name
 
@@ -1004,15 +1171,15 @@ def converge_shims() -> list[Path]:
     return replaced
 
 
-def claude_user_settings() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+def claude_project_settings(project: Path) -> Path:
+    return project / ".claude" / "settings.json"
 
 
-def codex_user_config() -> Path:
-    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+def codex_project_config(project: Path) -> Path:
+    return project / ".codex" / "config.toml"
 
 
-def verify_host_setup() -> None:
+def verify_host_setup(project: Path) -> None:
     source = Path(__file__).resolve()
     script = installed_script()
     for path, expected in ((script, source.read_bytes()),
@@ -1033,8 +1200,8 @@ def verify_host_setup() -> None:
         if not path.is_file() or is_reparse(path) or path.read_bytes() != expected:
             raise IdentityError(f"`tj approve` is not installed at {path}; run setup")
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    claude = claude_user_settings()
-    codex = codex_user_config()
+    claude = claude_project_settings(project)
+    codex = codex_project_config(project)
     try:
         claude_settings = json.loads(claude.read_text(encoding="utf-8-sig"))
         claude_env = claude_settings["env"]
@@ -1052,8 +1219,7 @@ def verify_host_setup() -> None:
 
 
 def human_reviewer(run=subprocess.run) -> str:
-    environment = {name: value for name, value in os.environ.items()
-                   if name not in AGENT_ONLY and not name.startswith("GIT_CONFIG_")}
+    environment = native_environment()
     environment["GH_HOST"] = "github.com"
     result = run([real_gh(), "api", "user", "--jq", ".login"], env=environment,
                  capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -1126,7 +1292,8 @@ def verify_enrollment(fetch=api, sign=app_jwt) -> None:
         verify_ready(app_record(), fetch=fetch, sign=sign)
 
 
-def setup(check: bool = False, onboard_key: bool = False) -> None:
+def setup(project: Path, check: bool = False, onboard_key: bool = False) -> None:
+    project = configured_project(project)
     if onboard_key:
         try:
             verify_enrollment()
@@ -1141,20 +1308,17 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
     else:
         verify_enrollment()
     if check:
-        verify_host_setup()
+        verify_host_setup(project)
         print("bot_identity: ready")
         return
     script = install_shims(Path(__file__).resolve())
     launcher = install_approve()
     gh_config_directory().mkdir(parents=True, exist_ok=True)
     environment = agent_environment(script, os.environ.get("PATH", ""))
-    update_claude(claude_user_settings(), environment)
-    update_codex(codex_user_config(), environment)
-    if remove_user_path(shim_directory()):
-        print(f"Removed {shim_directory()} from your user PATH; only agent sessions put it first")
+    update_claude(claude_project_settings(project), environment)
+    update_codex(codex_project_config(project), environment)
     print(f"Installed `tj approve` at {launcher}")
-    print("Personal agent identity is configured in the Claude and Codex user settings; restart Claude and Codex "
-          "to apply, and re-run setup after changing PATH")
+    print(f"Personal agent identity is configured for {project}; restart Claude and Codex to apply")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1171,6 +1335,7 @@ def main(argv: list[str] | None = None) -> int:
         setup_flags = setup_command.add_mutually_exclusive_group()
         setup_flags.add_argument("--check", action="store_true")
         setup_flags.add_argument("--onboard", action="store_true")
+        setup_command.add_argument("--project", type=Path, required=True)
         setup_command.add_argument("--app", metavar="SLUG", help="select an existing GitHub App during explicit onboarding")
         setup_command.add_argument("--reviewer", metavar="LOGIN", help="human account used by tj approve")
         setup_command.add_argument("--account", action="append", metavar="ACCOUNT", help="permitted target account; repeat for organizations")
@@ -1185,9 +1350,10 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("identity selection requires explicit setup --onboard")
             if (arguments.reviewer or arguments.account) and not arguments.app:
                 parser.error("--reviewer and --account require --app")
+            project = configured_project(arguments.project)
             if arguments.app:
                 configure_existing_app(arguments.app, arguments.reviewer, arguments.account)
-            setup(check=arguments.check, onboard_key=arguments.onboard)
+            setup(project, check=arguments.check, onboard_key=arguments.onboard)
             return 0
         if arguments.owner.lower() not in required_owners():
             raise IdentityError("the GitHub App is not authorized for that account")

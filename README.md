@@ -56,18 +56,16 @@ closure evidence. A missing or different provider blocks the operation without a
 
 ## Agent GitHub identity
 
-`personal:bot-identity` configures a machine for the user's own GitHub App and human reviewer. Its
+`personal:bot-identity` configures an explicitly opted-in repository for the user's own GitHub App and human reviewer. Its
 onboarding page supports creating a new App or enrolling an existing App on another computer. The
 plugin contains no preset personal App or account roster. Accepted configuration and keys are retained
-through partial setup, and repeat setup reuses valid enrollment. The plugin declares this setup step
-for Agent's installer and refresh. See the
+through partial setup, and repeat setup reuses valid enrollment. See the
 [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md) for commands, credential handling,
 required permissions and recovery.
 
-The current integration writes machine-specific identity settings to the user's Claude and Codex
-configuration. It is not checkout-local; agent sessions using those settings share that environment.
-Repository adoption remains the source of Personal scope, and the wrapper only authorizes configured
-GitHub accounts. Human terminals retain their native login.
+The repository must set `configuration.personal.bot_identity` to `true` in `.agents/settings.json`; selecting
+Personal alone does not enable the App. Setup writes repository-local Claude and Codex configuration. The
+wrapper only authorizes a verified opted-in repository target, and human terminals retain their native login.
 
 ## Approving the bot's pull requests
 

@@ -16,14 +16,16 @@ protected local record is `~/.agents-state/github-app/identity.json`; it contain
 the local key location. The plugin ships no personal App, account roster or reviewer identity. Project
 adoption determines Personal scope; account ownership and checkout location do not establish it.
 
-Use the existing setup check before changing enrollment. Ordinary setup converges local wrappers and
-host settings; `--check` reports readiness without writing. Neither opens a browser. With the user
-present and enrollment explicitly authorized, `--onboard` opens the local setup page.
+Bot use is a repository opt-in. The repository must explicitly select `personal@tj-agents` and set
+`configuration.personal.bot_identity` to `true` in `.agents/settings.json`. Selection alone, GitHub
+ownership and checkout location never enable the App. Setup requires that repository root and writes only
+its Claude and Codex configuration; `--check` reports readiness without writing. Neither opens a browser.
+With the user present and enrollment explicitly authorized, `--onboard` opens the local setup page.
 
 ```text
-python3 -B <skill-directory>/scripts/bot_identity.py setup --check
-python3 -B <skill-directory>/scripts/bot_identity.py setup --onboard
-python3 -B <skill-directory>/scripts/bot_identity.py setup
+python3 -B <skill-directory>/scripts/bot_identity.py setup --project /path/to/repository --check
+python3 -B <skill-directory>/scripts/bot_identity.py setup --project /path/to/repository --onboard
+python3 -B <skill-directory>/scripts/bot_identity.py setup --project /path/to/repository
 ```
 
 Use `python` instead of `python3` on Windows. Runtime prerequisites are Python 3.12+, OpenSSL and `gh`.
@@ -33,7 +35,7 @@ fictitious identities; repeat `--account` for each intended account. Omit `--rev
 human's native `gh` username.
 
 ```text
-python3 -B <skill-directory>/scripts/bot_identity.py setup --onboard --app sample-dev-bot --reviewer sample-dev --account sample-dev --account sample-projects
+python3 -B <skill-directory>/scripts/bot_identity.py setup --project /path/to/repository --onboard --app sample-dev-bot --reviewer sample-dev --account sample-dev --account sample-projects
 ```
 
 The page offers two paths. **Existing App** selects the user's App by its public name or URL and accepts
@@ -59,18 +61,16 @@ App or installation settings; setup does not silently change GitHub permissions.
 written only after readiness succeeds.
 
 Setup installs the `gh` wrapper and `personal:approve` launcher under the managed local runtime. Plugin
-refresh converges their shipped code without replacing the user's identity record. The wrapper resolves
-the target account from explicit `gh` arguments or Git's remote, using the checkout's `origin` only when
-no explicit account is supplied. Multiple target accounts, unconfigured accounts and missing installations
-fail closed; agent commands never fall back to the human's credentials. Agents may run only `gh auth status`
-from the `gh auth` command family. The low-level `token` command prints a secret and is not a diagnostic.
+refresh converges their shipped code without replacing the user's identity record. The wrapper uses the
+App only for the opted-in checkout's verified GitHub repository. An explicit other or unknown target uses
+the native human `gh` and Git credentials after removing only the wrapper's own environment. A configured
+target with a missing App installation or token fails closed. Agents may run only `gh auth status` when the
+App applies. The low-level `token` command prints a secret and is not a diagnostic.
 
-The current host integration writes user-level `~/.claude/settings.json` and `~/.codex/config.toml`.
-It gives agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default `GH_TOKEN`, a
-separate `GH_CONFIG_DIR`, and Git helpers that use the selected bot. This environment can affect every
-agent session using those host settings; it is not checkout-local or an OS credential boundary. Ordinary
-human terminals keep their native `gh` login. Re-run setup after changing `PATH` and restart Claude and
-Codex to load changed settings.
+Repository setup writes `.claude/settings.json` and `.codex/config.toml` beneath that repository. It gives
+its agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default `GH_TOKEN`, a separate
+`GH_CONFIG_DIR`, and Git helpers that use the selected bot. Human terminals and unopted repositories keep
+their native `gh` login. Restart Claude and Codex to load changed repository settings.
 
 Setup installs and checks the human approval command and the Claude agent denials for `tj approve` and
 `tj-approve`. When the user's approval is required, follow [personal:approve](../approve/SKILL.md): give

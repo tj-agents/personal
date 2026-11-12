@@ -22,6 +22,7 @@ SCRIPT = ROOT / ".agents/personal/utility/bot-identity/scripts/bot_identity.py"
 sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location("bot_identity", SCRIPT)
 bot = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = bot
 spec.loader.exec_module(bot)
 
 RECORD = {"id": 12345, "slug": "alex-bot", "client_id": "fixture-client", "owner": "alex", "owner_type": "User",
@@ -133,11 +134,12 @@ class IdentityTests(Sandbox):
 
 
 class CredentialTests(Sandbox):
-    def ask(self, request, token="ghs_x"):
+    def ask(self, request, token="ghs_x", target=None):
         out = io.StringIO()
+        target = target or bot.RepositoryTarget(self.home, "sample-org", "core", True)
         with mock.patch.object(bot, "installed", side_effect=fake_installed), \
                 mock.patch.object(bot, "installation_token", return_value=token):
-            bot.credential("get", io.StringIO(request + "\n"), out)
+            bot.credential("get", io.StringIO(request + "\n"), out, checkout=lambda: target)
         return out.getvalue()
 
     def test_installed_accounts_get_only_the_app_token(self):
@@ -159,15 +161,18 @@ class CredentialTests(Sandbox):
         bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=sample-org/x\n\n"), out)
         self.assertEqual("", out.getvalue())
 
-    def test_an_account_the_app_does_not_cover_is_refused_with_its_reason(self):
+    def test_an_account_the_app_does_not_cover_uses_no_bot_credential(self):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             answer = self.ask("protocol=https\nhost=github.com\npath=outside-org/cris.git\n")
         self.assertEqual("", answer)
-        self.assertIn("outside-org is not an account the GitHub App covers", err.getvalue())
+        self.assertEqual("", err.getvalue())
 
-    def test_an_unadopted_tj_agents_checkout_still_gets_the_app_token(self):
-        with mock.patch.object(subprocess, "run", side_effect=AssertionError("no checkout probe")):
-        self.assertEqual("username=x-access-token\npassword=ghs_x\n", answer)
+    def test_another_repository_under_the_same_owner_gets_no_bot_credential(self):
+        answer = self.ask("protocol=https\nhost=github.com\npath=sample-org/other.git\n")
+        self.assertEqual("", answer)
+
+    def test_an_unadopted_checkout_gets_no_bot_credential(self):
+        self.assertEqual("", answer)
 
 class GitContainmentTests(Sandbox):
     def setUp(self):
@@ -221,49 +226,54 @@ class GhWrapperTests(Sandbox):
         self.installed.side_effect = fake_installed
         self.installation_token.side_effect = lambda owner, record: f"ghs_{owner}"
 
-    def environment(self, *arguments, checkout=None):
-        self.assertEqual(0, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout))
+    def environment(self, *arguments, checkout=None, bot_enabled=True):
+        target = bot.RepositoryTarget(self.home, checkout or "sample-org", "core", bot_enabled)
+        self.assertEqual(0, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: target))
         command, environment = self.gh.calls[-1]
         self.assertEqual(["real-gh", *arguments], command)
         return environment
 
     def refused(self, *arguments, checkout=None):
+        target = bot.RepositoryTarget(self.home, checkout or "sample-org", "core", True)
         with self.assertRaises(bot.IdentityError):
-            bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout)
+            bot.run_gh(list(arguments), run=self.gh, checkout=lambda: target)
         self.assertEqual([], self.gh.calls)
+
+    def native(self, *arguments, checkout=None, bot_enabled=True):
+        environment = self.environment(*arguments, checkout=checkout, bot_enabled=bot_enabled)
+        self.assertNotIn(bot.TOKEN_FINGERPRINT, environment)
+        return environment
 
     def test_installed_accounts_get_the_app_token_and_the_agent_gh_config(self):
         environment = self.environment("pr", "merge", "5", "-R", "sample-org/core")
         self.assertEqual("ghs_sample-org", environment["GH_TOKEN"])
         self.assertEqual(str(bot.gh_config_directory()), environment["GH_CONFIG_DIR"])
 
-    def test_naming_an_installed_account_wins_over_an_uncovered_checkout(self):
-        environment = self.environment("pr", "review", "--approve", "https://github.com/alex/notes/pull/2",
-                                       checkout="outside-org")
-        self.assertEqual("ghs_alex", environment["GH_TOKEN"])
+    def test_naming_another_repository_uses_native_credentials(self):
+        self.native("pr", "review", "--approve", "https://github.com/alex/notes/pull/2", checkout="outside-org")
 
-    def test_an_explicit_work_target_in_a_tj_agents_checkout_is_refused(self):
-        self.refused("issue", "list", "-R", "outside-org/cris", checkout="sample-org")
+    def test_an_explicit_other_target_in_an_opted_checkout_uses_native_credentials(self):
+        self.native("issue", "list", "-R", "outside-org/cris", checkout="sample-org")
         self.installed.assert_not_called()
 
     def test_payload_urls_do_not_change_the_target_identity(self):
         cases = (
             ("issue", "create", "--title", "Fixture", "--body", "See https://github.com/cli/cli/issues/1"),
-            ("issue", "create", "--body=https://github.com/cli/cli/issues/1", "-R", "sample-org/personal"),
-            ("api", "repos/sample-org/personal/issues", "-f", "body=https://github.com/cli/cli/issues/1"),
+            ("issue", "create", "--body=https://github.com/cli/cli/issues/1", "-R", "sample-org/core"),
+            ("api", "repos/sample-org/core/issues", "-f", "body=https://github.com/cli/cli/issues/1"),
         )
         for arguments in cases:
             with self.subTest(arguments=arguments):
                 environment = self.environment(*arguments, checkout="sample-org")
                 self.assertEqual("ghs_sample-org", environment["GH_TOKEN"])
 
-    def test_a_gh_child_entering_another_account_is_refused(self):
+    def test_a_gh_child_entering_another_repository_uses_native_credentials(self):
         self.patch_environment(self.environment("api", "repos/sample-org/personal"))
         self.gh.calls.clear()
-        self.refused("api", "repos/outside-org/cris")
+        self.native("api", "repos/outside-org/cris")
 
     def test_a_personal_token_is_not_sent_to_a_different_host(self):
-        self.refused("api", "repos/sample-org/personal", "--hostname", "example.test")
+        self.native("api", "repos/sample-org/personal", "--hostname", "example.test")
         self.installation_token.assert_not_called()
 
     def test_command_specific_booleans_preserve_the_explicit_work_target(self):
@@ -271,19 +281,18 @@ class GhWrapperTests(Sandbox):
                                ("checkout", ("-f",)), ("co", ("-f",))):
             for flag in flags:
                 with self.subTest(command=command, flag=flag):
-                    self.refused("pr", command, flag, "https://github.com/outside-org/cris/pull/5", checkout="sample-org")
+                    self.native("pr", command, flag, "https://github.com/outside-org/cris/pull/5", checkout="sample-org")
         self.installation_token.assert_not_called()
 
     def test_a_boolean_fork_remote_option_preserves_the_explicit_work_target(self):
-        self.refused("repo", "fork", "--remote", "https://github.com/outside-org/cris", checkout="sample-org")
+        self.native("repo", "fork", "--remote", "https://github.com/outside-org/cris", checkout="sample-org")
         self.installation_token.assert_not_called()
 
-    def test_clone_option_values_do_not_replace_the_repository_target(self):
+    def test_clone_of_another_repository_uses_native_credentials(self):
         for flag in ("-u", "--upstream-remote-name"):
             with self.subTest(flag=flag):
-                environment = self.environment("repo", "clone", flag, "upstream", "sample-org/personal",
-                                               "destination/subdirectory", checkout="alex")
-                self.assertEqual("ghs_sample-org", environment["GH_TOKEN"])
+                self.native("repo", "clone", flag, "upstream", "sample-org/personal",
+                            "destination/subdirectory", checkout="alex")
 
     def test_formatting_payload_urls_preserve_the_checkout_identity(self):
         for command in (("pr", "list"), ("issue", "list"), ("pr", "checks"), ("repo", "list")):
@@ -298,16 +307,14 @@ class GhWrapperTests(Sandbox):
                                        "See https://github.com/outside-org/cris", checkout="sample-org")
         self.assertEqual("ghs_sample-org", environment["GH_TOKEN"])
 
-    def test_api_preview_values_preserve_the_explicit_personal_target(self):
+    def test_api_preview_values_cannot_enable_the_bot_for_another_checkout(self):
         for flag in ("--preview", "-p"):
             with self.subTest(flag=flag):
-                environment = self.environment("api", flag, "nebula", "repos/sample-org/personal",
-                                               checkout="outside-org")
-                self.assertEqual("ghs_sample-org", environment["GH_TOKEN"])
+                self.native("api", flag, "nebula", "repos/sample-org/personal", checkout="outside-org")
 
     def test_hostname_text_in_a_payload_cannot_override_the_actual_host(self):
-        self.refused("api", "repos/sample-org/personal", "--hostname", "enterprise.example",
-                     "-f", "--hostname=github.com")
+        self.native("api", "repos/sample-org/personal", "--hostname", "enterprise.example",
+                    "-f", "--hostname=github.com")
         self.installation_token.assert_not_called()
 
     def test_hostname_text_in_a_payload_is_not_an_option(self):
@@ -317,24 +324,25 @@ class GhWrapperTests(Sandbox):
 
     def test_gh_repo_target_overrides_the_checkout(self):
         self.patch_environment({"GH_REPO": "outside-org/cris"})
-        self.refused("issue", "list", checkout="sample-org")
+        self.native("issue", "list", checkout="sample-org")
         self.installed.assert_not_called()
 
     def test_mixed_explicit_owners_are_rejected_before_minting(self):
-        self.refused("pr", "view", "https://github.com/sample-org/core/pull/1", "-R", "outside-org/cris")
+        self.native("pr", "view", "https://github.com/sample-org/core/pull/1", "-R", "outside-org/cris")
         self.installation_token.assert_not_called()
 
-    def test_an_unadopted_tj_agents_checkout_uses_the_app_by_owner(self):
-        environment = self.environment("issue", "list", checkout="sample-org")
-        self.assertEqual("ghs_sample-org", environment["GH_TOKEN"])
+    def test_an_unopted_checkout_uses_native_credentials(self):
+        environment = self.native("issue", "list", checkout="sample-org", bot_enabled=False)
+        self.assertNotIn("GH_TOKEN", environment)
+        self.installed.assert_not_called()
 
-    def test_a_repository_outside_the_apps_accounts_is_refused_not_given_the_humans_gh(self):
-        self.refused("pr", "list", checkout="outside-org")
+    def test_a_repository_outside_the_apps_accounts_uses_native_credentials(self):
+        self.native("pr", "list", checkout="outside-org")
         self.installation_token.assert_not_called()
 
-    def test_commands_without_an_account_stay_unauthenticated(self):
-        environment = self.environment("api", "graphql", "-f", "query={viewer{login}}")
-        self.assertEqual(bot.UNAUTHENTICATED, environment["GH_TOKEN"])
+    def test_commands_without_a_repository_target_use_native_credentials(self):
+        environment = self.native("api", "graphql", "-f", "query={viewer{login}}")
+        self.assertNotIn("GH_TOKEN", environment)
         self.installed.assert_not_called()
 
     def test_gh_auth_never_reaches_the_humans_credentials(self):
@@ -342,8 +350,8 @@ class GhWrapperTests(Sandbox):
                           ("auth", "logout"), ("auth", "setup-git")):
             with self.subTest(arguments=arguments):
                 self.refused(*arguments)
-        environment = self.environment("auth", "status", "--show-token", checkout="outside-org")
-        self.assertEqual(bot.UNAUTHENTICATED, environment["GH_TOKEN"])
+        environment = self.native("auth", "status", "--show-token", checkout="outside-org")
+        self.assertNotIn("GH_TOKEN", environment)
 
     def test_a_failed_mint_for_an_installed_account_stops_the_command(self):
         self.installation_token.side_effect = lambda owner, record: None
@@ -362,8 +370,9 @@ class ApprovalHandoffTests(GhWrapperTests):
     def hand_over(self, *arguments, checkout="sample-org", stdout=None, returncode=0):
         self.gh.stdout, self.gh.returncode = stdout, returncode
         out, err = io.StringIO(), io.StringIO()
+        target = bot.RepositoryTarget(self.home, checkout, "core", True)
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            self.assertEqual(returncode, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: checkout))
+            self.assertEqual(returncode, bot.run_gh(list(arguments), run=self.gh, checkout=lambda: target))
         return out.getvalue(), err.getvalue()
 
     def test_a_created_pr_points_the_human_at_tj_approve_and_keeps_its_url_on_stdout(self):
@@ -556,16 +565,6 @@ class SettingsTests(unittest.TestCase):
         self.assertIn("Bash(tj approve:*)", settings["permissions"]["deny"])
         self.assertIn("Bash(tj-approve:*)", settings["permissions"]["deny"])
 
-    def test_setup_takes_the_wrapper_back_out_of_the_posix_profile(self):
-        shim = self.root / "shim"
-        profile = self.root / ".profile"
-        profile.write_text(f'export A=1\nexport PATH="{shim}:$PATH"  # bot-identity\nexport B=2\n', encoding="utf-8")
-        with mock.patch.object(bot, "WINDOWS", False), mock.patch.object(bot.Path, "home", return_value=self.root):
-            self.assertTrue(bot.remove_user_path(shim))
-            self.assertFalse(bot.remove_user_path(shim))
-        self.assertEqual("export A=1\nexport B=2\n", profile.read_text(encoding="utf-8"))
-
-
 class EnrollmentTests(Sandbox):
     def test_existing_app_selection_reuses_the_enrolled_key_and_permitted_accounts(self) -> None:
         before = (bot.store() / "identity.json").read_bytes()
@@ -612,9 +611,10 @@ class EnrollmentTests(Sandbox):
     def test_unsafe_or_malformed_configuration_never_restarts_enrollment(self) -> None:
         path = bot.store() / "identity.json"
         path.write_text("{}", encoding="utf-8")
-        with mock.patch.object(bot, "onboard") as onboard:
+        with mock.patch.object(bot, "configured_project", return_value=self.home), \
+                mock.patch.object(bot, "onboard") as onboard:
             with self.assertRaisesRegex(bot.IdentityError, "configuration is invalid"):
-                bot.setup(onboard_key=True)
+                bot.setup(self.home, onboard_key=True)
         onboard.assert_not_called()
 
     def test_configuration_rejects_ambiguous_accounts_and_external_key_paths(self) -> None:
@@ -712,25 +712,28 @@ class EnrollmentTests(Sandbox):
 
     def test_missing_protected_installation_fails_closed_without_human_fallback(self):
         self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+        target = bot.RepositoryTarget(self.home, "alex", "notes", True)
         with mock.patch.object(bot, "installed", return_value={}), self.assertRaises(bot.IdentityError):
-            bot.agent_gh_environment(["pr", "list", "-R", "alex/notes"], None)
+            bot.agent_gh_environment(["pr", "list", "-R", "alex/notes"], target)
 
     def test_failed_readiness_does_not_mutate_agent_hosts(self):
-        with mock.patch.object(bot, "verify_ready", side_effect=bot.IdentityError("missing installation")), \
+        with mock.patch.object(bot, "configured_project", return_value=self.home), \
+                mock.patch.object(bot, "verify_ready", side_effect=bot.IdentityError("missing installation")), \
                 mock.patch.object(bot, "install_shims") as install, \
                 mock.patch.object(bot, "update_claude") as claude, \
                 mock.patch.object(bot, "update_codex") as codex:
             with self.assertRaises(bot.IdentityError):
-                bot.setup()
+                bot.setup(self.home)
         install.assert_not_called()
         claude.assert_not_called()
         codex.assert_not_called()
 
     def test_check_is_read_only_and_setup_flags_are_exclusive(self):
-        with mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "verify_host_setup"), \
+        with mock.patch.object(bot, "configured_project", return_value=self.home), \
+                mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "verify_host_setup"), \
                 mock.patch.object(bot, "install_shims") as install:
             with contextlib.redirect_stdout(io.StringIO()):
-                bot.setup(check=True)
+                bot.setup(self.home, check=True)
         install.assert_not_called()
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             bot.main(["setup", "--check", "--onboard"])
@@ -770,9 +773,10 @@ class EnrollmentTests(Sandbox):
         for status, starts in ((401, True), (403, False), (None, False)):
             with self.subTest(status=status), \
                     mock.patch.object(bot, "verify_ready", side_effect=[bot.GitHubError("failed", status), bot.IdentityError("stop before settings")]), \
+                    mock.patch.object(bot, "configured_project", return_value=self.home), \
                     mock.patch.object(bot, "onboard") as onboard:
                 with self.assertRaises(bot.IdentityError):
-                    bot.setup(onboard_key=True)
+                    bot.setup(self.home, onboard_key=True)
                 self.assertEqual(starts, onboard.called)
 
     @pytest.mark.allow_hosts(["127.0.0.1"])
@@ -820,7 +824,7 @@ class EnrollmentTests(Sandbox):
 
 
 class FreshSetupTests(unittest.TestCase):
-    def test_user_settings_scope_the_bot_to_agent_sessions_and_leave_the_checkout_untouched(self):
+    def test_repository_setup_scopes_the_bot_to_one_opted_in_checkout(self):
         with tempfile.TemporaryDirectory(prefix="bot setup ü ") as temporary:
             home = Path(temporary)
             project = home / "personal project"
@@ -831,87 +835,78 @@ class FreshSetupTests(unittest.TestCase):
                 "plugins": ["personal@tj-agents"],
                 "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
             }), encoding="utf-8")
-            real = home / "real gh"
-            real.mkdir()
-            script = real / "fake-gh.py"
-            script.write_text("import os\nprint('BOT' if os.environ.get('GH_TOKEN') == 'fixture-token' else 'WRONG')\n",
-                              encoding="utf-8")
-            launcher = real / ("gh.exe" if bot.WINDOWS else "gh")
-            if bot.WINDOWS:
-                launcher.write_bytes(bot.windows_executable(script))
-            else:
-                launcher.write_text(f'#!{sys.executable}\n' + script.read_text(encoding="utf-8"), encoding="utf-8")
-                launcher.chmod(0o755)
+            (project / ".agents/settings.json").write_text(json.dumps({
+                "configuration": {"personal": {"bot_identity": True}},
+            }), encoding="utf-8")
             environment = {**without_agent_settings(os.environ), "HOME": str(home), "USERPROFILE": str(home),
                            "CLAUDE_CONFIG_DIR": str(home / "claude"), "CODEX_HOME": str(home / "codex"),
                            "TJ_BIN_DIR": str(home / "tj bin"),
-                           "PATH": os.pathsep.join([str(real), os.environ["PATH"]])}
+                           "PATH": os.environ["PATH"]}
             with mock.patch.object(os, "environ", environment):
                 key = bot.store() / "alex-bot.pem"
                 bot.write_key(key, b"unused fixture key")
                 bot.write_private(bot.store() / "identity.json", {**CONFIG, "key": str(key)})
-                with mock.patch.object(bot, "verify_ready"), mock.patch.object(bot, "remove_user_path"), \
-                        contextlib.redirect_stdout(io.StringIO()):
-                    bot.setup()
-                    bot.setup(check=True)
-                    original_path = os.environ["PATH"]
-                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(real), original_path])}):
-                        bot.setup(check=True)
-                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(home / "new tools"), original_path])}):
-                        with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True)
-                    entries = original_path.split(os.pathsep)
-                    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([*entries[1:], entries[0]])}):
-                        with self.assertRaisesRegex(bot.IdentityError, "host settings are stale"):
-                            bot.setup(check=True)
-                    claude = home / "claude/settings.json"
-                    settings = json.loads(claude.read_text(encoding="utf-8"))
-                    for denied in (bot.AGENT_DENY[0], "Bash(tj approve:*)", "Bash(tj-approve:*)"):
-                        bot.setup()
-                        settings = json.loads(claude.read_text(encoding="utf-8"))
-                        settings["permissions"]["deny"].remove(denied)
-                        claude.write_text(json.dumps(settings), encoding="utf-8")
-                        with self.assertRaisesRegex(bot.IdentityError, "write restrictions are missing"):
-                            bot.setup(check=True)
-                    del settings["permissions"]
-                    claude.write_text(json.dumps(settings), encoding="utf-8")
-                    with self.assertRaisesRegex(bot.IdentityError, "host settings are missing"):
-                        bot.setup(check=True)
-                    bot.setup()
-                    bot.setup(check=True)
-                    tj_approve = home / "tj bin" / ("tj-approve.cmd" if bot.WINDOWS else "tj-approve")
-                    self.assertIn(str(bot.shim_directory() / "approve.py"), tj_approve.read_text(encoding="utf-8"))
-                    tj_approve.unlink()
-                    with self.assertRaisesRegex(bot.IdentityError, "`tj approve` is not installed"):
-                        bot.setup(check=True)
-                    bot.setup()
-                    bot.setup(check=True)
-                    result = subprocess.run(
-                        [sys.executable, "-B", "-c",
-                         "import sys; sys.path.insert(0, sys.argv[1]); import bot_identity as bot; "
-                         "bot.verify_host_setup(); bot.install_approve(); bot.verify_host_setup()",
-                         str(bot.shim_directory())],
-                        cwd=home, env=environment, capture_output=True, text=True, timeout=30,
-                    )
-                    self.assertEqual(0, result.returncode, result.stderr)
-                bot.write_private(bot.store() / "tokens/alex-bot-installations.json", INSTALLED)
-                bot.write_private(bot.store() / "tokens/alex-bot-alex.json",
-                                  {"token": "fixture-token", "expires": 4102444800})
-                settings = json.loads((home / "claude/settings.json").read_text(encoding="utf-8"))["env"]
-                result = subprocess.run([str(bot.shim_directory() / launcher.name), "api", "repos/alex/smoke"],
-                                        cwd=project, env={**environment, **settings}, capture_output=True,
-                                        text=True, timeout=30, check=True)
-                self.assertEqual("BOT", result.stdout.strip())
-                self.assertNotIn("TJ_AGENT", os.environ)
-                codex = bot_toml((home / "codex/config.toml").read_text(encoding="utf-8"))
-                self.assertEqual(settings, codex["shell_environment_policy"]["set"])
-                self.assertFalse((project / ".claude").exists())
-                self.assertFalse((project / ".codex").exists())
+                with mock.patch.object(bot, "verify_ready"), contextlib.redirect_stdout(io.StringIO()):
+                    bot.setup(project)
+                    bot.setup(project, check=True)
+                claude = json.loads((project / ".claude/settings.json").read_text(encoding="utf-8"))
+                codex = bot_toml((project / ".codex/config.toml").read_text(encoding="utf-8"))
+                self.assertEqual(claude["env"], codex["shell_environment_policy"]["set"])
+                self.assertEqual("1", claude["env"]["TJ_AGENT"])
+                self.assertFalse((home / "claude/settings.json").exists())
+                self.assertFalse((home / "codex/config.toml").exists())
 
 
 def bot_toml(text):
     import tomllib
     return tomllib.loads(text)
+
+
+def opted_repository(root: Path) -> None:
+    subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+    (root / ".agents").mkdir()
+    (root / ".agents/plugins.json").write_text(json.dumps({
+        "plugins": ["personal@tj-agents"],
+        "marketplaces": {"tj-agents": {"repository": "tj-agents/marketplace"}},
+    }), encoding="utf-8")
+    (root / ".agents/settings.json").write_text(json.dumps({
+        "configuration": {"personal": {"bot_identity": True}},
+    }), encoding="utf-8")
+
+
+def test_repository_opt_in_requires_selection_and_true_setting(tmp_path: Path) -> None:
+    opted_repository(tmp_path)
+    assert bot.bot_identity_enabled(tmp_path)
+    (tmp_path / ".agents/settings.json").write_text(json.dumps({
+        "configuration": {"personal": {"bot_identity": False}},
+    }), encoding="utf-8")
+    assert not bot.bot_identity_enabled(tmp_path)
+    with pytest.raises(bot.IdentityError, match="bot_identity"):
+        bot.configured_project(tmp_path)
+
+
+def test_cross_repository_target_uses_native_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot, "gh_config_directory", lambda: Path("/s/gh-agent"))
+    monkeypatch.setattr(bot, "shim_directory", lambda: Path("/s/shim"))
+    environment = bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"])
+    environment["GH_TOKEN"] = "human-token"
+    environment.pop(bot.TOKEN_FINGERPRINT, None)
+    monkeypatch.setattr(os, "environ", environment)
+    target = bot.RepositoryTarget(Path("/repository"), "sample-org", "core", True)
+    native = bot.agent_gh_environment(["pr", "list", "-R", "other-org/other"], target)
+    assert native["GH_TOKEN"] == "human-token"
+    assert "TJ_AGENT" not in native
+    assert bot.GIT_FINGERPRINT not in native
+
+
+def test_opted_covered_target_fails_when_app_installation_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "environ", bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+    target = bot.RepositoryTarget(Path("/repository"), "sample-org", "core", True)
+    with mock.patch.object(bot, "required_owners", return_value=("sample-org",)), \
+            mock.patch.object(bot, "app_record", return_value=RECORD), \
+            mock.patch.object(bot, "installed", return_value={}):
+        with pytest.raises(bot.IdentityError, match="not installed"):
+            bot.agent_gh_environment(["pr", "list"], target)
 
 
 def test_existing_protected_key_is_reused_after_selecting_the_same_app(
@@ -1116,10 +1111,11 @@ def test_unreadable_key_has_a_distinct_replaceable_error(
 
 
 def test_explicit_onboarding_can_replace_an_unreadable_retained_key() -> None:
-    with mock.patch.object(bot, "verify_enrollment", side_effect=bot.KeyVerificationError("unreadable")), \
+    with mock.patch.object(bot, "configured_project", return_value=Path.cwd()), \
+            mock.patch.object(bot, "verify_enrollment", side_effect=bot.KeyVerificationError("unreadable")), \
             mock.patch.object(bot, "onboard", side_effect=bot.IdentityError("stop after UI")) as opened:
         with pytest.raises(bot.IdentityError, match="stop after UI"):
-            bot.setup(onboard_key=True)
+            bot.setup(Path.cwd(), onboard_key=True)
     opened.assert_called_once()
 
 
