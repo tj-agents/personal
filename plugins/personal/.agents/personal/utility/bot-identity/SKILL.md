@@ -17,7 +17,7 @@ the local key location. The plugin ships no personal App, account roster or revi
 adoption determines Personal scope; account ownership and checkout location do not establish it.
 
 Use the existing setup check before changing enrollment. Ordinary setup converges local wrappers and
-host settings; `--check` reports readiness without writing. Neither opens a browser. With the user
+the current repository's host settings; `--check` reports readiness without writing. Neither opens a browser. With the user
 present and enrollment explicitly authorized, `--onboard` opens the local setup page.
 
 ```text
@@ -58,19 +58,19 @@ permissions declared for each account. Write access to `administration` is rejec
 App or installation settings; setup does not silently change GitHub permissions. Agent host settings are
 written only after readiness succeeds.
 
-Setup installs the `gh` wrapper and `personal:approve` launcher under the managed local runtime. Plugin
-refresh converges their shipped code without replacing the user's identity record. The wrapper resolves
+Setup installs `gh` and `git` wrappers and the `personal:approve` launcher under the managed local runtime. Plugin
+refresh converges their shipped code without replacing the user's identity record. The wrappers resolve
 the target account from explicit `gh` arguments or Git's remote, using the checkout's `origin` only when
-no explicit account is supplied. Multiple target accounts, unconfigured accounts and missing installations
-fail closed; agent commands never fall back to the human's credentials. Agents may run only `gh auth status`
-from the `gh auth` command family. The low-level `token` command prints a secret and is not a diagnostic.
+no explicit account is supplied. Only pull-request creation and a push to the matching configured account
+receive an App token. Every other command clears the injected environment and uses the human's native login.
+The low-level `token` command prints a secret and is not a diagnostic.
 
-The current host integration writes user-level `~/.claude/settings.json` and `~/.codex/config.toml`.
-It gives agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default `GH_TOKEN`, a
-separate `GH_CONFIG_DIR`, and Git helpers that use the selected bot. This environment can affect every
-agent session using those host settings; it is not checkout-local or an OS credential boundary. Ordinary
-human terminals keep their native `gh` login. Re-run setup after changing `PATH` and restart Claude and
-Codex to load changed settings.
+The current host integration writes repository-local `.claude/settings.json` and `.codex/config.toml`.
+It gives sessions started in that repository a wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default
+`GH_TOKEN`, a separate `GH_CONFIG_DIR`, and Git helpers. The App is used only to create pull requests for
+configured accounts and push the matching repository; reads, reviews, comments, API calls, merges and all
+other accounts use the human's native login. Setup never changes user-home Claude or Codex settings.
+Re-run setup after changing `PATH` and restart Claude and Codex to load changed settings.
 
 Setup installs and checks the human approval command and the Claude agent denials for `tj approve` and
 `tj-approve`. When the user's approval is required, follow [personal:approve](../approve/SKILL.md): give
