@@ -44,10 +44,11 @@ FORBIDDEN_WRITE_PERMISSIONS = ("administration",)
 WINDOWS = os.name == "nt"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if WINDOWS else 0
 GITHUB_URL = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)")
-GITHUB_REPOSITORY = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?(?:$|[?#])")
+GITHUB_REPOSITORY = re.compile(r"(?<![\w.-])github\.com[:/]([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?=$|[/?#])")
 API_REPOSITORY = re.compile(r"(?:^|/)repos/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)(?:/|$)")
 API_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([A-Za-z0-9-]+)")
 REPOSITORY = re.compile(r"([A-Za-z0-9-]+)/[\w.-]+")
+RESOLVED_REMOTE = re.compile(r"remote\.([^.]+)\.gh-resolved\s+base$")
 PULL_REQUEST = re.compile(r"https://github\.com/([A-Za-z0-9-]+)/[\w.-]+/pull/\d+")
 UNREVIEWABLE_CREATE = ("-d", "--draft", "-w", "--web", "--dry-run")
 PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "--base", "-H", "--head", "-a",
@@ -87,9 +88,10 @@ COMMAND_PAYLOAD_FLAGS = {
     ("repo", "edit"): ("-d", "-h"),
     ("repo", "view"): ("-q", "-t"),
 }
-AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", TOKEN_FINGERPRINT,
-              GIT_FINGERPRINT)
-MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path", TOKEN_FINGERPRINT, GIT_FINGERPRINT)
+AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+              TOKEN_FINGERPRINT, GIT_FINGERPRINT)
+MANAGED = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "PATH", "Path", TOKEN_FINGERPRINT,
+           GIT_FINGERPRINT)
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
 AGENT_DENY = (
     "mcp__github__merge_pull_request",
@@ -133,6 +135,12 @@ class RepositoryTarget:
     @property
     def identity(self) -> str | None:
         return f"{self.owner}/{self.name}" if self.owner and self.name else None
+
+
+@dataclass(frozen=True, slots=True)
+class RepositorySelection:
+    target: tuple[str, str] | None
+    explicit: bool
 
 
 def store() -> Path:
@@ -683,10 +691,11 @@ def repository_from_value(value: str) -> tuple[str, str] | None:
     return (match.group(1), match.group(0).split("/", 1)[1]) if match else None
 
 
-def target_repository(arguments: list[str]) -> tuple[str, str] | None:
+def repository_selection(arguments: list[str]) -> RepositorySelection:
     arguments = normalized_arguments(arguments)
     command = tuple(arguments[:1] if arguments[:1] == ["api"] else arguments[:2])
     payload_flags = (*PAYLOAD_FLAGS, *COMMAND_PAYLOAD_FLAGS.get(command, ()))
+    flags: list[tuple[str, str]] = []
     positional: list[str] = []
     remaining = iter(arguments)
     for argument in remaining:
@@ -695,12 +704,16 @@ def target_repository(arguments: list[str]) -> tuple[str, str] | None:
             value = inline if equals else next(remaining, "")
             target = repository_from_value(value)
             if target:
-                return target
+                flags.append(target)
+            else:
+                return RepositorySelection(None, True)
             continue
         if argument.startswith("-R") and len(argument) > 2:
             target = repository_from_value(argument[2:])
             if target:
-                return target
+                flags.append(target)
+            else:
+                return RepositorySelection(None, True)
             continue
         if flag in payload_flags:
             if not equals:
@@ -710,19 +723,37 @@ def target_repository(arguments: list[str]) -> tuple[str, str] | None:
             positional.append(argument)
     candidates: list[str]
     if arguments[:1] == ["api"]:
-        candidates = positional[1:2]
-    elif tuple(arguments[:2]) in (("pr", "view"), ("pr", "review"), ("issue", "view")):
+        candidates = positional[1:]
+        if any(candidate == "graphql" for candidate in candidates):
+            return RepositorySelection(None, True)
+        targets = [
+            (match.group(1), match.group(2)) if (match := API_REPOSITORY.search(candidate)) else repository_from_value(candidate)
+            for candidate in candidates
+        ]
+    elif arguments[:1] in (["pr"], ["issue"]):
         candidates = positional[2:]
+        targets = [(match.group(1), match.group(2))
+                   for candidate in candidates for match in GITHUB_REPOSITORY.finditer(candidate)]
     elif arguments[:1] == ["repo"]:
         candidates = positional[2:3]
+        targets = [repository_from_value(candidate) for candidate in candidates]
     else:
-        candidates = []
-    for candidate in candidates:
-        match = API_REPOSITORY.search(candidate)
-        target = (match.group(1), match.group(2)) if match else repository_from_value(candidate)
-        if target:
-            return target
-    return None
+        candidates, targets = [], []
+    selected = [target for target in targets if target is not None]
+    if selected:
+        identities = {(owner.lower(), name.lower()) for owner, name in [*selected, *flags]}
+        if len(identities) != 1:
+            return RepositorySelection(None, True)
+        return RepositorySelection(selected[-1], True)
+    if arguments[:1] in (["pr"], ["issue"]):
+        return RepositorySelection(flags[-1] if flags else None, bool(flags))
+    if candidates:
+        return RepositorySelection(None, True)
+    return RepositorySelection(flags[-1] if flags else None, bool(flags))
+
+
+def target_repository(arguments: list[str]) -> tuple[str, str] | None:
+    return repository_selection(arguments).target
 
 
 def repository_root(directory: Path, run=subprocess.run) -> Path | None:
@@ -760,12 +791,35 @@ def bot_identity_enabled(root: Path) -> bool:
     return isinstance(personal, dict) and personal.get("bot_identity") is True
 
 
+def default_remote(root: Path, run=subprocess.run) -> str | None:
+    try:
+        result = run(["git", "-C", str(root), "config", "--get-regexp", r"^remote\..*\.gh-resolved$"],
+                     capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    except OSError:
+        return None
+    if result.returncode == 1:
+        try:
+            remotes = run(["git", "-C", str(root), "remote"], capture_output=True, text=True,
+                          timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+        except OSError:
+            return None
+        names = remotes.stdout.splitlines() if remotes.returncode == 0 else []
+        return names[0] if len(names) == 1 else None
+    if result.returncode:
+        return None
+    resolved = [match.group(1) for line in result.stdout.splitlines() if (match := RESOLVED_REMOTE.fullmatch(line))]
+    return resolved[0] if len(resolved) == 1 else None
+
+
 def repository_target(directory: Path | None = None, run=subprocess.run) -> RepositoryTarget:
     root = repository_root(directory or Path.cwd(), run=run)
     if root is None:
         return RepositoryTarget(None, None, None, False)
+    remote = default_remote(root, run=run)
+    if remote is None:
+        return RepositoryTarget(root, None, None, bot_identity_enabled(root))
     try:
-        result = run(["git", "-C", str(root), "remote", "get-url", "origin"], capture_output=True, text=True,
+        result = run(["git", "-C", str(root), "remote", "get-url", remote], capture_output=True, text=True,
                      timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
     except OSError:
         result = subprocess.CompletedProcess([], 1, "")
@@ -835,12 +889,13 @@ def native_environment(environment: dict[str, str] | None = None) -> dict[str, s
     native = dict(os.environ if environment is None else environment)
     fingerprint = native.pop(TOKEN_FINGERPRINT, None)
     native.pop(AGENT_FLAG, None)
-    if native.get("GH_TOKEN") == UNAUTHENTICATED or (
-        isinstance(fingerprint, str)
-        and native.get("GH_TOKEN") is not None
-        and hashlib.sha256(native["GH_TOKEN"].encode()).hexdigest() == fingerprint
-    ):
-        native.pop("GH_TOKEN", None)
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        if native.get(name) == UNAUTHENTICATED or (
+            isinstance(fingerprint, str)
+            and native.get(name) is not None
+            and hashlib.sha256(native[name].encode()).hexdigest() == fingerprint
+        ):
+            native.pop(name, None)
     if native.get("GH_CONFIG_DIR") == str(gh_config_directory()):
         native.pop("GH_CONFIG_DIR", None)
     if owned_git_configuration(native):
@@ -859,18 +914,14 @@ def native_environment(environment: dict[str, str] | None = None) -> dict[str, s
 def targets_current_repository(arguments: list[str], target: RepositoryTarget) -> bool:
     if target.identity is None:
         return False
-    if tuple(arguments[:2]) == ("api", "graphql"):
+    selection = repository_selection(arguments)
+    if selection.explicit and selection.target is None:
         return False
-    explicit = target_repository(arguments)
     gh_value = os.environ.get("GH_REPO", "")
     gh_repository = repository_from_value(gh_value)
     if gh_value and gh_repository is None:
         return False
-    if explicit is None and any(arguments):
-        owners, _ = argument_context(arguments)
-        if owners:
-            return False
-    expected = explicit or gh_repository
+    expected = selection.target or gh_repository
     return expected is None or (
         expected[0].lower() == target.owner.lower()
         and expected[1].lower() == target.name.lower()
@@ -940,6 +991,9 @@ def hand_over(output: str) -> None:
 def run_gh(arguments: list[str], run=subprocess.run, checkout=repository_target) -> int:
     if os.environ.get(AGENT_FLAG) != "1":
         return run([real_gh(), *arguments], check=False).returncode
+    normalized = normalized_arguments(arguments)
+    if normalized[:1] == ["auth"] and normalized[1:2] != ["status"]:
+        raise IdentityError("agents may run only `gh auth status`")
     environment = agent_gh_environment(arguments, checkout())
     app = isinstance(environment.get(TOKEN_FINGERPRINT), str) and environment.get("GH_TOKEN") not in (None, UNAUTHENTICATED)
     if not (app and awaits_approval(arguments)):
@@ -960,34 +1014,54 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=repository_target)
     return result.returncode
 
 
-def credential(operation: str, stream=sys.stdin, out=sys.stdout, checkout=repository_target) -> int:
+def native_credential(request: str, out: io.TextIOBase, run=subprocess.run) -> None:
+    try:
+        result = run(["git", "credential", "fill"], input=request, env=native_environment(), capture_output=True,
+                     text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_SECONDS, check=False,
+                     creationflags=NO_WINDOW)
+    except OSError:
+        return
+    if result.returncode == 0 and result.stdout:
+        out.write(result.stdout)
+
+
+def credential(operation: str, stream=sys.stdin, out=sys.stdout, checkout=repository_target, run=subprocess.run) -> int:
     if operation != "get":
         return 0
-    fields = {}
+    fields, lines = {}, []
     for line in stream:
         line = line.rstrip("\r\n")
         if not line:
             break
+        lines.append(line)
         key, _, value = line.partition("=")
         fields[key] = value
+    request = "\n".join(lines) + "\n\n"
     repository = repository_from_value(fields.get("path", ""))
     if fields.get("protocol") != "https" or fields.get("host", "").lower() != "github.com" or repository is None:
+        native_credential(request, out, run=run)
         return 0
     target = checkout()
     if (not target.bot_enabled or target.owner is None or target.name is None
             or (target.owner.lower(), target.name.lower()) != (repository[0].lower(), repository[1].lower())):
+        native_credential(request, out, run=run)
         return 0
     try:
         if target.owner.lower() not in required_owners():
+            native_credential(request, out, run=run)
             return 0
         record = app_record()
         if not installed([target.owner], record):
+            out.write("quit=true\n")
             return 0
         token = installation_token(target.owner, record)
         if token:
             out.write(f"username=x-access-token\npassword={token}\n")
     except IdentityError:
+        out.write("quit=true\n")
         return 0
+    if not token:
+        out.write("quit=true\n")
     return 0
 
 
@@ -1009,8 +1083,9 @@ def agent_path(path: str) -> str:
 
 def agent_environment(script: Path, path: str) -> dict[str, str]:
     entries = git_config_entries(script)
-    environment = {AGENT_FLAG: "1", "GH_TOKEN": UNAUTHENTICATED, "GH_CONFIG_DIR": str(gh_config_directory()),
-                   "GIT_CONFIG_COUNT": str(len(entries)), GIT_FINGERPRINT: git_config_fingerprint(entries)}
+    environment = {AGENT_FLAG: "1", "GH_TOKEN": UNAUTHENTICATED, "GITHUB_TOKEN": UNAUTHENTICATED,
+                   "GH_CONFIG_DIR": str(gh_config_directory()), "GIT_CONFIG_COUNT": str(len(entries)),
+                   GIT_FINGERPRINT: git_config_fingerprint(entries)}
     for index, (key, value) in enumerate(entries):
         environment[f"GIT_CONFIG_KEY_{index}"] = key
         environment[f"GIT_CONFIG_VALUE_{index}"] = value
@@ -1171,12 +1246,30 @@ def converge_shims() -> list[Path]:
     return replaced
 
 
+def project_configuration_path(project: Path, directory: str, name: str) -> Path:
+    root = project.resolve(strict=True)
+    path = root / directory / name
+    for candidate in (root / directory, path, path.with_name(path.name + ".pre-bot-identity.bak")):
+        if not candidate.exists():
+            continue
+        if is_reparse(candidate):
+            raise IdentityError("the project configuration path is unsafe")
+        try:
+            resolved = candidate.resolve(strict=True)
+            linked = candidate.is_file() and candidate.stat().st_nlink > 1
+        except OSError as error:
+            raise IdentityError("the project configuration path is unsafe") from error
+        if linked or not resolved.is_relative_to(root):
+            raise IdentityError("the project configuration path is unsafe")
+    return path
+
+
 def claude_project_settings(project: Path) -> Path:
-    return project / ".claude" / "settings.json"
+    return project_configuration_path(project, ".claude", "settings.json")
 
 
 def codex_project_config(project: Path) -> Path:
-    return project / ".codex" / "config.toml"
+    return project_configuration_path(project, ".codex", "config.toml")
 
 
 def verify_host_setup(project: Path) -> None:

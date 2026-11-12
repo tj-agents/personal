@@ -137,9 +137,13 @@ class CredentialTests(Sandbox):
     def ask(self, request, token="ghs_x", target=None):
         out = io.StringIO()
         target = target or bot.RepositoryTarget(self.home, "sample-org", "core", True)
+
+        def native(arguments, **_):
+            return subprocess.CompletedProcess(arguments, 0, "", "")
+
         with mock.patch.object(bot, "installed", side_effect=fake_installed), \
                 mock.patch.object(bot, "installation_token", return_value=token):
-            bot.credential("get", io.StringIO(request + "\n"), out, checkout=lambda: target)
+            bot.credential("get", io.StringIO(request + "\n"), out, checkout=lambda: target, run=native)
         return out.getvalue()
 
     def test_installed_accounts_get_only_the_app_token(self):
@@ -147,7 +151,8 @@ class CredentialTests(Sandbox):
         self.assertEqual("username=x-access-token\npassword=ghs_x\n", answer)
 
     def test_an_installed_account_never_falls_back_when_minting_fails(self):
-        self.assertEqual("", self.ask("protocol=https\nhost=github.com\npath=alex/notes.git\n", token=None))
+        target = bot.RepositoryTarget(self.home, "alex", "notes", True)
+        self.assertEqual("quit=true\n", self.ask("protocol=https\nhost=github.com\npath=alex/notes.git\n", token=None, target=target))
 
     def test_requests_without_an_account_get_nothing(self):
         for request in ("protocol=https\nhost=github.com\n", "protocol=http\nhost=github.com\npath=outside-org/x\n",
@@ -158,14 +163,31 @@ class CredentialTests(Sandbox):
     def test_a_missing_app_record_fails_closed(self):
         (self.home / "github-app" / "identity.json").unlink()
         out = io.StringIO()
-        bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=sample-org/x\n\n"), out)
-        self.assertEqual("", out.getvalue())
+        bot.credential(
+            "get",
+            io.StringIO("protocol=https\nhost=github.com\npath=sample-org/x\n\n"),
+            out,
+            checkout=lambda: bot.RepositoryTarget(self.home, "sample-org", "x", True),
+        )
+        self.assertEqual("quit=true\n", out.getvalue())
 
     def test_an_account_the_app_does_not_cover_uses_no_bot_credential(self):
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            answer = self.ask("protocol=https\nhost=github.com\npath=outside-org/cris.git\n")
-        self.assertEqual("", answer)
-        self.assertEqual("", err.getvalue())
+        calls: list[list[str]] = []
+
+        def native(arguments, **_):
+            calls.append(arguments)
+            return subprocess.CompletedProcess(arguments, 0, "username=native\npassword=native\n", "")
+
+        output = io.StringIO()
+        bot.credential(
+            "get",
+            io.StringIO("protocol=https\nhost=github.com\npath=outside-org/cris.git\n\n"),
+            output,
+            checkout=lambda: bot.RepositoryTarget(self.home, "sample-org", "x", True),
+            run=native,
+        )
+        self.assertEqual("username=native\npassword=native\n", output.getvalue())
+        self.assertEqual([["git", "credential", "fill"]], calls)
 
     def test_another_repository_under_the_same_owner_gets_no_bot_credential(self):
         answer = self.ask("protocol=https\nhost=github.com\npath=sample-org/other.git\n")
@@ -897,6 +919,154 @@ def test_cross_repository_target_uses_native_credentials(monkeypatch: pytest.Mon
     assert native["GH_TOKEN"] == "human-token"
     assert "TJ_AGENT" not in native
     assert bot.GIT_FINGERPRINT not in native
+
+
+@pytest.mark.parametrize("arguments", [
+    ["pr", "view", "https://github.com/sample-org/core/pull/1"],
+    ["issue", "close", "https://github.com/sample-org/core/issues/1"],
+])
+def test_resource_url_target_uses_the_configured_bot(
+    arguments: list[str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(os, "environ", bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+    target = bot.RepositoryTarget(Path("/repository"), "sample-org", "core", True)
+    with mock.patch.object(bot, "required_owners", return_value=("sample-org",)), \
+            mock.patch.object(bot, "app_record", return_value=RECORD), \
+            mock.patch.object(bot, "installed", return_value={"sample-org": 7}), \
+            mock.patch.object(bot, "installation_token", return_value="bot-token"):
+        environment = bot.agent_gh_environment(arguments, target)
+    assert environment["GH_TOKEN"] == "bot-token"
+
+
+def test_conflicting_gh_selectors_never_mint_a_bot_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot, "gh_config_directory", lambda: Path("/s/gh-agent"))
+    monkeypatch.setattr(bot, "shim_directory", lambda: Path("/s/shim"))
+    monkeypatch.setattr(os, "environ", bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+    target = bot.RepositoryTarget(Path("/repository"), "sample-org", "core", True)
+    with mock.patch.object(bot, "required_owners", return_value=("sample-org",)), \
+            mock.patch.object(bot, "installation_token") as mint:
+        environment = bot.agent_gh_environment(
+            ["pr", "view", "https://github.com/sample-org/core/pull/1", "-R", "outside-org/cris"], target,
+        )
+    assert bot.TOKEN_FINGERPRINT not in environment
+    mint.assert_not_called()
+
+
+def test_api_target_after_flags_routes_by_the_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "environ", bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+    target = bot.RepositoryTarget(Path("/repository"), "sample-org", "core", True)
+    with mock.patch.object(bot, "required_owners", return_value=("sample-org",)), \
+            mock.patch.object(bot, "app_record", return_value=RECORD), \
+            mock.patch.object(bot, "installed", return_value={"sample-org": 7}), \
+            mock.patch.object(bot, "installation_token", return_value="bot-token"):
+        environment = bot.agent_gh_environment(["api", "-X", "GET", "repos/sample-org/core/issues"], target)
+    assert environment["GH_TOKEN"] == "bot-token"
+
+
+def test_graphql_after_flags_uses_native_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot, "gh_config_directory", lambda: Path("/s/gh-agent"))
+    monkeypatch.setattr(bot, "shim_directory", lambda: Path("/s/shim"))
+    monkeypatch.setattr(os, "environ", bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+    target = bot.RepositoryTarget(Path("/repository"), "sample-org", "core", True)
+    environment = bot.agent_gh_environment(["api", "-f", "query={viewer{login}}", "graphql"], target)
+    assert bot.TOKEN_FINGERPRINT not in environment
+
+
+def test_repository_target_uses_gh_resolved_remote(tmp_path: Path) -> None:
+    opted_repository(tmp_path)
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return subprocess.CompletedProcess(command, 0, str(tmp_path) + "\n")
+        if command[-2:] == ["--get-regexp", r"^remote\..*\.gh-resolved$"]:
+            return subprocess.CompletedProcess(command, 0, "remote.upstream.gh-resolved base\n")
+        assert command[-3:] == ["remote", "get-url", "upstream"]
+        return subprocess.CompletedProcess(command, 0, "git@github.com:sample-org/core.git\n")
+
+    target = bot.repository_target(tmp_path, run=run)
+    assert target == bot.RepositoryTarget(tmp_path, "sample-org", "core", True)
+
+
+def test_unselected_multiple_remotes_do_not_enable_the_bot(tmp_path: Path) -> None:
+    opted_repository(tmp_path)
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return subprocess.CompletedProcess(command, 0, str(tmp_path) + "\n")
+        if command[-2:] == ["--get-regexp", r"^remote\..*\.gh-resolved$"]:
+            return subprocess.CompletedProcess(command, 1, "")
+        assert command[-1] == "remote"
+        return subprocess.CompletedProcess(command, 0, "origin\nupstream\n")
+
+    target = bot.repository_target(tmp_path, run=run)
+    assert target == bot.RepositoryTarget(tmp_path, None, None, True)
+
+
+def test_credential_restores_native_helper_for_uncovered_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, project = tmp_path / "home", tmp_path / "repository"
+    home.mkdir()
+    opted_repository(project)
+    subprocess.run(["git", "-C", str(project), "remote", "add", "origin", "https://github.com/outside-org/cris.git"], check=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    bot.write_private(bot.store() / "identity.json", CONFIG)
+    global_config = home / "gitconfig"
+    global_config.write_text(
+        '[credential "https://github.com"]\n\thelper = "!f() { echo username=human; echo password=NATIVE; }; f"\n',
+        encoding="utf-8",
+    )
+    environment = {
+        **without_agent_settings(os.environ),
+        **bot.agent_environment(SCRIPT, os.environ["PATH"]),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": str(global_config),
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+    }
+    result = subprocess.run(
+        ["git", "credential", "fill"], cwd=project,
+        input="protocol=https\nhost=github.com\npath=outside-org/cris.git\n\n", env=environment,
+        capture_output=True, text=True, encoding="utf-8", check=False,
+    )
+    assert result.returncode == 0
+    assert "password=NATIVE" in result.stdout
+
+
+def test_covered_credential_failure_never_runs_native_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "environ", bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+    run = mock.Mock()
+    out = io.StringIO()
+    target = bot.RepositoryTarget(Path("/repository"), "sample-org", "core", True)
+    with mock.patch.object(bot, "required_owners", return_value=("sample-org",)), \
+            mock.patch.object(bot, "app_record", return_value=RECORD), \
+            mock.patch.object(bot, "installed", return_value={"sample-org": 7}), \
+            mock.patch.object(bot, "installation_token", return_value=None):
+        bot.credential("get", io.StringIO("protocol=https\nhost=github.com\npath=sample-org/core.git\n\n"), out,
+                       checkout=lambda: target, run=run)
+    assert out.getvalue() == "quit=true\n"
+    run.assert_not_called()
+
+
+def test_project_configuration_rejects_hard_link(tmp_path: Path) -> None:
+    opted_repository(tmp_path)
+    directory, source = tmp_path / ".claude", tmp_path / "source.json"
+    directory.mkdir()
+    source.write_text("{}\n", encoding="utf-8")
+    os.link(source, directory / "settings.json")
+    with pytest.raises(bot.IdentityError, match="configuration path is unsafe"):
+        bot.claude_project_settings(tmp_path)
+
+
+def test_project_configuration_rejects_reparse_ancestor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    opted_repository(tmp_path)
+    directory = tmp_path / ".codex"
+    directory.mkdir()
+    monkeypatch.setattr(bot, "is_reparse", lambda path: path == directory)
+    with pytest.raises(bot.IdentityError, match="configuration path is unsafe"):
+        bot.codex_project_config(tmp_path)
 
 
 def test_opted_covered_target_fails_when_app_installation_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:

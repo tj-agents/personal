@@ -67,10 +67,12 @@ the native human `gh` and Git credentials after removing only the wrapper's own 
 target with a missing App installation or token fails closed. Agents may run only `gh auth status` when the
 App applies. The low-level `token` command prints a secret and is not a diagnostic.
 
-Repository setup writes `.claude/settings.json` and `.codex/config.toml` beneath that repository. It gives
-its agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default `GH_TOKEN`, a separate
-`GH_CONFIG_DIR`, and Git helpers that use the selected bot. Human terminals and unopted repositories keep
-their native `gh` login. Restart Claude and Codex to load changed repository settings.
+Repository setup writes `.claude/settings.json` and `.codex/config.toml` beneath that repository only through
+regular project-local paths. It refuses symlink, junction, hard-linked and escaped configuration paths before
+reading, backing up or writing them. It gives its agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an
+unauthenticated default `GH_TOKEN`, a separate `GH_CONFIG_DIR`, and Git helpers that use the selected bot.
+Human terminals and unopted repositories keep their native `gh` login. Restart Claude and Codex to load changed
+repository settings.
 
 Setup installs and checks the human approval command and the Claude agent denials for `tj approve` and
 `tj-approve`. When the user's approval is required, follow [personal:approve](../approve/SKILL.md): give
