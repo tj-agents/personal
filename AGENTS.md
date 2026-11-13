@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:7992bfd9d7f204c74b23b20f0b94af52a4059f35b907bdc765acfe2414d544f5 -->
+<!-- BEGIN personal:rules sha256:c4f6a57dde7e906bd13bad312f0042408f0c01ce0c9855968d7b7fa3907b5dc8 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -64,10 +64,9 @@ to the change, with tests that prove behavior rather than restate the implementa
 
 ## 3. Established problem records
 
-Owns automatic recording of established personal bugs, agent or process mistakes, and deliberate debt.
-Within authorized work in an explicitly adopted personal project, record them through Personal's selected
-tools without waiting to be asked. Honor an explicit no-recording limit, and never record employer or
-non-personal evidence through Personal.
+Owns recording of established personal bugs, agent or process mistakes, and deliberate debt. Record one
+through Personal's selected tools only when Tommy asks for it; otherwise mention the problem in your report
+and carry on with the active task. Never record employer or non-personal evidence through Personal.
 
 Reconcile the canonical existing identity before recording. For a repeated observation, append material
 new recurrence evidence, the cause when known, and the current outcome or repair state; do not create a
@@ -79,7 +78,7 @@ Recording does not authorize, prioritize or dispatch implementation. Apply
 to those decisions and preserve the active task and repair owner.
 
 ```text
-An acknowledged repeated native close prepare failure occurs during item A:
+Tommy asks to record a repeated native close prepare failure seen during item A:
 1. Update its existing close issue with new recurrence evidence, the known cause and current repair state.
 2. Verify the update persists remotely before saying it is documented.
 3. Continue item A; do not create a duplicate item or take over the repair.
