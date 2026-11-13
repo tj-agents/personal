@@ -46,6 +46,8 @@ API_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([A-Za-z0-9-]+)")
 REPOSITORY = re.compile(r"([A-Za-z0-9-]+)/[\w.-]+")
 PULL_REQUEST = re.compile(r"https://github\.com/([A-Za-z0-9-]+)/[\w.-]+/pull/\d+")
 UNREVIEWABLE_CREATE = ("-d", "--draft", "-w", "--web", "--dry-run")
+NATIVE_SESSIONS = (("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID"))
+ITEM_TIMEOUT_SECONDS = 120
 PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "--base", "-H", "--head", "-a",
                   "--assignee", "-l", "--label", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-R",
                   "--repo", "-T", "--template", "--recover")
@@ -116,6 +118,10 @@ class GitHubError(IdentityError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
+
+
+class HandoverError(IdentityError):
+    pass
 
 
 def store() -> Path:
@@ -737,13 +743,111 @@ def ready_selector(arguments: list[str]) -> list[str]:
     return selector
 
 
-def hand_over(output: str) -> None:
+def tool(name: str) -> str:
+    found = shutil.which(name) or shutil.which(name, path=str(tj_bin_directory()))
+    if not found:
+        raise IdentityError(f"{name} is not on PATH or in {tj_bin_directory()}")
+    return found
+
+
+def captured(
+    run, command: list[str], environment: dict[str, str] | None = None,
+    *, timeout_seconds: int = TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess:
+    try:
+        return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace",
+                   timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        label = " ".join([Path(command[0]).stem, *command[1:2]])
+        raise IdentityError(f"{label} timed out after {timeout_seconds} seconds") from error
+
+
+def reason(result: subprocess.CompletedProcess) -> str:
+    lines = [line for line in (result.stderr or result.stdout or "").splitlines() if line.strip()]
+    return lines[-1].strip() if lines else f"exited {result.returncode}"
+
+
+def agent_store(arguments: list[str], run) -> dict | None:
+    result = captured(run, [tool("agent-store"), *arguments])
+    try:
+        document = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise IdentityError(f"agent-store {arguments[0]} failed: {reason(result)}") from error
+    if document.get("ok"):
+        return document["data"]
+    failure = document.get("error") or {}
+    if failure.get("code") == "not-found":
+        return None
+    raise IdentityError(f"agent-store {arguments[0]} failed: {failure.get('message') or reason(result)}")
+
+
+def linked(session: dict) -> list[str]:
+    return [link["item"]["ref"] for link in session.get("links") or []]
+
+
+def current_session(
+    run, session_handle: str | None = None
+) -> tuple[str | None, list[str]] | None:
+    if session_handle is not None:
+        data = agent_store(["show", session_handle], run)
+        if data is None:
+            raise IdentityError(
+                f"unknown agent session {session_handle}; nothing approved"
+            )
+        session = data["session"]
+        return session["session"], linked(session)
+    if launch_id := os.environ.get("TJ_RUN_LAUNCH_ID"):
+        data = agent_store(["show", "--launch-id", launch_id], run)
+        if data is None:
+            return None
+        launch, session = data["launch"], data.get("session")
+        items = [launch["item"]["ref"]] if launch.get("item") else []
+        return launch.get("session"), items + (linked(session) if session else [])
+    for host, variable in NATIVE_SESSIONS:
+        if native := os.environ.get(variable):
+            data = agent_store(["show", f"{host}:{native}"], run)
+            return None if data is None else (data["session"]["session"], linked(data["session"]))
+    return None
+
+
+def link_session_item(url: str | None, run=subprocess.run) -> str:
+    if url is None:
+        raise HandoverError("gh did not report the pull request URL")
+    session = current_session(run)
+    if session is None:
+        raise HandoverError("no agent-store session is registered for this agent")
+    items = list(dict.fromkeys(session[1]))
+    if not items:
+        raise HandoverError("this session has no linked work item")
+    if len(items) > 1:
+        raise HandoverError(f"this session links several work items ({', '.join(items)}), so the PR was not linked")
+    result = captured(run, [tool("tj"), "item", "--profile", "github", "link", items[0], url],
+                      timeout_seconds=ITEM_TIMEOUT_SECONDS)
+    if result.returncode:
+        raise HandoverError(f"tj item link {items[0]} failed: {reason(result)}")
+    return items[0]
+
+
+def session_label() -> str:
+    return next((f"{host}:{os.environ[variable]}" for host, variable in NATIVE_SESSIONS if os.environ.get(variable)),
+                "<session>")
+
+
+def hand_over(output: str, run=subprocess.run) -> None:
     match = PULL_REQUEST.search(output)
     url = match.group(0) if match and match.group(1).lower() in required_owners() else None
-    subject, link = (url, "that link") if url else ("this PR", "its link")
-    print(f"bot_identity: REQUIRED IN YOUR REPLY: {subject} awaits {identity_config()['reviewer']}'s approval. Put the line `! tj approve` on "
-          f"the human's clipboard with cli:clip, and make your reply include {link} and that line; never run it "
-          f"yourself.", file=sys.stderr)
+    try:
+        item = link_session_item(url, run)
+    except IdentityError as error:
+        print(f"bot_identity: REQUIRED BEFORE HANDOVER: {url or 'this PR'} is not reachable by `tj approve`: "
+              f"{error}. Do not give the human `! tj approve` yet: link this session to its work item with "
+              f"`agent-store link --session {session_label()} --item <ref>` and the PR with "
+              f"`tj item link <ref> {url or '<pr-url>'}`, then hand it over.", file=sys.stderr)
+    else:
+        print(f"bot_identity: linked {url} to {item}. REQUIRED IN YOUR REPLY: {url} awaits "
+              f"{identity_config()['reviewer']}'s approval. Put the line `! tj approve` on the human's clipboard "
+              f"with cli:clip, and make your reply include that link and that line; never run it yourself.",
+              file=sys.stderr)
 
 
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
@@ -765,7 +869,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
         output = "" if result.returncode else run(view, env=environment, check=False, stdout=subprocess.PIPE,
                                                     encoding="utf-8", errors="replace").stdout or ""
     if result.returncode == 0:
-        hand_over(output)
+        hand_over(output, run)
     return result.returncode
 
 

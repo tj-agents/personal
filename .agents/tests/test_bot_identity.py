@@ -357,9 +357,46 @@ class GhWrapperTests(Sandbox):
         self.assertEqual([(["real-gh", "pr", "list"], None)], self.gh.calls)
 
 
+ITEM = "github:github.com/sample-org/core:3"
+
+
+class SessionGh(FakeGh):
+    def __init__(self):
+        super().__init__()
+        self.sessions = {"claude:me": [ITEM]}
+        self.link_failure = None
+
+    def __call__(self, command, env=None, check=False, **captured):
+        if command[0] == "agent-store":
+            self.calls.append((command, env))
+            links = self.sessions.get(command[2])
+            document = ({"ok": False, "error": {"code": "not-found", "message": "unknown"}} if links is None else
+                        {"ok": True, "data": {"session": {"session": command[2], "parent": None,
+                                                          "links": [{"item": {"ref": ref}} for ref in links]}}})
+            return subprocess.CompletedProcess(command, 3 if links is None else 0, json.dumps(document), "")
+        if command[0] == "tj":
+            self.calls.append((command, env))
+            return subprocess.CompletedProcess(command, 1 if self.link_failure else 0, "", self.link_failure or "")
+        return super().__call__(command, env, check, **captured)
+
+
 class ApprovalHandoffTests(GhWrapperTests):
     CORE = "https://github.com/sample-org/core/pull/7"
     TJ_APPROVE = "Put the line `! tj approve` on the human's clipboard with cli:clip"
+    UNREACHABLE = "is not reachable by `tj approve`"
+
+    def setUp(self):
+        super().setUp()
+        self.gh = SessionGh()
+        for variable in ("TJ_RUN_LAUNCH_ID", "CODEX_THREAD_ID"):
+            os.environ.pop(variable, None)
+        os.environ["CLAUDE_CODE_SESSION_ID"] = "me"
+        patcher = mock.patch.object(bot, "tool", side_effect=lambda name: name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def links(self):
+        return [command for command, _ in self.gh.calls if command[0] == "tj"]
 
     def hand_over(self, *arguments, checkout="sample-org", stdout=None, returncode=0):
         self.gh.stdout, self.gh.returncode = stdout, returncode
@@ -373,6 +410,45 @@ class ApprovalHandoffTests(GhWrapperTests):
         self.assertEqual(self.CORE + "\n", out)
         self.assertIn(f"{self.CORE} awaits alex's approval", err)
         self.assertIn(self.TJ_APPROVE, err)
+
+    def test_a_created_pr_is_linked_to_the_sessions_item_so_tj_approve_reaches_it(self):
+        _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertEqual([["tj", "item", "--profile", "github", "link", ITEM, self.CORE]], self.links())
+        self.assertIn(f"linked {self.CORE} to {ITEM}", err)
+
+    def test_a_session_without_a_work_item_gets_no_tj_approve_reminder(self):
+        self.gh.sessions["claude:me"] = []
+        _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertEqual([], self.links())
+        self.assertNotIn(self.TJ_APPROVE, err)
+        self.assertIn(f"{self.CORE} {self.UNREACHABLE}: this session has no linked work item", err)
+        self.assertIn("`agent-store link --session claude:me --item <ref>`", err)
+        self.assertIn(f"`tj item link <ref> {self.CORE}`", err)
+
+    def test_unresolved_ambiguous_or_failed_links_are_reported_instead_of_claiming_reachability(self):
+        other = "github:github.com/sample-org/core:4"
+        cases = (
+            ("unregistered", None, None, "no agent-store session is registered for this agent"),
+            ("ambiguous", [ITEM, other], None, f"this session links several work items ({ITEM}, {other})"),
+            ("failed link", [ITEM], "HTTP 404: Not Found", f"tj item link {ITEM} failed: HTTP 404: Not Found"),
+        )
+        for name, links, failure, detail in cases:
+            with self.subTest(name):
+                self.gh.calls.clear()
+                if links is None:
+                    self.gh.sessions.pop("claude:me", None)
+                else:
+                    self.gh.sessions["claude:me"] = links
+                self.gh.link_failure = failure
+                _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+                self.assertNotIn(self.TJ_APPROVE, err)
+                self.assertIn(f"{self.CORE} {self.UNREACHABLE}: {detail}", err)
+
+    def test_an_agent_store_failure_is_reported_instead_of_claiming_reachability(self):
+        with mock.patch.object(bot, "tool", side_effect=bot.IdentityError("agent-store is not on PATH")):
+            _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertNotIn(self.TJ_APPROVE, err)
+        self.assertIn(f"{self.CORE} {self.UNREACHABLE}: agent-store is not on PATH", err)
 
     def test_a_payload_url_preserves_bot_authentication_and_the_approval_handoff(self):
         out, err = self.hand_over("pr", "create", "--title", "Fixture", "--body",
@@ -392,7 +468,7 @@ class ApprovalHandoffTests(GhWrapperTests):
 
     def test_a_readied_pr_is_looked_up_with_its_selector_and_handed_over(self):
         _, err = self.hand_over("pr", "ready", "7", "-R", "sample-org/core", stdout=self.CORE)
-        view, environment = self.gh.calls[-1]
+        view, environment = next(call for call in self.gh.calls if call[0][1:3] == ["pr", "view"])
         self.assertEqual(["real-gh", "pr", "view", "7", "-R", "sample-org/core", "--json", "url", "--jq", ".url"],
                          view)
         self.assertEqual("ghs_sample-org", environment["GH_TOKEN"])
@@ -418,10 +494,11 @@ class ApprovalHandoffTests(GhWrapperTests):
         self.assertIn(f"{self.CORE} awaits alex's approval", err)
         self.assertIn(self.TJ_APPROVE, err)
 
-    def test_an_unresolved_url_still_points_the_human_at_tj_approve(self):
+    def test_an_unresolved_url_is_reported_instead_of_pointing_the_human_at_tj_approve(self):
         _, err = self.hand_over("pr", "create", stdout="")
-        self.assertIn("this PR awaits alex's approval", err)
-        self.assertIn(self.TJ_APPROVE, err)
+        self.assertNotIn(self.TJ_APPROVE, err)
+        self.assertIn(f"this PR {self.UNREACHABLE}: gh did not report the pull request URL", err)
+        self.assertEqual([], [command for command, _ in self.gh.calls if command[0] in ("agent-store", "tj")])
 
     def test_the_retired_approval_command_is_gone(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
