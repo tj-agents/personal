@@ -5,7 +5,7 @@ kind: utility
 domain: personal
 profile: core
 applicability: explicitly adopted personal GitHub repositories
-requires: engineering, python
+requires: tj-item, gh
 provenance: house
 ---
 
@@ -14,9 +14,8 @@ provenance: house
 This is the recording intent: find the relevant existing work and refine it, or create one record when
 none matches. It does not start, assign or track execution.
 
-The source primary checkout's `personal@tj-agents` selection selects this provider. Never adopt,
-configure or replace a provider while recording. Creation places the issue on the repository and owner
-boards; report a returned `boards.error` rather than retrying the issue.
+The source primary checkout's `personal@tj-agents` selection and its GitHub origin select the GitHub tracker.
+Creation places the issue on the repository's GitHub Project with status To Do.
 
 ## Find the right record
 
@@ -31,11 +30,8 @@ extent and cause limited to the evidence in the body.
 Search its existing issues and relevant linked or active PRs using both capability and symptom terms
 before writing. Read candidate bodies, comments, acceptance criteria and resolution evidence; titles
 alone do not establish a match.
-The helper lists managed Personal issues; GitHub inspection also covers unmanaged issues and PRs:
 
 ```text
-python -B <skill-directory>/scripts/create_work_item.py list --root <owning-source-checkout> --state all
-python -B <skill-directory>/scripts/create_work_item.py read --root <owning-source-checkout> --item owner/repository#42 --body --comments
 gh issue list --repo owner/repository --state all --limit 100 --json number,title,state,url
 gh issue view 42 --repo owner/repository --json body,comments,state
 gh pr list --repo owner/repository --state all --limit 100 --json number,title,state,url
@@ -53,8 +49,7 @@ the record when the new facts change its requirements, cause, outcome or accepta
 a note when only recurrence evidence or repair state changes. Broaden an overly specific title and
 body scope to the known capability when needed, retaining the earlier reproduction as evidence rather
 than creating another host- or symptom-specific item. An active PR may identify the existing
-repair or its linked issue: reconcile that work rather than create a competing record. The helper
-updates managed issues only; use the existing GitHub route for a matching PR or unmanaged issue.
+repair or its linked issue: reconcile that work rather than create a competing record.
 For closed work, compare the recurrence with its actual resolution before choosing a follow-up; do
 not automatically reopen it or take over its repair.
 
@@ -75,36 +70,22 @@ Only when no relevant record exists, classify the supplied facts: faulty behavio
 agent or process error is `mistake`; a deliberate deferral is `debt`; changed product behavior is
 `feature`; concrete work with a completion condition is `task`; a user-centered outcome is `story`.
 
-Use `template`, `validate` and `preview` to prepare facts, then create with one stable request ID:
+Write the title as the outcome or defect, and a body with the facts, cause when known, and verifiable
+acceptance criteria. Create it, label it with its kind, and place it on the board:
 
 ```text
-python -B <skill-directory>/scripts/create_work_item.py template --kind story
-python -B <skill-directory>/scripts/create_work_item.py validate --input facts.json
-python -B <skill-directory>/scripts/create_work_item.py preview --input facts.json
-python -B <skill-directory>/scripts/create_work_item.py create --root <owning-source-checkout> --input facts.json --request-id UNIQUE-STABLE-ID
+gh issue create --repo owner/repository --title "<title>" --body-file body.md --label <kind>
+gh project item-add <project-number> --owner <owner> --url <issue-url>
+tj item progress <issue-url> --state "To Do"
 ```
 
-For a managed issue refinement, prepare complete facts preserving the existing requirements and kind.
-Read the issue immediately before updating and pass that read's `body_hash` as `--expected-hash`; a
-changed hash means read and reconcile again, not overwrite with a guessed or stale value:
+Create a missing kind label with `gh label create <kind> --repo owner/repository` first. Before creating, search
+open issues for the same title so a retried request never makes a duplicate.
 
-```text
-python -B <skill-directory>/scripts/create_work_item.py read --root <owning-source-checkout> --item owner/repository#42 --body --comments
-python -B <skill-directory>/scripts/create_work_item.py validate --input refined-facts.json
-python -B <skill-directory>/scripts/create_work_item.py preview --input refined-facts.json
-python -B <skill-directory>/scripts/create_work_item.py update --root <owning-source-checkout> --item owner/repository#42 --input refined-facts.json --expected-hash BODY_HASH_FROM_FRESH_READ
-```
+To refine an issue, read it immediately before editing and rewrite the body with every existing requirement
+preserved: `gh issue edit 42 --repo owner/repository --body-file refined.md`. For evidence-only additions, append
+the new recurrence facts, known cause and repair state: `tj item comment <issue-url> --body-file recurrence.md`.
 
-For evidence-only additions, append material new recurrence facts, the known cause and current repair
-state with a stable request ID:
-
-```text
-python -B <skill-directory>/scripts/create_work_item.py note --root <owning-source-checkout> --item owner/repository#42 --request-id UNIQUE-STABLE-ID --text-file recurrence.txt
-```
-
-Read the changed body or comments back to verify remote persistence before claiming it was recorded.
-Recording does not enter execution;
-`personal:address-work-item` owns an authorized request to implement its repair.
-After an uncertain create or note response, retain the request ID and reconcile with the same command
-and `--reconcile-only` before another submission. After an uncertain update, read the issue and
-reconcile its current content before another update.
+Read the changed body or comments back with `tj item resolve <issue-url> --body` before claiming it was
+recorded. Recording does not enter execution; `personal:address-work-item` owns an authorized request to
+implement its repair.

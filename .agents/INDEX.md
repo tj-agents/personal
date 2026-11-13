@@ -6,6 +6,7 @@ Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; a skill's n
 
 - `revision` — convention — core — `.agents/personal/convention/revision/SKILL.md`
 - `rules` — policy — core — `.agents/personal/policy/rules/SKILL.md`
+- `approve` — utility — core — `.agents/personal/utility/approve/SKILL.md`
 - `bot-identity` — utility — core — `.agents/personal/utility/bot-identity/SKILL.md`
 - `create-work-item` — utility — core — `.agents/personal/utility/create/work-item/SKILL.md`
 - `use` — utility — core — `.agents/personal/utility/use/SKILL.md`

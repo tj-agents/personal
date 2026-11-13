@@ -9,6 +9,7 @@
   "profiles": {
     "core": [
       "address-work-item",
+      "approve",
       "bot-identity",
       "create-work-item",
       "revision",
@@ -27,8 +28,25 @@
         "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering",
-        "python"
+        "tj-item",
+        "gh"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "approve",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "machines configured through personal:bot-identity"
+      ],
+      "requires": [
+        "python",
+        "gh",
+        "agent-store",
+        "tj-item"
       ],
       "provenance": [
         "house"
@@ -39,7 +57,7 @@
       "kind": "utility",
       "profile": "core",
       "applicability": [
-        "Tommy's machines; GitHub accounts where the App is installed"
+        "explicitly adopted personal projects using GitHub App authorship"
       ],
       "requires": [
         "python"
@@ -56,8 +74,8 @@
         "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering",
-        "python"
+        "tj-item",
+        "gh"
       ],
       "provenance": [
         "house"
@@ -114,8 +132,8 @@
         "explicitly adopted personal GitHub repositories"
       ],
       "requires": [
-        "engineering",
-        "python"
+        "tj-item",
+        "gh"
       ],
       "provenance": [
         "house"

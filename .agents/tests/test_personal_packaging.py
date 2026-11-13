@@ -1,7 +1,5 @@
 import json
 import re
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 from typing import Any
@@ -10,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SKILLS = {
     "use",
     "address-work-item",
+    "approve",
     "bot-identity",
     "create-work-item",
     "revision",
@@ -24,6 +23,7 @@ EXTERNAL_SKILLS = {
         "feature",
     },
     "agent": {"plugins"},
+    "cli": {"clip"},
     "workflow": {"run"},
     "docs": {"layout"},
 }
@@ -65,10 +65,12 @@ class PersonalPackagingTests(unittest.TestCase):
     ) -> None:
         for path in (ROOT / "plugins/personal").rglob("*"):
             if path.is_file() and "bot-identity" not in path.parts:
+                self.assertNotIn("credential", path.parts, str(path))
+                self.assertNotEqual("credential", path.stem.casefold(), str(path))
                 text = path.read_text(encoding="utf-8").casefold()
                 for retired in (
                     "azure",
-                    "credential",
+                    "personal:credential",
                     "mcp",
                 ):
                     self.assertNotIn(retired, text, str(path))
@@ -95,67 +97,17 @@ class PersonalPackagingTests(unittest.TestCase):
                     self.assertIn(namespace, EXTERNAL_SKILLS, str(path))
                     self.assertIn(name, EXTERNAL_SKILLS[namespace], str(path))
 
-    def test_inspection_entry_rejects_recurrence_mutation(self) -> None:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(ROOT / "plugins/personal/skills/work-item/work_item.py"),
-                "note",
-                "--help",
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("invalid choice: 'note'", result.stderr)
-
-    def test_published_create_and_address_wrappers_resolve_their_siblings(self) -> None:
-        commands = (
-            (
-                ROOT
-                / "plugins"
-                / "personal"
-                / "skills"
-                / "create-work-item"
-                / "scripts"
-                / "create_work_item.py",
-                "note",
-                "--help",
-            ),
-            (
-                ROOT
-                / "plugins"
-                / "personal"
-                / "skills"
-                / "create-work-item"
-                / "scripts"
-                / "create_work_item.py",
-                "template",
-                "--kind",
-                "story",
-            ),
-            (
-                ROOT
-                / "plugins"
-                / "personal"
-                / "skills"
-                / "address-work-item"
-                / "scripts"
-                / "address_work_item.py",
-                "--help",
-            ),
-        )
-        for path, *arguments in commands:
-            with self.subTest(path=path):
-                result = subprocess.run(
-                    [sys.executable, "-B", str(path), *arguments],
-                    text=True,
-                    capture_output=True,
-                    check=False,
+    def test_work_item_skills_use_the_shared_tracker_cli(self) -> None:
+        for skill in ("work-item", "create-work-item", "address-work-item"):
+            with self.subTest(skill=skill):
+                folder = next(
+                    path.parent
+                    for path in (ROOT / ".agents/personal").rglob("SKILL.md")
+                    if f"name: {skill}\n" in path.read_text(encoding="utf-8")
                 )
-                self.assertEqual(result.returncode, 0, result.stderr)
+                text = (folder / "SKILL.md").read_text(encoding="utf-8")
+                self.assertIn("tj item", text)
+                self.assertEqual([], [path.name for path in folder.rglob("*.py")])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""Approve the configured bot's PRs as its human reviewer for this session's work items and arm their auto-merge
+(Python 3.12+)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[2] / "bot-identity" / "scripts"))
+import bot_identity
+
+PULL_URL = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
+NATIVE_SESSIONS = (("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID"))
+PR_FIELDS = "url,title,state,author,headRefOid,reviews,reviewRequests"
+ITEM_LOOKUP_TIMEOUT_SECONDS = 120
+
+
+class ApproveError(Exception):
+    pass
+
+
+def tool(name: str) -> str:
+    found = shutil.which(name) or shutil.which(name, path=str(bot_identity.tj_bin_directory()))
+    if not found:
+        raise ApproveError(f"{name} is not on PATH or in {bot_identity.tj_bin_directory()}")
+    return found
+
+
+def captured(
+    run, command: list[str], environment: dict[str, str] | None = None,
+    *, timeout_seconds: int = bot_identity.TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess:
+    try:
+        return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace",
+                   timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        label = " ".join([Path(command[0]).stem, *command[1:2]])
+        raise ApproveError(f"{label} timed out after {timeout_seconds} seconds") from error
+
+
+def reason(result: subprocess.CompletedProcess) -> str:
+    lines = [line for line in (result.stderr or result.stdout or "").splitlines() if line.strip()]
+    return lines[-1].strip() if lines else f"exited {result.returncode}"
+
+
+def agent_store(arguments: list[str], run) -> dict | None:
+    result = captured(run, [tool("agent-store"), *arguments])
+    try:
+        document = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ApproveError(f"agent-store {arguments[0]} failed: {reason(result)}") from error
+    if document.get("ok"):
+        return document["data"]
+    failure = document.get("error") or {}
+    if failure.get("code") == "not-found":
+        return None
+    raise ApproveError(f"agent-store {arguments[0]} failed: {failure.get('message') or reason(result)}")
+
+
+def linked(session: dict) -> list[str]:
+    return [link["item"]["ref"] for link in session.get("links") or []]
+
+
+def current_session(
+    run, session_handle: str | None = None
+) -> tuple[str | None, list[str]] | None:
+    if session_handle is not None:
+        data = agent_store(["show", session_handle], run)
+        if data is None:
+            raise ApproveError(
+                f"unknown agent session {session_handle}; nothing approved"
+            )
+        session = data["session"]
+        return session["session"], linked(session)
+    if launch_id := os.environ.get("TJ_RUN_LAUNCH_ID"):
+        data = agent_store(["show", "--launch-id", launch_id], run)
+        if data is None:
+            return None
+        launch, session = data["launch"], data.get("session")
+        items = [launch["item"]["ref"]] if launch.get("item") else []
+        return launch.get("session"), items + (linked(session) if session else [])
+    for host, variable in NATIVE_SESSIONS:
+        if native := os.environ.get(variable):
+            data = agent_store(["show", f"{host}:{native}"], run)
+            return None if data is None else (data["session"]["session"], linked(data["session"]))
+    return None
+
+
+def descendant_items(handle: str, run) -> list[str]:
+    launches = agent_store(["launches"], run)["launches"]
+    candidates = [link["session"] for item in agent_store(["items"], run)["items"]
+                  for link in item["sessions"]]
+    candidates += [launch[key] for launch in launches for key in ("parent", "session") if launch.get(key)]
+    sessions, inspected = {}, {handle}
+    for candidate in candidates:
+        if candidate in inspected:
+            continue
+        inspected.add(candidate)
+        data = agent_store(["show", candidate], run)
+        if data is None:
+            continue
+        session = data["session"]
+        sessions[candidate] = session
+        if session.get("parent"):
+            candidates.append(session["parent"])
+    items, frontier, seen = [], [handle], {handle}
+    while frontier:
+        parent = frontier.pop()
+        children = [child for child, session in sessions.items() if session.get("parent") == parent]
+        for launch in launches:
+            if launch.get("parent") != parent:
+                continue
+            if launch.get("item"):
+                items.append(launch["item"]["ref"])
+            if launch.get("session"):
+                children.append(launch["session"])
+        for child in children:
+            if child in seen:
+                continue
+            seen.add(child)
+            frontier.append(child)
+            if child in sessions:
+                items += linked(sessions[child])
+    return items
+
+
+def reviewer_environment(gh: str, reviewer: str, run) -> dict[str, str]:
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in bot_identity.AGENT_ONLY and not key.startswith("GIT_CONFIG_")}
+    environment["GH_HOST"] = "github.com"
+    result = captured(run, [gh, "auth", "token", "--hostname", "github.com"], environment)
+    token = (result.stdout or "").strip()
+    if result.returncode or not token:
+        raise ApproveError(f"gh could not read the native github.com credential; check gh auth status "
+                           f"before approving as {reviewer}")
+    environment["GH_TOKEN"] = token
+    actual = captured(run, [gh, "api", "user", "--jq", ".login"], environment)
+    if actual.returncode:
+        detail = reason(actual).replace(token, "[redacted]")
+        raise ApproveError(
+            f"gh could not verify the configured human reviewer {reviewer}: {detail}; nothing approved"
+        )
+    if (actual.stdout or "").strip().casefold() != reviewer.casefold():
+        raise ApproveError(f"gh did not authenticate the configured human reviewer {reviewer}; nothing approved")
+    return environment
+
+
+def json_output(
+    command: list[str], environment: dict[str, str], run,
+    *, timeout_seconds: int = bot_identity.TIMEOUT_SECONDS,
+) -> object:
+    result = captured(run, command, environment, timeout_seconds=timeout_seconds)
+    label = " ".join([Path(command[0]).stem, *command[1:3]])
+    if result.returncode:
+        raise ApproveError(f"{label} failed: {reason(result)}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ApproveError(f"{label} returned invalid JSON") from error
+
+
+def bot_authored(details: dict, slug: str) -> bool:
+    author = details.get("author") or {}
+    if author.get("type") == "User" or author.get("__typename") == "User" or author.get("is_bot") is False:
+        return False
+    return author.get("login") in (f"app/{slug}", slug, f"{slug}[bot]")
+
+
+def awaits_reviewer(details: dict, reviewer: str) -> bool:
+    head = details["headRefOid"]
+    if any(request.get("login", "").casefold() == reviewer.casefold()
+           for request in details.get("reviewRequests") or []):
+        return True
+    return not any(review["state"] == "APPROVED"
+                   and (review.get("author") or {}).get("login", "").casefold() == reviewer.casefold()
+                   and (review.get("commit") or {}).get("oid") == head for review in details.get("reviews") or [])
+
+
+def display_name(url: str) -> str:
+    match = PULL_URL.fullmatch(url)
+    if not match:
+        return url
+    owner, name, number = match.groups()
+    return f"{owner}/{name}#{number}"
+
+
+def pending(items: list[str], gh: str, environment: dict[str, str], configuration: dict, run) -> list[dict]:
+    urls = []
+    for item in dict.fromkeys(items):
+        found = json_output(
+            [tool("tj"), "item", "--profile", "github", "prs", item], environment, run,
+            timeout_seconds=ITEM_LOOKUP_TIMEOUT_SECONDS,
+        )
+        urls += [pull["url"] for pull in found["prs"] if pull.get("state") == "open"]
+    waiting = []
+    accounts = {account.casefold() for account in configuration["accounts"]}
+    for url in dict.fromkeys(urls):
+        match = PULL_URL.fullmatch(url)
+        if match is None or match.group(1).casefold() not in accounts:
+            continue
+        details = json_output([gh, "pr", "view", url, "--json", PR_FIELDS], environment, run)
+        if (details.get("author") or {}).get("login", "").casefold() == configuration["reviewer"].casefold():
+            continue
+        if (details.get("state") == "OPEN" and bot_authored(details, configuration["app"]["slug"])
+                and awaits_reviewer(details, configuration["reviewer"])):
+            waiting.append({"name": display_name(url), "title": details.get("title", ""), "url": url,
+                            "head": details["headRefOid"]})
+    return waiting
+
+
+def approve(
+    run=subprocess.run, out=sys.stdout, session_handle: str | None = None
+) -> int:
+    session = current_session(run, session_handle)
+    if session is None:
+        print("No agent session found here; nothing approved.", file=out)
+        return 0
+    handle, items = session
+    if handle:
+        items += descendant_items(handle, run)
+    if not items:
+        print("No work items are linked to this session; nothing approved.", file=out)
+        return 0
+    gh = bot_identity.real_gh()
+    configuration = bot_identity.identity_config()
+    environment = reviewer_environment(gh, configuration["reviewer"], run)
+    waiting = pending(items, gh, environment, configuration, run)
+    if not waiting:
+        print("No pull requests await your approval.", file=out)
+        return 0
+    for item in waiting:
+        print(f"{item['name']}  {item['title']}", file=out)
+    failed = False
+    for item in waiting:
+        result = captured(run, [gh, "pr", "review", "--approve", item["url"]], environment)
+        if result.returncode:
+            failed = True
+            print(f"failed {item['name']}: {reason(result)}", file=out)
+            continue
+        print(f"approved {item['name']}", file=out)
+        merge = captured(run, [gh, "pr", "merge", "--auto", "--squash", "--match-head-commit", item["head"],
+                               item["url"]], environment)
+        if merge.returncode:
+            failed = True
+            print(f"not merging {item['name']}: {reason(merge)}", file=out)
+        else:
+            print(f"merging {item['name']} when its checks pass", file=out)
+    return 1 if failed else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="tj approve", description=__doc__)
+    parser.add_argument(
+        "--session", metavar="HOST:ID", help="registered originating agent session"
+    )
+    arguments = parser.parse_args(argv)
+    try:
+        return approve(session_handle=arguments.session)
+    except (ApproveError, bot_identity.IdentityError) as error:
+        print(f"tj approve: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
