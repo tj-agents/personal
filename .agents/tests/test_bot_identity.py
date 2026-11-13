@@ -125,7 +125,7 @@ class IdentityTests(Sandbox):
     def test_checkout_owner_comes_only_from_github_remotes(self):
         cases = {"https://x-access-token@github.com/sample-org/core.git": "sample-org",
                  "git@github.com:outside-org/cris.git": "outside-org",
-                 "https://dev.azure.com/infonetica/_git/cris": None,
+                 "https://dev.azure.com/example-employer/_git/example-service": None,
                  "https://notgithub.com/sample-org/core": None}
         for url, owner in cases.items():
             with self.subTest(url=url):
@@ -168,7 +168,7 @@ class CredentialTests(Sandbox):
 
     def test_an_unadopted_tj_agents_checkout_still_gets_the_app_token(self):
         with mock.patch.object(subprocess, "run", side_effect=AssertionError("no checkout probe")):
-            answer = self.ask("protocol=https\nhost=github.com\npath=sample-org/infonetica.git\n")
+            answer = self.ask("protocol=https\nhost=github.com\npath=sample-org/example-service.git\n")
         self.assertEqual("username=x-access-token\npassword=ghs_x\n", answer)
 
 class GitContainmentTests(Sandbox):
