@@ -23,7 +23,9 @@ The human needs their own native `gh` login on each computer; bot enrollment doe
 
 The user runs this command. It lists the pending PRs and approves them without another confirmation;
 an agent never executes it on the user's behalf. When approval is required, put the command on the
-user's clipboard with `cli:clip` and include it and the exact PR links in the reply.
+user's clipboard with `cli:clip` and include it and the exact PR links in the reply. Hand over only PRs
+linked to the session's work item: the bot wrapper links one it creates when the session has exactly one
+item, and otherwise reports that `tj approve` cannot reach it.
 
 For a separate human shell that does not inherit the conversation's session variables, give
 `tj approve --session <host:id>` with the originating conversation's exact registered session handle.
