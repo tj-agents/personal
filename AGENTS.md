@@ -18,7 +18,7 @@ before delivery.
 
 This profile applies in projects that explicitly select it. Policies live under `policy/`; supporting conventions, workflows and utilities stay beside their owning skills. Declare mandatory host hooks in the shipped harness manifest and verify their delivery on each supported host.
 
-<!-- BEGIN personal:rules sha256:c51fe768beb91b7db22fa02bf4bcffd659f1ec23eee5cf37f2bd5eedfe59aba3 -->
+<!-- BEGIN personal:rules sha256:c4f6a57dde7e906bd13bad312f0042408f0c01ce0c9855968d7b7fa3907b5dc8 -->
 # Personal rules
 
 These rules govern every project that explicitly adopts `personal@tj-agents`. Adoption records the
@@ -38,14 +38,16 @@ still names its old `<package>:<name>`.
 
 Verify the entry points people actually use on every supported platform, including Windows and Linux
 launch paths where supported. Source edits, successful generation, passing unit tests and version commands
-alone leave a migration unproven; check installed bindings and fresh runtime behavior. Record any
-unverified entry point as incomplete, with its resolver and observable acceptance condition.
+alone leave a migration unproven; check installed bindings and runtime behavior after `tj install` and a
+plugin reload in the current session, or against a fixture or dummy host process. Never launch another agent
+session, tab or handoff to verify unless Tommy asks for it. Record any unverified entry point as incomplete,
+with its resolver and observable acceptance condition.
 
 ```text
 Replace old-launch with launch:
 1. Migrate the registered shell command, configuration and actual callers.
 2. Delete the old entry and regenerate installed settings.
-3. Invoke launch from a fresh supported Windows/Linux session and check its actual behavior.
+3. Run tj install, reload plugins in this session, run launch against a dummy host and check its behavior.
 Result: launch --version alone leaves this migration incomplete.
 ```
 
@@ -62,10 +64,9 @@ to the change, with tests that prove behavior rather than restate the implementa
 
 ## 3. Established problem records
 
-Owns automatic recording of established personal bugs, agent or process mistakes, and deliberate debt.
-Within authorized work in an explicitly adopted personal project, record them through Personal's selected
-tools without waiting to be asked. Honor an explicit no-recording limit, and never record employer or
-non-personal evidence through Personal.
+Owns recording of established personal bugs, agent or process mistakes, and deliberate debt. Record one
+through Personal's selected tools only when Tommy asks for it; otherwise mention the problem in your report
+and carry on with the active task. Never record employer or non-personal evidence through Personal.
 
 Reconcile the canonical existing identity before recording. For a repeated observation, append material
 new recurrence evidence, the cause when known, and the current outcome or repair state; do not create a
@@ -77,7 +78,7 @@ Recording does not authorize, prioritize or dispatch implementation. Apply
 to those decisions and preserve the active task and repair owner.
 
 ```text
-An acknowledged repeated native close prepare failure occurs during item A:
+Tommy asks to record a repeated native close prepare failure seen during item A:
 1. Update its existing close issue with new recurrence evidence, the known cause and current repair state.
 2. Verify the update persists remotely before saying it is documented.
 3. Continue item A; do not create a duplicate item or take over the repair.
@@ -88,7 +89,30 @@ An acknowledged repeated native close prepare failure occurs during item A:
 Track work as a GitHub issue or project item. A plan committed under `plans/` is only the detailed
 implementation plan behind one such item and links to it; working plans stay machine-local.
 
-This policy is authored once here. A selecting project receives it at SessionStart, and adoption generates
-its marked native instruction block from this body and checks it for drift. A selected plugin or an
+## 5. Delivery
+
+A coherent goal Tommy authorizes ships as one PR per repository, each containing the complete requested
+result. Split a repository's work into several PRs or a stack only when Tommy asks for staged delivery, such
+as a large refactor he wants landed in stages. Personal projects have no outside users, so a brief break
+between repositories while their PRs land is acceptable.
+
+Extra review rounds, continuation or progress records, additional work items, status messages to other
+sessions and further planning are opt-in: do them when Tommy asks or the work demonstrably needs them, and
+say which. A selected standard that prescribes slicing, stacking, recorded reviews, ledgers or completion
+records does not bind a personal project unless Tommy asks for it. Required CI and a configured approval
+gate still apply.
+
+A handoff, plan or worker brief carries the whole requested outcome. Narrowing it to a smaller patch, or
+reporting documentation of unfinished work as delivery, is a defect: finish the independent parts and name
+the exact decision or dependency that blocks the rest.
+
+```text
+Goal: one tj install, plugin scoping and an approval switch across agent, cli and github.
+Delivery: three PRs, one per repository, each complete; no stack, plan PR, review receipt or ledger.
+Staging: only after Tommy asks for the refactor to land in stages.
+```
+
+This policy is authored once here. A selecting project receives it only through the marked AGENTS.md block
+adoption generates from this body; rerun adoption in every adopting project when the body changes. A selected plugin or an
 `always` tier alone is not proof of loading.
 <!-- END personal:rules -->
