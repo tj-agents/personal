@@ -13,7 +13,8 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 
 - Policies: `personal:rules`.
 - Conventions: `personal:revision`.
-- Utilities: `personal:use`, `personal:work-item`, `personal:create-work-item`.
+- Utilities: `personal:use`, `personal:work-item`, `personal:create-work-item`, `personal:bot-identity`,
+  `personal:approve`.
 - Workflow: `personal:address-work-item`.
 
 ## Adopt a personal project
@@ -56,20 +57,30 @@ closure evidence. A missing or different provider blocks the operation without a
 
 ## Agent GitHub identity
 
-`personal:bot-identity` enrolls each trusted machine into the existing `tomjseery-bot` App.
-Its published descriptor contains only public identity metadata. Setup verifies a newly issued key and
-creates the protected local credential record; no JSON assembly or copying keys between machines is needed.
-The plugin declares this setup step in its harness manifest for Core's setup and sync entry points.
-Initial enrollment requires Tommy's authenticated GitHub key issuance through the local browser wizard;
-ordinary setup and verification never prompt. See the [enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md).
+`personal:bot-identity` configures a machine for the user's own GitHub App and human reviewer. Its
+onboarding page supports creating a new App or enrolling an existing App on another computer. The
+plugin contains no preset personal App or account roster. Accepted configuration and keys are retained
+through partial setup, and repeat setup reuses valid enrollment. The plugin declares this setup step
+for Agent's installer and refresh. See the
+[enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md) for commands, credential handling,
+required permissions and recovery.
 
-Run setup only in an explicitly adopted personal Git checkout, or pass `--root <checkout>` for one. It writes agent
-identity settings only to that checkout's `.claude/settings.local.json` and `.codex/config.toml`; work and Infonetica
-checkouts never receive the personal App identity.
+The current integration writes machine-specific identity settings to the user's Claude and Codex
+configuration. It is not checkout-local; agent sessions using those settings share that environment.
+Repository adoption remains the source of Personal scope, and the wrapper only authorizes configured
+GitHub accounts. Human terminals retain their native login.
 
-Readiness also requires `repository_creation:write` on the App and its `tj-agents` installation. Setup fails
-closed if that creation capability is removed, or if `administration:write` is granted; it reports the specific
-App or installation settings page for Tommy to correct and never changes GitHub permissions itself.
+## Approving the bot's pull requests
+
+[personal:approve](.agents/personal/utility/approve/SKILL.md) (`! tj approve`) is the user's human
+approval command. It uses the configured reviewer's native login, verifies that identity, and approves
+only the configured bot's eligible PRs in the current session's linked work. It never performs an
+account-wide approval sweep or runs as the bot. An agent gives the user the command and PR links;
+the user executes it.
+
+When the human shell does not inherit the conversation's session variables, the agent supplies
+`tj approve --session <host:id>` using its registered session and verified linked work. This needs
+no machine-specific helper or session environment setup.
 
 ## Authoring and verification
 
@@ -79,3 +90,15 @@ pwsh .agents/sync-generated.ps1 -Check
 ```
 
 The layout, the vendored generator and CI come from [Template](https://github.com/tj-agents/template).
+
+Run the onboarding browser acceptance check with an installed Chromium executable:
+
+```sh
+uv run python .agents/tests/onboarding_browser.py --browser /usr/bin/chromium --artifacts /var/tmp/personal-onboarding
+```
+
+Use `--headed` to observe the browser in the desktop session. The runner exercises the real local page
+with synthetic GitHub responses and blocks external requests. Each rendered transition has a bounded
+wait; a failure saves a screenshot, rendered state, expected step and browser errors in the artifact
+directory. This fixture check complements live enrollment; it does not prove GitHub authentication or
+installation readiness. Playwright is a development dependency; the setup runtime uses the standard library.

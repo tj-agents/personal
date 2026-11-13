@@ -1,81 +1,78 @@
 ---
 name: bot-identity
-description: Make agents push, open PRs and call GitHub as Tommy's GitHub App in his personal accounts, so only Tommy can approve and merge. Use when giving Tommy PRs to approve, setting up a machine for agents, when a push or gh call from an agent fails to authenticate, or when changing which accounts the App covers.
+description: Configure agent GitHub access through the user's own GitHub App. Use when setting up a new or existing bot on a machine, repairing agent authentication, or changing the accounts the bot may access.
 kind: utility
 domain: personal
 profile: core
-applicability: Tommy's machines; GitHub accounts where the App is installed
+applicability: explicitly adopted personal projects using GitHub App authorship
 requires: python
 provenance: house
 ---
 
 # Bot identity
 
-Agents act on the pinned existing `tomjseery-bot` GitHub App (ID `5397553`) recorded in
-`~/.agents-state/github-app/tomjseery-bot.json`, with its private key beside it, in tomjseery, tj-agents and
-Concertable. GitHub never lets
-an author approve its own PR. [github-actions:merge-policy](https://github.com/tj-agents/github-actions/blob/main/.agents/github-actions/utility/merge-policy/SKILL.md)
-owns Tommy's human approval requirement. Infonetica never gets the App; there agents keep Tommy's credentials.
+The user selects their GitHub App, human reviewer and permitted GitHub accounts during onboarding. The
+protected local record is `~/.agents-state/github-app/identity.json`; it contains that configuration and
+the local key location. The plugin ships no personal App, account roster or reviewer identity. Project
+adoption determines Personal scope; account ownership and checkout location do not establish it.
 
-Run setup only for an explicitly adopted personal Git checkout: its `.agents/plugins.json` selects
-`personal@tj-agents` from `tj-agents/marketplace` and selects neither `work@tj-agents` nor
-`infonetica@tj-agents`. `--root <checkout>` selects that checkout explicitly; otherwise setup uses the current
-directory. A machine without a valid enrollment fails closed with an exact onboarding action; normal setup and
-checks never open a browser. With Tommy present, use the explicit local-browser wizard: it identifies the pinned
-existing App, accepts one newly generated App PEM, verifies it against GitHub before storing protected local state,
-and never prints the key or token. The original downloaded PEM remains in the browser/OS download location; remove
-it there after successful enrollment.
+Use the existing setup check before changing enrollment. Ordinary setup converges local wrappers and
+host settings; `--check` reports readiness without writing. Neither opens a browser. With the user
+present and enrollment explicitly authorized, `--onboard` opens the local setup page.
 
 ```text
-# From C:\Users\TommySeery\source\repos\personal-notes, an adopted personal checkout:
-python -B <skill-directory>/scripts/bot_identity.py setup --onboard  # python3 on Linux/macOS
-python -B <skill-directory>/scripts/bot_identity.py setup
-python -B <skill-directory>/scripts/bot_identity.py setup --check
-
-# From elsewhere, select that same checkout explicitly:
-python -B <skill-directory>/scripts/bot_identity.py setup --root C:\Users\TommySeery\source\repos\personal-notes --check
+python3 -B <skill-directory>/scripts/bot_identity.py setup --check
+python3 -B <skill-directory>/scripts/bot_identity.py setup --onboard
+python3 -B <skill-directory>/scripts/bot_identity.py setup
 ```
 
-If the wizard reports a missing account, Tommy installs the same App at
-`https://github.com/apps/tomjseery-bot/installations/new` for tomjseery, tj-agents and Concertable, then re-runs
-setup. The key enrollment is retained, but setup does not claim readiness or alter agent host settings until all
-three installations verify.
+Use `python` instead of `python3` on Windows. Runtime prerequisites are Python 3.12+, OpenSSL and `gh`.
 
-Readiness also requires `repository_creation:write` on the App and its `tj-agents` installation, so agents can
-create repositories there. It deliberately rejects `administration` write access: creating repositories does not need
-authority to administer, delete, or transfer existing repositories. A failed check identifies the exact App or
-`tj-agents` installation settings page for Tommy to correct; setup never changes GitHub permissions itself.
-
-It installs a `gh` wrapper in `~/.agents-state/bin/bot-identity/` (`gh.exe` on Windows, so PowerShell and
-programs pass arguments intact), but writes agent identity settings only to
-`<checkout>/.claude/settings.local.json` and `<checkout>/.codex/config.toml`; it never writes global Claude or
-Codex identity settings. Those checkout settings give agent sessions (Claude `env`, Codex
-`shell_environment_policy.set`) `PATH` with the wrapper first, `TJ_AGENT=1`, a dead `GH_TOKEN` with an empty
-`GH_CONFIG_DIR`, so gh outside the wrapper has no login, and git config that clears every github.com credential
-helper except the bot's. `PATH` is a snapshot, so re-run setup after changing it. Tommy's own terminals are
-unchanged; setup removes the wrapper from the user PATH. It also denies the GitHub MCP write tools, which hold
-Tommy's token.
-
-Before every wrapper or credential-helper command, the tool rechecks that the current checkout is explicitly
-personal. A checkout selecting `work@tj-agents` or `infonetica@tj-agents` is never personal: it uses Tommy's own
-gh login or git helpers and never receives an App token. For a selected personal checkout, git takes the account
-from the remote URL, and `gh` takes it first from explicit `-R`/`--repo`/`--owner`, GitHub URLs,
-`repos|orgs|users/<owner>` API paths and `gh repo` arguments; only when none is explicit does it use the checkout's
-`origin`. Commands naming multiple explicit owners are rejected. Only the three named accounts can receive an App
-token; a missing installation for one stops the command and never falls back to Tommy. A command naming no account
-runs unauthenticated, and agents may run only `gh auth status`. `token --owner <account>` prints a token. Restart
-Claude and Codex after setup.
-
-Every PR handed to Tommy for approval carries the `!` command he invokes in the agent terminal. It bypasses the
-wrapper and approves each PR as `tomjseery`, stopping at the first failure; an agent never runs it. After a
-successful `gh pr create` (not draft, `--web` or `--dry-run`) or `gh pr ready` in the App's accounts, the wrapper prints that PR's filled
-command on stderr in every repository, whatever plugins it selects. For several PRs in one reply, give one command
-from `approval <url>...`, which refuses PRs outside the App's accounts:
+For an existing bot on a new computer, public details can prefill the same page. This example uses
+fictitious identities; repeat `--account` for each intended account. Omit `--reviewer` to detect the
+human's native `gh` username.
 
 ```text
-python -B <skill-directory>/scripts/bot_identity.py approval https://github.com/<owner>/<repo>/pull/<number> ...
+python3 -B <skill-directory>/scripts/bot_identity.py setup --onboard --app sample-dev-bot --reviewer sample-dev --account sample-dev --account sample-projects
 ```
 
-This is environment containment, not an OS boundary: an agent can still read Tommy's stores directly
-(`gh auth token -u tomjseery`, `git credential-manager get`, `~/.git-credentials`). Only Tommy's credentials
-being out of agent reach makes a required approval his alone.
+The page offers two paths. **Existing App** selects the user's App by its public name or URL and accepts
+an existing or newly issued PEM directly in the browser. A second computer enrolls into that same App;
+it does not create another App or repeat existing GitHub installations. **New App** uses GitHub's
+manifest flow to prefill registration; the user reviews and creates their App on GitHub, then the local
+callback exchanges the one-time code and protects the resulting key. The user completes credential entry
+and GitHub security approvals in the supported UI. Never request, print or paste keys or tokens in chat.
+After key enrollment, the user can explicitly select discovered existing installations; discovery does
+not authorize every account automatically.
+
+A new computer still needs a trusted key or signer for the selected App. A human GitHub login does not
+authenticate as the bot. Valid local enrollment is reused, including after a partial setup: missing
+installations resume at the installation step, while accepted configuration and keys survive cancellation.
+A one-use manifest key interrupted before verification is retained as protected `<slug>.pending.pem`.
+A Verify retry or ordinary setup verifies and promotes it; it cannot authenticate commands while pending.
+Connection and permission failures do not authorize creating another App or replacing a key. If the user
+selects a downloaded PEM, the source file remains in its browser/OS location after enrollment.
+
+Readiness verifies the selected App and its installations for the configured accounts, plus required
+permissions declared for each account. Write access to `administration` is rejected. Failures identify the relevant
+App or installation settings; setup does not silently change GitHub permissions. Agent host settings are
+written only after readiness succeeds.
+
+Setup installs the `gh` wrapper and `personal:approve` launcher under the managed local runtime. Plugin
+refresh converges their shipped code without replacing the user's identity record. The wrapper resolves
+the target account from explicit `gh` arguments or Git's remote, using the checkout's `origin` only when
+no explicit account is supplied. Multiple target accounts, unconfigured accounts and missing installations
+fail closed; agent commands never fall back to the human's credentials. Agents may run only `gh auth status`
+from the `gh auth` command family. The low-level `token` command prints a secret and is not a diagnostic.
+
+The current host integration writes user-level `~/.claude/settings.json` and `~/.codex/config.toml`.
+It gives agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default `GH_TOKEN`, a
+separate `GH_CONFIG_DIR`, and Git helpers that use the selected bot. This environment can affect every
+agent session using those host settings; it is not checkout-local or an OS credential boundary. Ordinary
+human terminals keep their native `gh` login. Re-run setup after changing `PATH` and restart Claude and
+Codex to load changed settings.
+
+Setup installs and checks the human approval command and the Claude agent denials for `tj approve` and
+`tj-approve`. When the user's approval is required, follow [personal:approve](../approve/SKILL.md): give
+the user the command and PR links; an agent never runs it. A required review must come from the configured
+human, not the App that authored the PR. GitHub approval policy remains with the adopting repository.
