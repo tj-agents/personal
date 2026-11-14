@@ -242,6 +242,14 @@ class GitContainmentTests(Sandbox):
         self.assertEqual("password=TOMMY_GH", self.fill(
             "protocol=https\nhost=github.com\npath=sample-org/core.git\n", self.tommy))
 
+    def test_invalid_unowned_git_settings_are_not_reported_ready(self):
+        environment = self.agent("import sys\nsys.stdin.read()\n")
+        path = bot.store() / "gitconfig"
+        path.write_bytes(path.read_bytes().replace(
+            bot._GIT_POLICY_BEGIN, b'[broken "unterminated]\n' + bot._GIT_POLICY_BEGIN))
+        with mock.patch.object(os, "environ", environment), self.assertRaisesRegex(bot.IdentityError, "invalid"):
+            bot._verify_git_config(self.home / "helper ü '$HOME.py")
+
     def test_use_http_path_passes_the_repository_account_to_the_helper(self):
         environment = self.agent("import sys\nfields = dict(line.rstrip().split('=', 1) for line in sys.stdin if '=' in line)\n"
                                  "print('username=x-access-token')\nprint('password=' + fields.get('path', 'MISSING'))\n")
@@ -979,7 +987,7 @@ class FreshSetupTests(unittest.TestCase):
                     modified = git_config.stat().st_mtime_ns
                     bot.setup()
                     self.assertEqual(modified, git_config.stat().st_mtime_ns)
-                    git_config.write_bytes(b"# stale\n")
+                    git_config.write_bytes(configured.replace(b"useHttpPath = true", b"useHttpPath = false"))
                     with self.assertRaisesRegex(bot.IdentityError, "agent Git configuration is stale"):
                         bot.setup(check=True)
                     bot.setup()
@@ -1138,6 +1146,138 @@ def test_missing_managed_git_config_requires_original_sources_before_setup_write
     assert managed.read_bytes() == original
     assert external.read_bytes() == external_before
     assert writes == [SCRIPT.resolve()]
+
+
+@pytest.fixture
+def configured_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    for name in list(os.environ):
+        if name in bot.AGENT_ONLY or name.startswith("GIT_CONFIG_"):
+            monkeypatch.delenv(name)
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("TJ_BIN_DIR", str(tmp_path / "tj bin"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
+    monkeypatch.setattr(bot, "verify_enrollment", lambda: None)
+    monkeypatch.setattr(bot, "verify_ready", lambda record: None)
+    monkeypatch.setattr(bot, "remove_user_path", lambda directory: False)
+    external = tmp_path / "external.gitconfig"
+    external.write_text('[core]\n\tlongpaths = false\n\teditor = fixture-base\n'
+                        '[credential]\n\thelper = "!f() { echo username=fixture-human; echo password=FIXTURE_HUMAN; }; f"\n',
+                        encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(external))
+    key = bot.store() / "alex-bot.pem"
+    bot.write_key(key, b"fixture-only-key")
+    bot.write_private(bot.store() / "identity.json", {**CONFIG, "key": str(key)})
+    bot.write_private(bot.store() / "tokens/alex-bot-installations.json", INSTALLED)
+    bot.write_private(bot.store() / "tokens/alex-bot-alex.json", {"token": "FIXTURE_APP", "expires": 4102444800})
+    bot.setup()
+    managed: Path = bot.store() / "gitconfig"
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(managed))
+    bot.setup(check=True)
+    return managed
+
+
+def test_native_git_settings_survive_check_setup_and_relative_includes_without_source_growth(
+    configured_git: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    managed = configured_git
+    sources = bot._git_config_sources()
+    subprocess.run(["git", "config", "--file", str(managed), "core.longpaths", "true"],
+                   capture_output=True, check=True)
+    subprocess.run(["git", "config", "--file", str(managed), "diff.algorithm", "histogram"],
+                   capture_output=True, check=True)
+    bot.setup(check=True)
+    extra = managed.with_name("native-extra.gitconfig")
+    extra.write_text("[core]\n\teditor = fixture-override\n", encoding="utf-8")
+    outside = b'# Native include retained\r\n[include]\r\n\tpath = "native-extra.gitconfig"\r\n'
+    with managed.open("ab") as stream:
+        stream.write(outside)
+    with pytest.raises(bot.IdentityError, match="policy must follow other credentials and includes"):
+        bot.setup(check=True)
+    bot.setup()
+    bot.setup(check=True)
+    assert bot._git_config_sources() == sources
+    assert managed.read_bytes().count(outside) == 1
+    stable = managed.read_bytes()
+    modified = managed.stat().st_mtime_ns
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL")
+    for _ in range(3):
+        bot.setup(check=True)
+        bot.setup()
+        assert bot._git_config_sources() == sources
+        assert managed.read_bytes() == stable
+        assert managed.stat().st_mtime_ns == modified
+    for name, value in (("core.longpaths", "true"), ("diff.algorithm", "histogram"), ("core.editor", "fixture-override")):
+        actual = subprocess.run(["git", "config", "--file", str(managed), "--includes", "--get", name],
+                                capture_output=True, text=True, check=True)
+        assert actual.stdout.strip() == value
+    includes = subprocess.run(["git", "config", "--file", str(managed), "--no-includes", "--get-all", "include.path"],
+                              capture_output=True, text=True, check=True)
+    assert includes.stdout.splitlines() == [sources[0].as_posix(), "native-extra.gitconfig"]
+
+
+@pytest.mark.parametrize("via_include", [False, True])
+def test_late_github_helpers_cannot_pass_check_and_setup_restores_app_only_routing(
+    configured_git: Path, via_include: bool,
+) -> None:
+    managed = configured_git
+    sources = bot._git_config_sources()
+    human = ('[credential "https://github.com"]\n\thelper =\n'
+             '\thelper = "!f() { echo username=fixture-human; echo password=FIXTURE_HUMAN; }; f"\n')
+    if via_include:
+        extra = managed.with_name("native-auth.gitconfig")
+        extra.write_text(human + "[diff]\n\talgorithm = patience\n", encoding="utf-8")
+        outside = '[include]\n\tpath = "native-auth.gitconfig"\n'
+    else:
+        outside = human
+    with managed.open("ab") as stream:
+        stream.write(outside.encode())
+    with pytest.raises(bot.IdentityError, match="policy must follow other credentials and includes"):
+        bot.setup(check=True)
+    bot.setup()
+    bot.setup(check=True)
+    assert bot._git_config_sources() == sources
+    assert managed.read_bytes().count(outside.encode()) == 1
+    for owner, expected in (("alex", "password=FIXTURE_APP"), ("outside-org", "")):
+        result = subprocess.run(["git", "credential", "fill"],
+                                input=f"protocol=https\nhost=github.com\npath={owner}/repo.git\n\n",
+                                capture_output=True, text=True, timeout=30, check=False)
+        passwords = [line for line in result.stdout.splitlines() if line.startswith("password=")]
+        assert "\n".join(passwords) == expected
+    if via_include:
+        result = subprocess.run(["git", "config", "--file", str(managed), "--includes", "--get", "diff.algorithm"],
+                                capture_output=True, text=True, check=True)
+        assert result.stdout.strip() == "patience"
+
+
+def test_owned_credential_edits_fail_check_and_are_repaired_without_removing_native_settings(
+    configured_git: Path,
+) -> None:
+    managed = configured_git
+    subprocess.run(["git", "config", "--file", str(managed), "core.editor", "fixture-native"],
+                   capture_output=True, check=True)
+    subprocess.run(["git", "config", "--file", str(managed), "credential.https://github.com.useHttpPath", "false"],
+                   capture_output=True, check=True)
+    with pytest.raises(bot.IdentityError, match="agent Git configuration is stale"):
+        bot.setup(check=True)
+    bot.setup()
+    bot.setup(check=True)
+    for name, expected in (("credential.https://github.com.useHttpPath", "true"), ("core.editor", "fixture-native")):
+        result = subprocess.run(["git", "config", "--file", str(managed), "--includes", "--get", name],
+                                capture_output=True, text=True, check=True)
+        assert result.stdout.strip() == expected
+
+
+def test_unmarked_git_config_is_rejected_without_changing_it(configured_git: Path) -> None:
+    content = b"[core]\n\teditor = fixture-unmarked\n"
+    configured_git.write_bytes(content)
+    with pytest.raises(bot.IdentityError, match="valid Personal ownership markers"):
+        bot.setup()
+    assert configured_git.read_bytes() == content
 
 
 def test_existing_protected_key_is_reused_after_selecting_the_same_app(
