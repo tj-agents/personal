@@ -89,6 +89,10 @@ COMMAND_PAYLOAD_FLAGS = {
 AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
+_GIT_SOURCES_BEGIN = b"# >>> personal:bot-identity sources >>>"
+_GIT_SOURCES_END = b"# <<< personal:bot-identity sources <<<"
+_GIT_POLICY_BEGIN = b"# >>> personal:bot-identity credentials >>>"
+_GIT_POLICY_END = b"# <<< personal:bot-identity credentials <<<"
 AGENT_DENY = (
     "mcp__github__merge_pull_request",
     "mcp__github__create_pull_request",
@@ -911,7 +915,40 @@ def _agent_git_config() -> Path:
     return store() / "gitconfig"
 
 
+def _git_config_blocks(content: bytes) -> re.Match[bytes]:
+    markers = (_GIT_SOURCES_BEGIN, _GIT_SOURCES_END, _GIT_POLICY_BEGIN, _GIT_POLICY_END)
+    pattern = (rb"(?P<prefix>.*?)^" + re.escape(_GIT_SOURCES_BEGIN) + rb"\r?\n(?P<sources>.*?)^" +
+               re.escape(_GIT_SOURCES_END) + rb"\r?\n(?P<middle>.*?)^" + re.escape(_GIT_POLICY_BEGIN) +
+               rb"\r?\n(?P<policy>.*?)^" + re.escape(_GIT_POLICY_END) + rb"(?:\r?\n|$)(?P<suffix>.*)")
+    match = re.fullmatch(pattern, content, re.MULTILINE | re.DOTALL)
+    if any(content.count(marker) != 1 for marker in markers) or match is None:
+        raise IdentityError("the agent Git configuration needs valid Personal ownership markers; recreate it with "
+                            "setup from the original Git environment")
+    return match
+
+
+def _git_config_query(content: bytes, arguments: list[str]) -> subprocess.CompletedProcess[bytes]:
+    environment = {key: value for key, value in os.environ.items()
+                   if key != "GIT_CONFIG" and not key.startswith("GIT_CONFIG_")}
+    result = subprocess.run(["git", "config", "--file", "-", "--no-includes", "--null", *arguments],
+                            input=content, env=environment, capture_output=True,
+                            timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    if result.returncode not in (0, 1):
+        raise IdentityError("the agent Git configuration is invalid; run setup")
+    return result
+
+
 def _git_config_sources() -> list[Path]:
+    managed = _agent_git_config()
+    if managed.exists() or is_reparse(managed):
+        safe_existing_file(managed)
+        block = _git_config_blocks(managed.read_bytes()).group("sources")
+        result = _git_config_query(block, ["--get-all", "include.path"])
+        sources = [Path(value.decode("utf-8")) for value in result.stdout.split(b"\0") if value]
+        for source in sources:
+            if not source.is_absolute() or os.path.normcase(str(source)) == os.path.normcase(str(managed.absolute())):
+                raise IdentityError("the agent Git source includes must be absolute external paths")
+        return sources
     configured = os.environ.get("GIT_CONFIG_GLOBAL")
     if configured is None:
         xdg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -919,30 +956,64 @@ def _git_config_sources() -> list[Path]:
     if not configured:
         return []
     path = Path(configured).expanduser().absolute()
-    if os.path.normcase(str(path)) != os.path.normcase(str(_agent_git_config().absolute())):
-        return [path]
-    if not path.exists() and not is_reparse(path):
+    if os.path.normcase(str(path)) == os.path.normcase(str(managed.absolute())):
         raise IdentityError("the agent Git configuration is missing; run setup with the original GIT_CONFIG_GLOBAL, "
                             "or unset it if you originally used Git's default global files")
-    safe_existing_file(path)
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_CONFIG_")}
-    result = subprocess.run(["git", "config", "--file", str(path), "--no-includes", "--null", "--get-all", "include.path"],
-                            env=environment, capture_output=True, text=True, encoding="utf-8",
-                            timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
-    if result.returncode not in (0, 1):
-        raise IdentityError("the agent Git configuration is invalid; run setup")
-    return [Path(value) for value in result.stdout.split("\0") if value]
+    return [path]
+
+
+def _git_config_context(content: bytes, section: bytes) -> bytes:
+    for line in content.splitlines():
+        line = line.lstrip()
+        if not line or line.startswith((b"#", b";")):
+            continue
+        if not line.startswith(b"["):
+            return section + b"\n" + content
+        break
+    return content
 
 
 def _git_config_content(script: Path) -> bytes:
-    lines = ["# Managed by personal:bot-identity; contains no credentials."]
-    for path in _git_config_sources():
-        lines += ["[include]", f"\tpath = {json.dumps(path.as_posix(), ensure_ascii=False)}"]
-    lines += ['[credential "https://github.com"]', "\tuseHttpPath = true", "\thelper =",
-              f"\thelper = {json.dumps(helper_command(script), ensure_ascii=False)}"]
+    sources = _git_config_sources()
+    include_lines = []
+    for path in sources:
+        include_lines += ["[include]", f"\tpath = {json.dumps(path.as_posix(), ensure_ascii=False)}"]
+    source_block = _GIT_SOURCES_BEGIN + b"\n"
+    if include_lines:
+        source_block += ("\n".join(include_lines) + "\n").encode("utf-8")
+    source_block += _GIT_SOURCES_END + b"\n"
+    lines = ['[credential "https://github.com"]', "\tuseHttpPath = true", "\thelper =",
+             f"\thelper = {json.dumps(helper_command(script), ensure_ascii=False)}"]
     for url in CLEARED_HELPERS:
         lines += [f'[credential "{url}"]', "\thelper ="]
-    return ("\n".join(lines) + "\n").encode("utf-8")
+    policy_block = _GIT_POLICY_BEGIN + b"\n" + ("\n".join(lines) + "\n").encode("utf-8") + _GIT_POLICY_END + b"\n"
+    outside = b""
+    if _agent_git_config().is_file():
+        blocks = _git_config_blocks(_agent_git_config().read_bytes())
+        middle = blocks.group("middle")
+        if sources:
+            middle = _git_config_context(middle, b"[include]")
+        suffix = _git_config_context(blocks.group("suffix"), f'[credential "{CLEARED_HELPERS[-1]}"]'.encode())
+        outside = blocks.group("prefix") + middle + suffix
+        if outside and not outside.endswith(b"\n"):
+            outside += b"\n"
+    return source_block + outside + policy_block
+
+
+def _verify_git_config(script: Path) -> None:
+    path = _agent_git_config()
+    if not path.is_file() or is_reparse(path):
+        raise IdentityError("the agent Git configuration is stale; run setup")
+    content = path.read_bytes()
+    _git_config_query(content, ["--list"])
+    current = _git_config_blocks(content)
+    expected = _git_config_blocks(_git_config_content(script))
+    if any(current.group(name) != expected.group(name) for name in ("sources", "policy")):
+        raise IdentityError("the agent Git configuration is stale; run setup")
+    suffix = f'[credential "{CLEARED_HELPERS[-1]}"]\n'.encode() + current.group("suffix")
+    later_policy = _git_config_query(suffix, ["--name-only", "--get-regexp", r"^(credential|include|includeif)\."])
+    if later_policy.returncode == 0:
+        raise IdentityError("the agent Git credential policy must follow other credentials and includes; run setup")
 
 
 def agent_path(path: str) -> str:
@@ -1168,9 +1239,7 @@ def verify_host_setup() -> None:
                            (approve, expected_approve)):
         if not path.is_file() or is_reparse(path) or path.read_bytes() != expected:
             raise IdentityError(f"`tj approve` is not installed at {path}; run setup")
-    git_config = _agent_git_config()
-    if not git_config.is_file() or is_reparse(git_config) or git_config.read_bytes() != _git_config_content(script):
-        raise IdentityError("the agent Git configuration is stale; run setup")
+    _verify_git_config(script)
     environment = agent_environment(os.environ.get("PATH", ""))
     claude = claude_user_settings()
     codex = codex_user_config()
