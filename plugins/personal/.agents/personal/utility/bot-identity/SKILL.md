@@ -69,15 +69,16 @@ The current host integration writes user-level `~/.claude/settings.json` and `~/
 It gives agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default `GH_TOKEN`, a
 separate `GH_CONFIG_DIR`, and Git helpers that use the selected bot. This environment can affect every
 agent session using those host settings; it is not checkout-local or an OS credential boundary. Ordinary
-human terminals keep their native `gh` login. Git uses the managed `~/.agents-state/github-app/gitconfig`
-through `GIT_CONFIG_GLOBAL`, so native background Git retains the App helper when it removes command-scoped
-Git environment settings. The file stores no credentials, includes the existing global Git configuration
+human terminals keep their native `gh` login. Agent commands receive command-scoped Git credential settings
+so repository-local helpers cannot override the App-only policy. Native background Git that removes those
+settings uses the same App helper through `GIT_CONFIG_GLOBAL`, pointing to the managed
+`~/.agents-state/github-app/gitconfig`. This file stores no credentials, includes the existing global Git configuration
 (including an explicit external `GIT_CONFIG_GLOBAL`), and then restricts GitHub helpers to the App. Personal
 owns the marked source-includes and credential-policy sections. Setup preserves other Git settings and
 includes between them, keeping native overrides effective and applying the App credential policy last.
 `--check` verifies the owned sections and rejects later credential or include entries until setup puts them
-ahead of the policy. Setup replaces the old command-scoped host settings. Re-run setup after changing `PATH`
-and restart Claude and Codex to load changed settings.
+ahead of the policy. Setup converges both host interfaces. Re-run setup after changing `PATH` and restart
+Claude and Codex to load changed settings.
 
 Setup installs and checks the human approval command and the Claude agent denials for `tj approve` and
 `tj-approve`. When the user's approval is required, follow [personal:approve](../approve/SKILL.md): give

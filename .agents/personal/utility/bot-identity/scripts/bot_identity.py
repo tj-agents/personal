@@ -951,8 +951,10 @@ def _git_config_sources() -> list[Path]:
         return sources
     configured = os.environ.get("GIT_CONFIG_GLOBAL")
     if configured is None:
-        xdg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-        return [(xdg / "git" / "config").absolute(), Path.home() / ".gitconfig"]
+        result = _git_config_query(b"[paths]\n\thome = ~/\n", ["--path", "--get", "paths.home"])
+        home = Path(result.stdout.rstrip(b"\0").decode("utf-8"))
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+        return [(xdg / "git" / "config").absolute(), home / ".gitconfig"]
     if not configured:
         return []
     path = Path(configured).expanduser().absolute()
@@ -1029,8 +1031,15 @@ def agent_path(path: str) -> str:
 
 
 def agent_environment(path: str) -> dict[str, str]:
+    entries = [("credential.https://github.com.useHttpPath", "true"),
+               ("credential.https://github.com.helper", ""),
+               ("credential.https://github.com.helper", helper_command(installed_script())),
+               *((f"credential.{url}.helper", "") for url in CLEARED_HELPERS)]
     environment = {AGENT_FLAG: "1", "GH_TOKEN": UNAUTHENTICATED, "GH_CONFIG_DIR": str(gh_config_directory()),
-                   "GIT_CONFIG_GLOBAL": str(_agent_git_config())}
+                   "GIT_CONFIG_GLOBAL": str(_agent_git_config()), "GIT_CONFIG_COUNT": str(len(entries))}
+    for index, (key, value) in enumerate(entries):
+        environment[f"GIT_CONFIG_KEY_{index}"] = key
+        environment[f"GIT_CONFIG_VALUE_{index}"] = value
     # Windows names are case-insensitive, yet a host can keep Path and PATH apart; set both so neither stays stale.
     for key in ("PATH", "Path") if WINDOWS else ("PATH",):
         environment[key] = agent_path(path)
