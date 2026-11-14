@@ -188,7 +188,9 @@ class GitContainmentTests(Sandbox):
                       "GIT_CONFIG_GLOBAL": str(global_config), "GIT_TERMINAL_PROMPT": "0"}
 
     def fill(self, request, environment):
-        result = subprocess.run(["git", "credential", "fill"], input=request + "\n", env=environment,
+        git = shutil.which("git")
+        assert git is not None, "Git must be available before constructing the isolated environment"
+        result = subprocess.run([git, "credential", "fill"], input=request + "\n", env=environment,
                                 capture_output=True, text=True, timeout=60, check=False)
         return "".join(line for line in result.stdout.splitlines() if line.startswith("password="))
 
