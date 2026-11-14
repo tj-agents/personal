@@ -199,7 +199,8 @@ class GitContainmentTests(Sandbox):
         script.write_text(helper, encoding="utf-8")
         with mock.patch.object(os, "environ", self.tommy):
             bot.write_changed(bot.store() / "gitconfig", bot._git_config_content(script))
-        settings = bot.agent_environment(os.environ["PATH"])
+        with mock.patch.object(bot, "installed_script", return_value=script):
+            settings = bot.agent_environment(os.environ["PATH"])
         return {**self.tommy, **{key: value for key, value in settings.items() if key.startswith("GIT_CONFIG_")}}
 
     def test_github_hosts_reach_only_the_bot_helper(self):
@@ -241,6 +242,20 @@ class GitContainmentTests(Sandbox):
             "protocol=https\nhost=github.com\npath=sample-org/core.git\n", environment))
         self.assertEqual("password=TOMMY_GH", self.fill(
             "protocol=https\nhost=github.com\npath=sample-org/core.git\n", self.tommy))
+
+    def test_repository_local_helpers_cannot_restore_human_fallback(self):
+        environment = self.agent("import sys\nsys.stdin.read()\n")
+        repository = self.home / "local-helper.git"
+        subprocess.run(["git", "init", "--bare", str(repository)], env=environment,
+                       capture_output=True, check=True)
+        local = repository / "config"
+        with local.open("a", encoding="utf-8") as stream:
+            stream.write('[credential "https://github.com"]\n\thelper =\n'
+                         '\thelper = "!f() { echo username=fixture-human; echo password=FIXTURE_LOCAL; }; f"\n')
+        environment["GIT_DIR"] = str(repository)
+        request = "protocol=https\nhost=github.com\npath=outside-org/core.git\n"
+        self.assertEqual("password=FIXTURE_LOCAL", self.fill(request, {**self.tommy, "GIT_DIR": str(repository)}))
+        self.assertEqual("", self.fill(request, environment))
 
     def test_invalid_unowned_git_settings_are_not_reported_ready(self):
         environment = self.agent("import sys\nsys.stdin.read()\n")
@@ -1487,6 +1502,58 @@ def test_explicit_onboarding_can_replace_an_unreadable_retained_key() -> None:
         with pytest.raises(bot.IdentityError, match="stop after UI"):
             bot.setup(onboard_key=True)
     opened.assert_called_once()
+
+
+@pytest.mark.parametrize("explicit_global", [False, True])
+@pytest.mark.parametrize("explicit_xdg", [False, True])
+def test_git_home_defaults_preserve_native_values_when_userprofile_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit_global: bool, explicit_xdg: bool,
+) -> None:
+    for name in list(os.environ):
+        if name.startswith("GIT_CONFIG_") or name in ("GIT_CONFIG", "GIT_DIR", "GIT_WORK_TREE"):
+            monkeypatch.delenv(name)
+    home, profile = tmp_path / "git home ü", tmp_path / "user profile ü"
+    for directory, location in ((home, "git-home"), (profile, "user-profile")):
+        directory.mkdir()
+        (directory / ".gitconfig").write_text(
+            f"[fixture]\n\tlocation = {location}\n\torder = home\n", encoding="utf-8")
+        xdg = directory / ".config/git"
+        xdg.mkdir(parents=True)
+        (xdg / "config").write_text(
+            f"[fixture]\n\txdg = {location}\n\torder = xdg\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(profile))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    if explicit_xdg:
+        xdg = tmp_path / "explicit xdg/git"
+        xdg.mkdir(parents=True)
+        (xdg / "config").write_text("[fixture]\n\txdg = explicit-xdg\n\torder = xdg\n", encoding="utf-8")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg.parent))
+    else:
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    if explicit_global:
+        external = tmp_path / "explicit.gitconfig"
+        external.write_text("[fixture]\n\tlocation = explicit-global\n\torder = explicit\n", encoding="utf-8")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(external))
+    managed = tmp_path / "managed/gitconfig"
+    monkeypatch.setattr(bot, "store", lambda: managed.parent)
+    git = shutil.which("git")
+    assert git is not None
+    repository = tmp_path / "repository"
+    subprocess.run([git, "init", str(repository)], capture_output=True, check=True)
+    before = subprocess.run([git, "config", "--get-regexp", r"^fixture\."], cwd=repository,
+                            capture_output=True, text=True, encoding="utf-8", check=True)
+    expected_location = "explicit-global" if explicit_global else "git-home"
+    assert f"fixture.location {expected_location}" in before.stdout.splitlines()
+    lines: list[str] = []
+    for path in bot._git_config_sources():
+        lines.extend(["[include]", "\tpath = " + json.dumps(path.as_posix(), ensure_ascii=False)])
+    managed.parent.mkdir()
+    managed.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(managed))
+    after = subprocess.run([git, "config", "--get-regexp", r"^fixture\."], cwd=repository,
+                           capture_output=True, text=True, encoding="utf-8", check=True)
+    assert after.stdout == before.stdout
 
 
 if __name__ == "__main__":
