@@ -16,11 +16,12 @@ import io
 import json
 import os
 from pathlib import Path
-import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.request
 import urllib.error
@@ -85,7 +86,7 @@ COMMAND_PAYLOAD_FLAGS = {
     ("repo", "edit"): ("-d", "-h"),
     ("repo", "view"): ("-q", "-t"),
 }
-AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
 AGENT_DENY = (
@@ -903,7 +904,45 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
 
 
 def helper_command(script: Path) -> str:
-    return f"!\"{Path(sys.executable).as_posix()}\" -B \"{script.as_posix()}\" credential"
+    return f"!{shlex.quote(Path(sys.executable).resolve().as_posix())} -B {shlex.quote(script.resolve().as_posix())} credential"
+
+
+def _agent_git_config() -> Path:
+    return store() / "gitconfig"
+
+
+def _git_config_sources() -> list[Path]:
+    configured = os.environ.get("GIT_CONFIG_GLOBAL")
+    if configured is None:
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        return [(xdg / "git" / "config").absolute(), Path.home() / ".gitconfig"]
+    if not configured:
+        return []
+    path = Path(configured).expanduser().absolute()
+    if os.path.normcase(str(path)) != os.path.normcase(str(_agent_git_config().absolute())):
+        return [path]
+    if not path.exists() and not is_reparse(path):
+        raise IdentityError("the agent Git configuration is missing; run setup with the original GIT_CONFIG_GLOBAL, "
+                            "or unset it if you originally used Git's default global files")
+    safe_existing_file(path)
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_CONFIG_")}
+    result = subprocess.run(["git", "config", "--file", str(path), "--no-includes", "--null", "--get-all", "include.path"],
+                            env=environment, capture_output=True, text=True, encoding="utf-8",
+                            timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    if result.returncode not in (0, 1):
+        raise IdentityError("the agent Git configuration is invalid; run setup")
+    return [Path(value) for value in result.stdout.split("\0") if value]
+
+
+def _git_config_content(script: Path) -> bytes:
+    lines = ["# Managed by personal:bot-identity; contains no credentials."]
+    for path in _git_config_sources():
+        lines += ["[include]", f"\tpath = {json.dumps(path.as_posix(), ensure_ascii=False)}"]
+    lines += ['[credential "https://github.com"]', "\tuseHttpPath = true", "\thelper =",
+              f"\thelper = {json.dumps(helper_command(script), ensure_ascii=False)}"]
+    for url in CLEARED_HELPERS:
+        lines += [f'[credential "{url}"]', "\thelper ="]
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def agent_path(path: str) -> str:
@@ -918,16 +957,9 @@ def agent_path(path: str) -> str:
     return os.pathsep.join(entries)
 
 
-def agent_environment(script: Path, path: str) -> dict[str, str]:
-    entries = [("credential.https://github.com.useHttpPath", "true"),
-               ("credential.https://github.com.helper", ""),
-               ("credential.https://github.com.helper", helper_command(script)),
-               *((f"credential.{url}.helper", "") for url in CLEARED_HELPERS)]
+def agent_environment(path: str) -> dict[str, str]:
     environment = {AGENT_FLAG: "1", "GH_TOKEN": UNAUTHENTICATED, "GH_CONFIG_DIR": str(gh_config_directory()),
-                   "GIT_CONFIG_COUNT": str(len(entries))}
-    for index, (key, value) in enumerate(entries):
-        environment[f"GIT_CONFIG_KEY_{index}"] = key
-        environment[f"GIT_CONFIG_VALUE_{index}"] = value
+                   "GIT_CONFIG_GLOBAL": str(_agent_git_config())}
     # Windows names are case-insensitive, yet a host can keep Path and PATH apart; set both so neither stays stale.
     for key in ("PATH", "Path") if WINDOWS else ("PATH",):
         environment[key] = agent_path(path)
@@ -984,7 +1016,7 @@ def script_launcher() -> bytes:
     wheels = sorted((Path(ensurepip.__file__).parent / "_bundled").glob("pip-*.whl"))
     if not wheels:
         raise IdentityError("this Python has no bundled pip wheel, whose script launcher becomes gh.exe")
-    name = "t64-arm.exe" if platform.machine().lower() in ("arm64", "aarch64") else "t64.exe"
+    name = "t64-arm.exe" if sysconfig.get_platform() == "win-arm64" else "t64.exe"
     with zipfile.ZipFile(wheels[-1]) as wheel:
         return wheel.read(f"pip/_vendor/distlib/{name}")
 
@@ -1136,7 +1168,10 @@ def verify_host_setup() -> None:
                            (approve, expected_approve)):
         if not path.is_file() or is_reparse(path) or path.read_bytes() != expected:
             raise IdentityError(f"`tj approve` is not installed at {path}; run setup")
-    environment = agent_environment(script, os.environ.get("PATH", ""))
+    git_config = _agent_git_config()
+    if not git_config.is_file() or is_reparse(git_config) or git_config.read_bytes() != _git_config_content(script):
+        raise IdentityError("the agent Git configuration is stale; run setup")
+    environment = agent_environment(os.environ.get("PATH", ""))
     claude = claude_user_settings()
     codex = codex_user_config()
     try:
@@ -1248,10 +1283,12 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
         verify_host_setup()
         print("bot_identity: ready")
         return
-    script = install_shims(Path(__file__).resolve())
+    git_config = _git_config_content(installed_script())
+    install_shims(Path(__file__).resolve())
     launcher = install_approve()
     gh_config_directory().mkdir(parents=True, exist_ok=True)
-    environment = agent_environment(script, os.environ.get("PATH", ""))
+    write_changed(_agent_git_config(), git_config)
+    environment = agent_environment(os.environ.get("PATH", ""))
     update_claude(claude_user_settings(), environment)
     update_codex(codex_user_config(), environment)
     if remove_user_path(shim_directory()):

@@ -69,8 +69,12 @@ The current host integration writes user-level `~/.claude/settings.json` and `~/
 It gives agent sessions the wrapper-first `PATH`, `TJ_AGENT=1`, an unauthenticated default `GH_TOKEN`, a
 separate `GH_CONFIG_DIR`, and Git helpers that use the selected bot. This environment can affect every
 agent session using those host settings; it is not checkout-local or an OS credential boundary. Ordinary
-human terminals keep their native `gh` login. Re-run setup after changing `PATH` and restart Claude and
-Codex to load changed settings.
+human terminals keep their native `gh` login. Git uses the managed `~/.agents-state/github-app/gitconfig`
+through `GIT_CONFIG_GLOBAL`, so native background Git retains the App helper when it removes command-scoped
+Git environment settings. The file stores no credentials, includes the existing global Git configuration
+(including an explicit external `GIT_CONFIG_GLOBAL`), and then restricts GitHub helpers to the App. Setup
+replaces the old command-scoped host settings; `--check` also checks this file. Re-run setup after changing
+`PATH` and restart Claude and Codex to load changed settings.
 
 Setup installs and checks the human approval command and the Claude agent denials for `tj approve` and
 `tj-approve`. When the user's approval is required, follow [personal:approve](../approve/SKILL.md): give

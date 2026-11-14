@@ -4,7 +4,9 @@ import importlib.util
 import io
 import json
 import contextlib
+import ensurepip
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +16,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+import zipfile
 from unittest import mock
 import pytest
 
@@ -185,14 +188,18 @@ class GitContainmentTests(Sandbox):
                       "GIT_CONFIG_GLOBAL": str(global_config), "GIT_TERMINAL_PROMPT": "0"}
 
     def fill(self, request, environment):
-        result = subprocess.run(["git", "credential", "fill"], input=request + "\n", env=environment,
+        git = shutil.which("git")
+        assert git is not None, "Git must be available before constructing the isolated environment"
+        result = subprocess.run([git, "credential", "fill"], input=request + "\n", env=environment,
                                 capture_output=True, text=True, timeout=60, check=False)
         return "".join(line for line in result.stdout.splitlines() if line.startswith("password="))
 
     def agent(self, helper):
-        script = self.home / "helper.py"
+        script = self.home / "helper ü '$HOME.py"
         script.write_text(helper, encoding="utf-8")
-        settings = bot.agent_environment(script, os.environ["PATH"])
+        with mock.patch.object(os, "environ", self.tommy):
+            bot.write_changed(bot.store() / "gitconfig", bot._git_config_content(script))
+        settings = bot.agent_environment(os.environ["PATH"])
         return {**self.tommy, **{key: value for key, value in settings.items() if key.startswith("GIT_CONFIG_")}}
 
     def test_github_hosts_reach_only_the_bot_helper(self):
@@ -208,10 +215,54 @@ class GitContainmentTests(Sandbox):
             with self.subTest(request=request):
                 self.assertEqual(expected, self.fill(request, environment))
 
+    def test_native_automatic_git_keeps_app_routing_after_command_environment_is_removed(self):
+        environment = self.agent("import sys\nsys.stdin.read()\nprint('username=x-access-token')\n"
+                                 "print('password=BOT')\n")
+        for name in ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_WORK_TREE"):
+            environment.pop(name, None)
+        trusted = self.home / "trusted.git"
+        subprocess.run(["git", "init", "--bare", str(trusted)], env=environment,
+                       capture_output=True, check=True)
+        environment["GIT_DIR"] = str(trusted)
+        trusted_entries = []
+        for entry in os.environ["PATH"].split(os.pathsep):
+            if bot.is_shim(entry) or any(
+                (Path(entry) / name).is_file() for name in ("python", "python3", "python.exe")
+            ):
+                continue
+            trusted_entries.append(entry)
+        environment["PATH"] = os.pathsep.join(trusted_entries)
+        self.assertEqual("password=BOT", self.fill(
+            "protocol=https\nhost=github.com\npath=sample-org/core.git\n", environment))
+
+    def test_empty_bot_response_never_reaches_human_helpers(self):
+        environment = self.agent("import sys\nsys.stdin.read()\n")
+        self.assertEqual("", self.fill(
+            "protocol=https\nhost=github.com\npath=sample-org/core.git\n", environment))
+        self.assertEqual("password=TOMMY_GH", self.fill(
+            "protocol=https\nhost=github.com\npath=sample-org/core.git\n", self.tommy))
+
+    def test_use_http_path_passes_the_repository_account_to_the_helper(self):
+        environment = self.agent("import sys\nfields = dict(line.rstrip().split('=', 1) for line in sys.stdin if '=' in line)\n"
+                                 "print('username=x-access-token')\nprint('password=' + fields.get('path', 'MISSING'))\n")
+        self.assertEqual("password=sample-org/core.git", self.fill(
+            "protocol=https\nhost=github.com\npath=sample-org/core.git\n", environment))
+
+    def test_agent_config_preserves_an_external_global_config_during_repeat_setup(self):
+        environment = self.agent("import sys\nsys.stdin.read()\n")
+        path = bot.store() / "gitconfig"
+        before = path.read_bytes()
+        modified = path.stat().st_mtime_ns
+        with mock.patch.object(os, "environ", environment):
+            bot.write_changed(path, bot._git_config_content(self.home / "helper ü '$HOME.py"))
+        self.assertEqual(before, path.read_bytes())
+        self.assertEqual(modified, path.stat().st_mtime_ns)
+        self.assertEqual("password=TOMMY_GENERIC", self.fill("protocol=https\nhost=dev.azure.com\n", environment))
+
 class GhWrapperTests(Sandbox):
     def setUp(self):
         super().setUp()
-        self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+        self.patch_environment(bot.agent_environment(os.environ["PATH"]))
         self.gh = FakeGh()
         for target, value in (("real_gh", mock.DEFAULT), ("installed", mock.DEFAULT),
                               ("installation_token", mock.DEFAULT)):
@@ -508,19 +559,7 @@ class ApprovalHandoffTests(GhWrapperTests):
 class AgentEnvironmentTests(Sandbox):
     def settings(self, windows, path):
         with mock.patch.object(bot, "WINDOWS", windows):
-            return bot.agent_environment(Path("/s/bot_identity.py"), path)
-
-    def test_git_reaches_github_only_through_the_bot_helper(self):
-        environment = self.settings(False, "/usr/bin")
-        entries = [(environment[f"GIT_CONFIG_KEY_{index}"], environment[f"GIT_CONFIG_VALUE_{index}"])
-                   for index in range(int(environment["GIT_CONFIG_COUNT"]))]
-        helpers = [value for key, value in entries if key == "credential.https://github.com.helper"]
-        self.assertEqual("", helpers[0])
-        self.assertEqual(1, len(helpers[1:]))
-        self.assertTrue(helpers[1].endswith('bot_identity.py" credential'))
-        cleared = {key for key, value in entries if key.endswith(".helper") and value == ""}
-        self.assertEqual({f"credential.{url}.helper" for url in ("https://github.com", "https://*.github.com",
-                                                                  "http://github.com", "http://*.github.com")}, cleared)
+            return bot.agent_environment(path)
 
     def test_gh_has_no_saved_login_in_agent_sessions(self):
         environment = self.settings(False, "/usr/bin")
@@ -559,7 +598,7 @@ class AgentEnvironmentTests(Sandbox):
             directory.mkdir()
             (directory / name).write_bytes(b"")
             (directory / name).chmod(0o755)
-        path = bot.agent_environment(Path("/s/bot_identity.py"), str(real))["PATH"]
+        path = bot.agent_environment(str(real))["PATH"]
         self.assertEqual(shim / name, Path(shutil.which("gh", path=path)))
 
 
@@ -586,7 +625,7 @@ class ShimTests(Sandbox):
     @unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "Windows PowerShell")
     def test_powershell_resolves_the_wrapper_from_the_agent_path(self):
         self.install()
-        environment = {**os.environ, "PATH": bot.agent_environment(Path("/s/x.py"), os.environ["PATH"])["PATH"]}
+        environment = {**os.environ, "PATH": bot.agent_environment(os.environ["PATH"])["PATH"]}
         result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
                                  "(Get-Command gh).Source; gh pr view 'a b'"], env=environment,
                                 capture_output=True, text=True, timeout=120, check=True)
@@ -607,12 +646,13 @@ class SettingsTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        self.environment = {"TJ_AGENT": "1", "GH_TOKEN": "x", "PATH": "/shim:/usr/bin", "GIT_CONFIG_COUNT": "1",
-                            "GIT_CONFIG_KEY_0": "a.b", "GIT_CONFIG_VALUE_0": 'say "hi"'}
+        self.environment = {"TJ_AGENT": "1", "GH_TOKEN": "x", "PATH": "/shim:/usr/bin",
+                            "GIT_CONFIG_GLOBAL": str(self.root / "agent.gitconfig")}
 
     def test_codex_keeps_other_settings_and_is_idempotent(self):
         path = self.root / "config.toml"
-        path.write_text('model = "x"\n\n[shell_environment_policy.set]\nKEEP = "1"\nGIT_CONFIG_KEY_9 = "old"\n'
+        path.write_text('model = "x"\n\n[shell_environment_policy.set]\nKEEP = "1"\nGIT_CONFIG_COUNT = "6"\nGIT_CONFIG_KEY_9 = "old"\n'
+                        'GIT_CONFIG_VALUE_9 = "old"\nGIT_CONFIG_PARAMETERS = "old"\n'
                         'Path = "old"\n\n[projects.a]\ntrust_level = "trusted"\n', encoding="utf-8")
         bot.update_codex(path, self.environment)
         once = path.read_text(encoding="utf-8")
@@ -625,7 +665,8 @@ class SettingsTests(unittest.TestCase):
 
     def test_claude_merges_env_and_denies_mcp_writes_and_tj_approve(self):
         path = self.root / "settings.json"
-        path.write_text(json.dumps({"env": {"KEEP": "1", "GIT_CONFIG_KEY_9": "old", "Path": "old"},
+        path.write_text(json.dumps({"env": {"KEEP": "1", "GIT_CONFIG_COUNT": "6", "GIT_CONFIG_KEY_9": "old",
+                                            "GIT_CONFIG_VALUE_9": "old", "GIT_CONFIG_PARAMETERS": "old", "Path": "old"},
                                     "permissions": {"deny": ["Bash(rm:*)"]}}), encoding="utf-8")
         bot.update_claude(path, self.environment)
         settings = json.loads(path.read_text(encoding="utf-8"))
@@ -790,7 +831,7 @@ class EnrollmentTests(Sandbox):
         self.assertFalse((self.home / "github-app" / ".candidate.pem").exists())
 
     def test_missing_protected_installation_fails_closed_without_human_fallback(self):
-        self.patch_environment(bot.agent_environment(Path("/s/bot_identity.py"), os.environ["PATH"]))
+        self.patch_environment(bot.agent_environment(os.environ["PATH"]))
         with mock.patch.object(bot, "installed", return_value={}), self.assertRaises(bot.IdentityError):
             bot.agent_gh_environment(["pr", "list", "-R", "alex/notes"], None)
 
@@ -933,6 +974,16 @@ class FreshSetupTests(unittest.TestCase):
                         contextlib.redirect_stdout(io.StringIO()):
                     bot.setup()
                     bot.setup(check=True)
+                    git_config = bot.store() / "gitconfig"
+                    configured = git_config.read_bytes()
+                    modified = git_config.stat().st_mtime_ns
+                    bot.setup()
+                    self.assertEqual(modified, git_config.stat().st_mtime_ns)
+                    git_config.write_bytes(b"# stale\n")
+                    with self.assertRaisesRegex(bot.IdentityError, "agent Git configuration is stale"):
+                        bot.setup(check=True)
+                    bot.setup()
+                    self.assertEqual(configured, git_config.read_bytes())
                     original_path = os.environ["PATH"]
                     with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(real), original_path])}):
                         bot.setup(check=True)
@@ -977,6 +1028,20 @@ class FreshSetupTests(unittest.TestCase):
                 bot.write_private(bot.store() / "tokens/alex-bot-alex.json",
                                   {"token": "fixture-token", "expires": 4102444800})
                 settings = json.loads((home / "claude/settings.json").read_text(encoding="utf-8"))["env"]
+                for request, expected in (
+                    ("protocol=https\nhost=github.com\npath=alex/core.git\n", "password=fixture-token"),
+                    ("protocol=https\nhost=github.com\npath=outside-org/core.git\n", ""),
+                    ("protocol=https\nhost=github.com\n", ""),
+                    ("protocol=http\nhost=github.com\npath=sample-org/core.git\n", ""),
+                    ("protocol=https\nhost=gist.github.com\npath=sample-org/core.git\n", ""),
+                    ("protocol=https\nhost=api.github.com\npath=sample-org/core.git\n", ""),
+                ):
+                    with self.subTest(request=request):
+                        credentials = subprocess.run(["git", "credential", "fill"], input=request + "\n",
+                                                     cwd=project, env={**environment, **settings, "GIT_TERMINAL_PROMPT": "0"},
+                                                     capture_output=True, text=True, timeout=30, check=False)
+                        self.assertEqual(expected, "".join(line for line in credentials.stdout.splitlines()
+                                                           if line.startswith("password=")))
                 result = subprocess.run([str(bot.shim_directory() / launcher.name), "api", "repos/alex/smoke"],
                                         cwd=project, env={**environment, **settings}, capture_output=True,
                                         text=True, timeout=30, check=True)
@@ -991,6 +1056,88 @@ class FreshSetupTests(unittest.TestCase):
 def bot_toml(text):
     import tomllib
     return tomllib.loads(text)
+
+
+@pytest.mark.parametrize(("interpreter_platform", "expected"), [
+    ("win-amd64", b"fixture-x64-launcher"),
+    ("win-arm64", b"fixture-arm64-launcher"),
+])
+def test_script_launcher_uses_interpreter_architecture_without_machine_queries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interpreter_platform: str, expected: bytes,
+) -> None:
+    bundled = tmp_path / "_bundled"
+    bundled.mkdir()
+    with zipfile.ZipFile(bundled / "pip-fixture.whl", "w") as wheel:
+        wheel.writestr("pip/_vendor/distlib/t64.exe", b"fixture-x64-launcher")
+        wheel.writestr("pip/_vendor/distlib/t64-arm.exe", b"fixture-arm64-launcher")
+    monkeypatch.setattr(ensurepip, "__file__", str(tmp_path / "__init__.py"))
+    monkeypatch.setattr(bot.sysconfig, "get_platform", lambda: interpreter_platform)
+
+    def forbidden_query() -> str:
+        raise AssertionError("launcher selection must not query the machine or WMI")
+
+    monkeypatch.setattr(platform, "machine", forbidden_query)
+    monkeypatch.setattr(platform, "uname", forbidden_query)
+    assert bot.script_launcher() == expected
+
+
+def test_posix_shim_installation_never_selects_a_windows_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "shim"
+    source = tmp_path / "bot_identity.py"
+    source.write_text(ARGV_RECORDER, encoding="utf-8")
+    monkeypatch.setattr(bot, "WINDOWS", False)
+    monkeypatch.setattr(bot, "shim_directory", lambda: directory)
+
+    def forbidden_launcher() -> bytes:
+        raise AssertionError("POSIX installation must not select a Windows launcher")
+
+    monkeypatch.setattr(bot, "script_launcher", forbidden_launcher)
+    assert bot.install_shims(source) == directory / source.name
+    assert (directory / "gh").is_file()
+    assert not (directory / "gh.exe").exists()
+
+
+def test_missing_managed_git_config_requires_original_sources_before_setup_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bot, "store", lambda: tmp_path)
+    monkeypatch.setattr(bot, "shim_directory", lambda: tmp_path / "shim")
+    monkeypatch.setattr(bot, "verify_enrollment", lambda: None)
+    monkeypatch.setattr(bot, "install_approve", lambda: tmp_path / "tj-approve")
+    monkeypatch.setattr(bot, "remove_user_path", lambda directory: False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    external = tmp_path / "external ü.gitconfig"
+    external.write_text("[user]\n\tname = fixture\n", encoding="utf-8")
+    external_before = external.read_bytes()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(external))
+    script: Path = bot.installed_script()
+    managed = tmp_path / "gitconfig"
+    original = bot._git_config_content(script)
+    managed.write_bytes(original)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(managed))
+    assert bot._git_config_content(script) == original
+    managed.unlink()
+    writes: list[Path] = []
+
+    def install(source: Path) -> Path:
+        writes.append(source)
+        return script
+
+    monkeypatch.setattr(bot, "install_shims", install)
+    with pytest.raises(bot.IdentityError, match="missing; run setup with the original GIT_CONFIG_GLOBAL"):
+        bot.setup()
+    assert not managed.exists()
+    assert writes == []
+    assert external.read_bytes() == external_before
+
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(external))
+    bot.setup()
+    assert managed.read_bytes() == original
+    assert external.read_bytes() == external_before
+    assert writes == [SCRIPT.resolve()]
 
 
 def test_existing_protected_key_is_reused_after_selecting_the_same_app(
