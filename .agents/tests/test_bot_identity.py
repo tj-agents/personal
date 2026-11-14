@@ -222,10 +222,14 @@ class GitContainmentTests(Sandbox):
         subprocess.run(["git", "init", "--bare", str(trusted)], env=environment,
                        capture_output=True, check=True)
         environment["GIT_DIR"] = str(trusted)
-        environment["PATH"] = os.pathsep.join(
-            entry for entry in os.environ["PATH"].split(os.pathsep)
-            if not bot.is_shim(entry) and not any(
-                (Path(entry) / name).is_file() for name in ("python", "python3", "python.exe")))
+        trusted_entries = []
+        for entry in os.environ["PATH"].split(os.pathsep):
+            if bot.is_shim(entry) or any(
+                (Path(entry) / name).is_file() for name in ("python", "python3", "python.exe")
+            ):
+                continue
+            trusted_entries.append(entry)
+        environment["PATH"] = os.pathsep.join(trusted_entries)
         self.assertEqual("password=BOT", self.fill(
             "protocol=https\nhost=github.com\npath=sample-org/core.git\n", environment))
 
