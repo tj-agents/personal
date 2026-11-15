@@ -116,6 +116,9 @@ class IdentityTests(Sandbox):
                  ("pr", "review", "--approve", "https://github.com/sample-org/core/pull/5"): ["sample-org"],
                  ("pr", "view", "--json", "title", "https://github.com/outside-org/cris/pull/5"): ["outside-org"],
                  ("repo", "delete", "alex/notes", "--yes"): ["alex"],
+                 ("repo", "list", "sample-org", "--limit", "10"): ["sample-org"],
+                 ("repo", "ls", "--json", "name", "sample-org"): ["sample-org"],
+                 ("repo", "list", "--limit", "10"): [],
                  ("project", "list", "--owner", "sample-org"): ["sample-org"],
                  ("api", "graphql"): []}
         for arguments, owners in cases.items():
@@ -247,6 +250,12 @@ class GhWrapperTests(Sandbox):
     def test_an_explicit_work_target_in_a_tj_agents_checkout_is_refused(self):
         self.refused("issue", "list", "-R", "outside-org/cris", checkout="sample-org")
         self.installed.assert_not_called()
+
+    def test_repo_list_owner_routes_without_a_checkout_and_overrides_checkout(self):
+        self.assertEqual("ghs_sample-org", self.environment("repo", "list", "sample-org")["GH_TOKEN"])
+        self.assertEqual("ghs_sample-org", self.environment("repo", "ls", "sample-org", checkout="alex")["GH_TOKEN"])
+        self.gh.calls.clear()
+        self.refused("repo", "list", "outside-org", checkout="sample-org")
 
     def test_payload_urls_do_not_change_the_target_identity(self):
         cases = (

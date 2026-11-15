@@ -641,6 +641,8 @@ def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
     owners += [match.group(1) for argument in targets for match in GITHUB_URL.finditer(argument)]
     if arguments[:1] == ["repo"]:
         owners += [argument.split("/")[0] for argument in targets if REPOSITORY.fullmatch(argument)]
+        if arguments[1:2] == ["list"]:
+            owners += [argument for argument in targets if re.fullmatch(r"[A-Za-z0-9-]+", argument)]
     return owners, hostname
 
 
