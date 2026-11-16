@@ -439,8 +439,14 @@ class SessionGh(FakeGh):
         super().__init__()
         self.sessions = {"claude:me": [ITEM]}
         self.link_failure = None
+        self.review_decision = "REVIEW_REQUIRED"
+        self.review_failure = False
 
     def __call__(self, command, env=None, check=False, **captured):
+        if command[0:3] == ["real-gh", "pr", "view"] and "reviewDecision" in command:
+            self.calls.append((command, env))
+            return subprocess.CompletedProcess(command, int(self.review_failure),
+                                               json.dumps({"reviewDecision": self.review_decision}), "lookup failed")
         if command[0] == "agent-store":
             self.calls.append((command, env))
             links = self.sessions.get(command[2])
@@ -489,6 +495,33 @@ class ApprovalHandoffTests(GhWrapperTests):
         _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
         self.assertEqual([["tj", "item", "--profile", "github", "link", ITEM, self.CORE]], self.links())
         self.assertIn(f"linked {self.CORE} to {ITEM}", err)
+
+    def test_no_required_review_does_not_ask_for_approval(self):
+        self.gh.review_decision = None
+        _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertIn(f"linked {self.CORE} to {ITEM}", err)
+        self.assertNotIn(self.TJ_APPROVE, err)
+        self.assertNotIn("awaits", err)
+
+    def test_failed_review_lookup_reports_uncertainty(self):
+        self.gh.review_failure = True
+        _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertIn("could not determine whether", err)
+        self.assertNotIn(self.TJ_APPROVE, err)
+
+    def test_unrecognized_review_decision_reports_uncertainty(self):
+        self.gh.review_decision = "UNKNOWN"
+        _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertIn("unknown review decision", err)
+        self.assertNotIn(self.TJ_APPROVE, err)
+
+    def test_no_review_without_a_work_item_does_not_request_approval_handover(self):
+        self.gh.review_decision = None
+        self.gh.sessions["claude:me"] = []
+        _, err = self.hand_over("pr", "create", "--fill", stdout=self.CORE + "\n")
+        self.assertIn("could not link", err)
+        self.assertNotIn("approval", err)
+        self.assertNotIn("tj approve", err)
 
     def test_a_session_without_a_work_item_gets_no_tj_approve_reminder(self):
         self.gh.sessions["claude:me"] = []
@@ -571,7 +604,8 @@ class ApprovalHandoffTests(GhWrapperTests):
     def test_an_unresolved_url_is_reported_instead_of_pointing_the_human_at_tj_approve(self):
         _, err = self.hand_over("pr", "create", stdout="")
         self.assertNotIn(self.TJ_APPROVE, err)
-        self.assertIn(f"this PR {self.UNREACHABLE}: gh did not report the pull request URL", err)
+        self.assertIn("gh did not report the pull request URL", err)
+        self.assertNotIn("tj approve", err)
         self.assertEqual([], [command for command, _ in self.gh.calls if command[0] in ("agent-store", "tj")])
 
     def test_the_retired_approval_command_is_gone(self):

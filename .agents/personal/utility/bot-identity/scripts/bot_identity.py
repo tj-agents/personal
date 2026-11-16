@@ -838,21 +838,37 @@ def session_label() -> str:
                 "<session>")
 
 
-def hand_over(output: str, run=subprocess.run) -> None:
+def hand_over(output: str, environment: dict[str, str], run=subprocess.run) -> None:
     match = PULL_REQUEST.search(output)
     url = match.group(0) if match and match.group(1).lower() in required_owners() else None
+    decision = None
+    if url:
+        try:
+            result = captured(run, [real_gh(), "pr", "view", url, "--json", "reviewDecision"], environment)
+            if result.returncode:
+                raise IdentityError(reason(result))
+            decision = json.loads(result.stdout)["reviewDecision"]
+            if decision not in (None, "", "REVIEW_REQUIRED", "APPROVED", "CHANGES_REQUESTED"):
+                raise IdentityError("GitHub returned an unknown review decision")
+        except (IdentityError, ValueError, KeyError, TypeError) as error:
+            print(f"bot_identity: could not determine whether {url} requires approval: {error}", file=sys.stderr)
     try:
         item = link_session_item(url, run)
     except IdentityError as error:
-        print(f"bot_identity: REQUIRED BEFORE HANDOVER: {url or 'this PR'} is not reachable by `tj approve`: "
-              f"{error}. Do not give the human `! tj approve` yet: link this session to its work item with "
-              f"`agent-store link --session {session_label()} --item <ref>` and the PR with "
-              f"`tj item link <ref> {url or '<pr-url>'}`, then hand it over.", file=sys.stderr)
+        if decision == "REVIEW_REQUIRED":
+            print(f"bot_identity: REQUIRED BEFORE HANDOVER: {url or 'this PR'} is not reachable by `tj approve`: "
+                  f"{error}. Do not give the human `! tj approve` yet: link this session to its work item with "
+                  f"`agent-store link --session {session_label()} --item <ref>` and the PR with "
+                  f"`tj item link <ref> {url or '<pr-url>'}`, then hand it over.", file=sys.stderr)
+        else:
+            print(f"bot_identity: could not link {url or 'this PR'} to the session's work item: {error}", file=sys.stderr)
     else:
-        print(f"bot_identity: linked {url} to {item}. REQUIRED IN YOUR REPLY: {url} awaits "
-              f"{identity_config()['reviewer']}'s approval. Put the line `! tj approve` on the human's clipboard "
-              f"with cli:clip, and make your reply include that link and that line; never run it yourself.",
-              file=sys.stderr)
+        print(f"bot_identity: linked {url} to {item}.", file=sys.stderr)
+        if decision == "REVIEW_REQUIRED":
+            print(f"bot_identity: REQUIRED IN YOUR REPLY: {url} awaits "
+                  f"{identity_config()['reviewer']}'s approval. Put the line `! tj approve` on the human's clipboard "
+                  f"with cli:clip, and make your reply include that link and that line; never run it yourself.",
+                  file=sys.stderr)
 
 
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
@@ -874,7 +890,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
         output = "" if result.returncode else run(view, env=environment, check=False, stdout=subprocess.PIPE,
                                                     encoding="utf-8", errors="replace").stdout or ""
     if result.returncode == 0:
-        hand_over(output, run)
+        hand_over(output, environment, run)
     return result.returncode
 
 

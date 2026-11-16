@@ -86,7 +86,8 @@ the user the command and PR links; an agent never runs it. A required review mus
 human, not the App that authored the PR. GitHub approval policy remains with the adopting repository.
 
 After the App creates or readies a PR, the wrapper resolves the agent session's own work item the way
-`tj approve` does and runs `tj item link <ref> <url>`, then prints the approval reminder. When the session
-has no linked item, several items, no agent-store registration, or the link fails, it prints that the PR is
-not reachable by `tj approve` instead. Link the session (`agent-store link --session <host:id> --item <ref>`)
-and the PR (`tj item link <ref> <url>`) before handing it over.
+`tj approve` does and runs `tj item link <ref> <url>`. It queries the PR's current review decision and prints
+the approval reminder only when GitHub reports `REVIEW_REQUIRED`; a failed lookup reports uncertainty. When the session
+has no linked item, several items, no agent-store registration, or the link fails, it reports the link failure.
+If approval is required, link the session (`agent-store link --session <host:id> --item <ref>`) and the PR
+(`tj item link <ref> <url>`) before handing it over.
