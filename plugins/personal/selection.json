@@ -4,7 +4,8 @@
     "tj-agents/base",
     "tj-agents/engineering",
     "tj-agents/agent",
-    "tj-agents/docs"
+    "tj-agents/docs",
+    "tj-agents/github"
   ],
   "profiles": {
     "core": [
