@@ -135,7 +135,7 @@ class FakeTools:
 class ApproveTests(unittest.TestCase):
     def setUp(self):
         for patcher in (mock.patch.object(bot, "real_gh", return_value="real-gh"),
-                        mock.patch.object(approve, "tool", side_effect=lambda name: name),
+                        mock.patch.object(bot, "tool", side_effect=lambda name: name),
                         mock.patch.object(bot, "identity_config", return_value=CONFIGURATION, create=True)):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -279,7 +279,7 @@ class ApproveTests(unittest.TestCase):
     def test_unknown_explicit_session_fails_without_using_inherited_session_or_credentials(
         self,
     ) -> None:
-        with self.assertRaisesRegex(approve.ApproveError, "unknown.*codex:missing"):
+        with self.assertRaisesRegex(bot.IdentityError, "unknown.*codex:missing"):
             approve.approve(
                 run=self.tools, out=io.StringIO(), session_handle="codex:missing"
             )
@@ -395,7 +395,7 @@ def test_another_users_bot_and_reviewer_are_used_and_other_accounts_are_not_read
     with mock.patch.dict(os.environ, environment, clear=True), \
             mock.patch.object(bot, "identity_config", return_value=configuration, create=True), \
             mock.patch.object(bot, "real_gh", return_value="real-gh"), \
-            mock.patch.object(approve, "tool", side_effect=lambda name: name):
+            mock.patch.object(bot, "tool", side_effect=lambda name: name):
         assert approve.approve(run=tools, out=io.StringIO()) == 0
     assert tools.commands("real-gh", "auth", "token") == [["real-gh", "auth", "token", "--hostname", "github.com"]]
     assert tools.commands("real-gh", "pr", "review") == [["real-gh", "pr", "review", "--approve", own]]
@@ -410,7 +410,7 @@ def test_wrong_authenticated_reviewer_blocks_every_approval_and_pr_lookup() -> N
     with mock.patch.dict(os.environ, environment, clear=True), \
             mock.patch.object(bot, "identity_config", return_value=CONFIGURATION, create=True), \
             mock.patch.object(bot, "real_gh", return_value="real-gh"), \
-            mock.patch.object(approve, "tool", side_effect=lambda name: name), \
+            mock.patch.object(bot, "tool", side_effect=lambda name: name), \
             pytest.raises(approve.ApproveError, match="configured human reviewer alex"):
         approve.approve(run=tools, out=io.StringIO())
     assert not tools.commands("real-gh", "pr")
@@ -448,7 +448,7 @@ def test_item_discovery_can_outlast_one_provider_request(
 
     monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
     monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
-    monkeypatch.setattr(approve, "tool", lambda name: name)
+    monkeypatch.setattr(bot, "tool", lambda name: name)
     assert approve.approve(
         run=slow_item_lookup, out=io.StringIO(), session_handle="codex:thread"
     ) == 0
@@ -473,8 +473,8 @@ def test_discovery_timeout_stops_before_approval_without_exposing_subprocess_out
 
     monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
     monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
-    monkeypatch.setattr(approve, "tool", lambda name: name)
-    with pytest.raises(approve.ApproveError, match="tj item.*timed out") as failure:
+    monkeypatch.setattr(bot, "tool", lambda name: name)
+    with pytest.raises(bot.IdentityError, match="tj item.*timed out") as failure:
         approve.approve(
             run=expired_lookup, out=io.StringIO(), session_handle="codex:thread"
         )
@@ -505,7 +505,7 @@ def test_failed_reviewer_lookup_reports_the_lookup_failure_without_approving(
 
     monkeypatch.setattr(bot, "identity_config", lambda: CONFIGURATION)
     monkeypatch.setattr(bot, "real_gh", lambda: "real-gh")
-    monkeypatch.setattr(approve, "tool", lambda name: name)
+    monkeypatch.setattr(bot, "tool", lambda name: name)
     with pytest.raises(approve.ApproveError, match="could not verify the configured human reviewer alex") as failure:
         approve.approve(run=failed_lookup, out=io.StringIO(), session_handle="codex:thread")
     assert expected_detail in str(failure.value)
@@ -531,7 +531,7 @@ def test_descendant_discovery_walks_unlinked_ancestors_and_ignores_unrelated_cyc
         "codex:orphan": session("codex:orphan", 13, parent="codex:missing"),
     }, launches=[launch("unbound-child", parent="codex:middle", item=10),
                  launch("unrelated", parent="codex:stranger", item=14)])
-    with mock.patch.object(approve, "tool", return_value="agent-store"):
+    with mock.patch.object(bot, "tool", return_value="agent-store"):
         found = approve.descendant_items("codex:root", tools)
     assert set(found) == {ref(10)["ref"], ref(11)["ref"]}
     queries = tools.commands("agent-store", "show")
@@ -567,7 +567,7 @@ def test_descendant_discovery_uses_the_installed_agent_store_contract(
     command("launch", "--launch-id", "unbound-descendant", "--host", "codex", "--title", "child",
             "--cwd", str(tmp_path), "--wrapper-pid", str(os.getpid()), "--wrapper-started-at", "2026-11-10T00:00:00Z",
             "--parent", "claude:middle", "--item", ref(10)["ref"])
-    with mock.patch.object(approve, "tool", return_value=executable):
+    with mock.patch.object(bot, "tool", return_value=executable):
         found = approve.descendant_items("codex:root", subprocess.run)
     assert set(found) == {ref(10)["ref"], ref(11)["ref"]}
 

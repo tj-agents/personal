@@ -34,8 +34,13 @@ expects to be asked to the section that answers it.
 
 ## Write answers as beats
 
-Each rehearsed answer is a `Beat | Say` table (situation, problem, action, Tommy's part, result) sized
-for 60 to 90 seconds, with the numbers to quote. Never a paragraph to memorise.
+Each rehearsed answer is a `Beat | Say` table or nested bullets (situation, problem, action, Tommy's
+part, result) sized for 60 to 90 seconds, with the numbers to quote. Never a paragraph to memorise.
+
+## Explain every term
+
+Follow each answer with a collapsed `📖 Terms used above` block giving each term a plain definition and
+a checked link. Cite work only with a link to its full story.
 
 ## Self-test the follow-ups
 
