@@ -616,7 +616,8 @@ def normalized_arguments(arguments: list[str]) -> list[str]:
 
 def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
     arguments = normalized_arguments(arguments)
-    owners, positional = [], []
+    owners: list[str] = []
+    positional: list[str] = []
     hostname = None
     command = tuple(arguments[:1] if arguments[:1] == ["api"] else arguments[:2])
     payload_flags = (*PAYLOAD_FLAGS, *COMMAND_PAYLOAD_FLAGS.get(command, ()))
