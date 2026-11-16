@@ -4,17 +4,11 @@
   "source_roots": [
     ".agents/personal/policy/rules",
     ".agents/personal/utility/use",
-    ".agents/personal/utility/bot-identity",
-    ".agents/personal/utility/approve",
     ".agents/personal/utility/create/work-item",
     ".agents/personal/utility/work-item",
     ".agents/personal/workflow/address/work-item"
   ],
   "requires": {
-    "setup": {
-      "script": ".agents/personal/utility/bot-identity/scripts/bot_identity.py",
-      "converge": true
-    },
     "permissions": {
       "claude_allow": [],
       "codex_prefix_rules": []

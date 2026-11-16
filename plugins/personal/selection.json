@@ -9,8 +9,6 @@
   "profiles": {
     "core": [
       "address-work-item",
-      "approve",
-      "bot-identity",
       "create-work-item",
       "revision",
       "rules",
@@ -30,37 +28,6 @@
       "requires": [
         "tj-item",
         "gh"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "approve",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "machines configured through personal:bot-identity"
-      ],
-      "requires": [
-        "python",
-        "gh",
-        "agent-store",
-        "tj-item"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
-      "name": "bot-identity",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "explicitly adopted personal projects using GitHub App authorship"
-      ],
-      "requires": [
-        "python"
       ],
       "provenance": [
         "house"
