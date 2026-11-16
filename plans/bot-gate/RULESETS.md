@@ -92,5 +92,6 @@ public. Until then nothing on GitHub stops an agent merging there, and `merge_po
    `merge_policy.py apply --repo OWNER/NAME --policy <file> --dry-run`, then without `--dry-run`.
 5. Verify with `merge_policy.py check --repo OWNER/NAME --policy <file>`. On one repository, check that a bot
    PR cannot merge without Tommy's approval and that a bot approval of a Tommy push does not count.
-6. Re-run `bot_identity.py setup` and restart Claude and Codex, so agents push as the bot. The rulesets only
-   gate merges if Tommy's own credentials are out of agent reach; see the bot-identity skill's limits.
+6. Give the repository `app` access and enrol the App's key once per machine through the
+   [GitHub access gate](https://github.com/tj-agents/github#github-access-gate), so agents push as the bot.
+   The rulesets only gate merges if Tommy's own credentials are out of agent reach; see the gate's limits.
