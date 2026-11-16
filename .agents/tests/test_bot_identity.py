@@ -118,7 +118,13 @@ class IdentityTests(Sandbox):
                  ("repo", "delete", "alex/notes", "--yes"): ["alex"],
                  ("repo", "list", "sample-org", "--limit", "10"): ["sample-org"],
                  ("repo", "ls", "--json", "name", "sample-org"): ["sample-org"],
+                 ("repo", "list", "-L", "5", "-l", "python", "sample-org"): ["sample-org"],
+                 ("repo", "list", "--visibility", "private", "sample-org"): ["sample-org"],
                  ("repo", "list", "--limit", "10"): [],
+                 ("secret", "list", "--org", "sample-org"): ["sample-org"],
+                 ("variable", "list", "-o", "sample-org"): ["sample-org"],
+                 ("ruleset", "list", "--org=sample-org"): ["sample-org"],
+                 ("search", "repos", "--owner", "alex,sample-org"): ["alex", "sample-org"],
                  ("project", "list", "--owner", "sample-org"): ["sample-org"],
                  ("api", "graphql"): []}
         for arguments, owners in cases.items():
@@ -344,9 +350,16 @@ class GhWrapperTests(Sandbox):
         self.installation_token.assert_not_called()
 
     def test_commands_without_an_account_stay_unauthenticated(self):
-        environment = self.environment("api", "graphql", "-f", "query={viewer{login}}")
-        self.assertEqual(bot.UNAUTHENTICATED, environment["GH_TOKEN"])
+        self.refused("api", "graphql", "-f", "query={viewer{login}}")
         self.installed.assert_not_called()
+
+    def test_org_flags_route_and_refuse_unconfigured_accounts(self):
+        for group in ("secret", "variable", "ruleset"):
+            for flag in ("--org", "-o"):
+                with self.subTest(group=group, flag=flag):
+                    self.assertEqual("ghs_sample-org", self.environment(group, "list", flag, "sample-org")["GH_TOKEN"])
+                    self.gh.calls.clear()
+                    self.refused(group, "list", flag, "outside-org", checkout="sample-org")
 
     def test_gh_auth_never_reaches_the_humans_credentials(self):
         for arguments in (("auth", "token"), ("auth", "token", "-u", "alex"), ("auth", "git-credential", "get"),
@@ -414,8 +427,7 @@ class ApprovalHandoffTests(GhWrapperTests):
                                                 (("pr", "create", "--dry-run"), "sample-org", 0),
                                                 (("pr", "ready", "--undo"), "sample-org", 0),
                                                 (("pr", "create"), "sample-org", 1),
-                                                (("pr", "ready", "4"), "sample-org", 1),
-                                                (("pr", "create"), None, 0)):
+                                                (("pr", "ready", "4"), "sample-org", 1)):
             with self.subTest(arguments=arguments, checkout=checkout, returncode=returncode):
                 self.gh.calls.clear()
                 _, err = self.hand_over(*arguments, checkout=checkout, stdout=self.CORE, returncode=returncode)
