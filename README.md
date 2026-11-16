@@ -1,8 +1,8 @@
 # personal
 
-Personal means personal projects only. A specific profile's source repository and every worktree of it
+Personal means personal projects only. An organization plugin's source repository and every worktree of it
 are work scope: never select or inject this profile there. See
-[Generic and specific profiles](https://github.com/tj-agents/docs/blob/main/PLUGINS.md#generic-and-specific-profiles).
+[Plugin kinds](https://github.com/tj-agents/docs/blob/main/PLUGINS.md#plugin-kinds).
 GitHub ownership, a publisher account or a checkout location does not establish personal scope; read the
 target project's README.md and AGENTS.md before adoption.
 
