@@ -16,11 +16,12 @@ import io
 import json
 import os
 from pathlib import Path
-import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.request
 import urllib.error
@@ -46,6 +47,8 @@ API_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([A-Za-z0-9-]+)")
 REPOSITORY = re.compile(r"([A-Za-z0-9-]+)/[\w.-]+")
 PULL_REQUEST = re.compile(r"https://github\.com/([A-Za-z0-9-]+)/[\w.-]+/pull/\d+")
 UNREVIEWABLE_CREATE = ("-d", "--draft", "-w", "--web", "--dry-run")
+NATIVE_SESSIONS = (("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID"))
+ITEM_TIMEOUT_SECONDS = 120
 PR_VALUE_FLAGS = ("-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "--base", "-H", "--head", "-a",
                   "--assignee", "-l", "--label", "-m", "--milestone", "-p", "--project", "-r", "--reviewer", "-R",
                   "--repo", "-T", "--template", "--recover")
@@ -84,9 +87,13 @@ COMMAND_PAYLOAD_FLAGS = {
     ("repo", "edit"): ("-d", "-h"),
     ("repo", "view"): ("-q", "-t"),
 }
-AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+AGENT_ONLY = (AGENT_FLAG, "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 MANAGED = (AGENT_FLAG, "GH_TOKEN", "GH_CONFIG_DIR", "PATH", "Path")
 CLEARED_HELPERS = ("https://*.github.com", "http://github.com", "http://*.github.com")
+_GIT_SOURCES_BEGIN = b"# >>> personal:bot-identity sources >>>"
+_GIT_SOURCES_END = b"# <<< personal:bot-identity sources <<<"
+_GIT_POLICY_BEGIN = b"# >>> personal:bot-identity credentials >>>"
+_GIT_POLICY_END = b"# <<< personal:bot-identity credentials <<<"
 AGENT_DENY = (
     "mcp__github__merge_pull_request",
     "mcp__github__create_pull_request",
@@ -117,6 +124,10 @@ class GitHubError(IdentityError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
+
+
+class HandoverError(IdentityError):
+    pass
 
 
 def store() -> Path:
@@ -742,13 +753,127 @@ def ready_selector(arguments: list[str]) -> list[str]:
     return selector
 
 
-def hand_over(output: str) -> None:
+def tool(name: str) -> str:
+    found = shutil.which(name) or shutil.which(name, path=str(tj_bin_directory()))
+    if not found:
+        raise IdentityError(f"{name} is not on PATH or in {tj_bin_directory()}")
+    return found
+
+
+def captured(
+    run, command: list[str], environment: dict[str, str] | None = None,
+    *, timeout_seconds: int = TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess:
+    try:
+        return run(command, env=environment, check=False, capture_output=True, encoding="utf-8", errors="replace",
+                   timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        label = " ".join([Path(command[0]).stem, *command[1:2]])
+        raise IdentityError(f"{label} timed out after {timeout_seconds} seconds") from error
+
+
+def reason(result: subprocess.CompletedProcess) -> str:
+    lines = [line for line in (result.stderr or result.stdout or "").splitlines() if line.strip()]
+    return lines[-1].strip() if lines else f"exited {result.returncode}"
+
+
+def agent_store(arguments: list[str], run) -> dict | None:
+    result = captured(run, [tool("agent-store"), *arguments])
+    try:
+        document = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise IdentityError(f"agent-store {arguments[0]} failed: {reason(result)}") from error
+    if document.get("ok"):
+        return document["data"]
+    failure = document.get("error") or {}
+    if failure.get("code") == "not-found":
+        return None
+    raise IdentityError(f"agent-store {arguments[0]} failed: {failure.get('message') or reason(result)}")
+
+
+def linked(session: dict) -> list[str]:
+    return [link["item"]["ref"] for link in session.get("links") or []]
+
+
+def current_session(
+    run, session_handle: str | None = None
+) -> tuple[str | None, list[str]] | None:
+    if session_handle is not None:
+        data = agent_store(["show", session_handle], run)
+        if data is None:
+            raise IdentityError(
+                f"unknown agent session {session_handle}; nothing approved"
+            )
+        session = data["session"]
+        return session["session"], linked(session)
+    if launch_id := os.environ.get("TJ_RUN_LAUNCH_ID"):
+        data = agent_store(["show", "--launch-id", launch_id], run)
+        if data is None:
+            return None
+        launch, session = data["launch"], data.get("session")
+        items = [launch["item"]["ref"]] if launch.get("item") else []
+        return launch.get("session"), items + (linked(session) if session else [])
+    for host, variable in NATIVE_SESSIONS:
+        if native := os.environ.get(variable):
+            data = agent_store(["show", f"{host}:{native}"], run)
+            return None if data is None else (data["session"]["session"], linked(data["session"]))
+    return None
+
+
+def link_session_item(url: str | None, run=subprocess.run) -> str:
+    if url is None:
+        raise HandoverError("gh did not report the pull request URL")
+    session = current_session(run)
+    if session is None:
+        raise HandoverError("no agent-store session is registered for this agent")
+    items = list(dict.fromkeys(session[1]))
+    if not items:
+        raise HandoverError("this session has no linked work item")
+    if len(items) > 1:
+        raise HandoverError(f"this session links several work items ({', '.join(items)}), so the PR was not linked")
+    result = captured(run, [tool("tj"), "item", "--profile", "github", "link", items[0], url],
+                      timeout_seconds=ITEM_TIMEOUT_SECONDS)
+    if result.returncode:
+        raise HandoverError(f"tj item link {items[0]} failed: {reason(result)}")
+    return items[0]
+
+
+def session_label() -> str:
+    return next((f"{host}:{os.environ[variable]}" for host, variable in NATIVE_SESSIONS if os.environ.get(variable)),
+                "<session>")
+
+
+def hand_over(output: str, environment: dict[str, str], run=subprocess.run) -> None:
     match = PULL_REQUEST.search(output)
     url = match.group(0) if match and match.group(1).lower() in required_owners() else None
-    subject, link = (url, "that link") if url else ("this PR", "its link")
-    print(f"bot_identity: REQUIRED IN YOUR REPLY: {subject} awaits {identity_config()['reviewer']}'s approval. Put the line `! tj approve` on "
-          f"the human's clipboard with cli:clip, and make your reply include {link} and that line; never run it "
-          f"yourself.", file=sys.stderr)
+    decision = None
+    if url:
+        try:
+            result = captured(run, [real_gh(), "pr", "view", url, "--json", "reviewDecision"], environment)
+            if result.returncode:
+                raise IdentityError(reason(result))
+            decision = json.loads(result.stdout)["reviewDecision"]
+            if decision not in (None, "", "REVIEW_REQUIRED", "APPROVED", "CHANGES_REQUESTED"):
+                raise IdentityError("GitHub returned an unknown review decision")
+        except (IdentityError, ValueError, KeyError, TypeError) as error:
+            print(f"bot_identity: could not determine whether {url} requires approval: {error}", file=sys.stderr)
+    try:
+        item = link_session_item(url, run)
+    except IdentityError as error:
+        if decision == "REVIEW_REQUIRED":
+            print(f"bot_identity: REQUIRED BEFORE HANDOVER: {url or 'this PR'} is not reachable by `tj approve`: "
+                  f"{error}. Do not give the human `! tj approve` yet: link this session to its work item with "
+                  f"`agent-store link --session {session_label()} --item <ref>` and the PR with "
+                  f"`tj item link <ref> {url or '<pr-url>'}`, then hand it over.", file=sys.stderr)
+        else:
+            print(f"bot_identity: could not link {url or 'this PR'} to the session's work item: {error}", file=sys.stderr)
+    else:
+        print(f"bot_identity: linked {url} to {item}.", file=sys.stderr)
+        if decision == "REVIEW_REQUIRED":
+            print(f"bot_identity: REQUIRED IN YOUR REPLY: {url} awaits "
+                  f"{identity_config()['reviewer']}'s approval. Put the line `! tj approve` on the human's clipboard "
+                  f"with cli:clip, and make your reply include that link and that line; never run it yourself.",
+                  file=sys.stderr)
 
 
 def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkout) -> int:
@@ -770,7 +895,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
         output = "" if result.returncode else run(view, env=environment, check=False, stdout=subprocess.PIPE,
                                                     encoding="utf-8", errors="replace").stdout or ""
     if result.returncode == 0:
-        hand_over(output)
+        hand_over(output, environment, run)
     return result.returncode
 
 
@@ -804,7 +929,114 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
 
 
 def helper_command(script: Path) -> str:
-    return f"!\"{Path(sys.executable).as_posix()}\" -B \"{script.as_posix()}\" credential"
+    return f"!{shlex.quote(Path(sys.executable).resolve().as_posix())} -B {shlex.quote(script.resolve().as_posix())} credential"
+
+
+def _agent_git_config() -> Path:
+    return store() / "gitconfig"
+
+
+def _git_config_blocks(content: bytes) -> re.Match[bytes]:
+    markers = (_GIT_SOURCES_BEGIN, _GIT_SOURCES_END, _GIT_POLICY_BEGIN, _GIT_POLICY_END)
+    pattern = (rb"(?P<prefix>.*?)^" + re.escape(_GIT_SOURCES_BEGIN) + rb"\r?\n(?P<sources>.*?)^" +
+               re.escape(_GIT_SOURCES_END) + rb"\r?\n(?P<middle>.*?)^" + re.escape(_GIT_POLICY_BEGIN) +
+               rb"\r?\n(?P<policy>.*?)^" + re.escape(_GIT_POLICY_END) + rb"(?:\r?\n|$)(?P<suffix>.*)")
+    match = re.fullmatch(pattern, content, re.MULTILINE | re.DOTALL)
+    if any(content.count(marker) != 1 for marker in markers) or match is None:
+        raise IdentityError("the agent Git configuration needs valid Personal ownership markers; recreate it with "
+                            "setup from the original Git environment")
+    return match
+
+
+def _git_config_query(content: bytes, arguments: list[str]) -> subprocess.CompletedProcess[bytes]:
+    environment = {key: value for key, value in os.environ.items()
+                   if key != "GIT_CONFIG" and not key.startswith("GIT_CONFIG_")}
+    result = subprocess.run(["git", "config", "--file", "-", "--no-includes", "--null", *arguments],
+                            input=content, env=environment, capture_output=True,
+                            timeout=TIMEOUT_SECONDS, check=False, creationflags=NO_WINDOW)
+    if result.returncode not in (0, 1):
+        raise IdentityError("the agent Git configuration is invalid; run setup")
+    return result
+
+
+def _git_config_sources() -> list[Path]:
+    managed = _agent_git_config()
+    if managed.exists() or is_reparse(managed):
+        safe_existing_file(managed)
+        block = _git_config_blocks(managed.read_bytes()).group("sources")
+        result = _git_config_query(block, ["--get-all", "include.path"])
+        sources = [Path(value.decode("utf-8")) for value in result.stdout.split(b"\0") if value]
+        for source in sources:
+            if not source.is_absolute() or os.path.normcase(str(source)) == os.path.normcase(str(managed.absolute())):
+                raise IdentityError("the agent Git source includes must be absolute external paths")
+        return sources
+    configured = os.environ.get("GIT_CONFIG_GLOBAL")
+    if configured is None:
+        result = _git_config_query(b"[paths]\n\thome = ~/\n", ["--path", "--get", "paths.home"])
+        home = Path(result.stdout.rstrip(b"\0").decode("utf-8"))
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+        return [(xdg / "git" / "config").absolute(), home / ".gitconfig"]
+    if not configured:
+        return []
+    path = Path(configured).expanduser().absolute()
+    if os.path.normcase(str(path)) == os.path.normcase(str(managed.absolute())):
+        raise IdentityError("the agent Git configuration is missing; run setup with the original GIT_CONFIG_GLOBAL, "
+                            "or unset it if you originally used Git's default global files")
+    return [path]
+
+
+def _git_config_context(content: bytes, section: bytes) -> bytes:
+    for line in content.splitlines():
+        line = line.lstrip()
+        if not line or line.startswith((b"#", b";")):
+            continue
+        if not line.startswith(b"["):
+            return section + b"\n" + content
+        break
+    return content
+
+
+def _git_config_content(script: Path) -> bytes:
+    sources = _git_config_sources()
+    include_lines = []
+    for path in sources:
+        include_lines += ["[include]", f"\tpath = {json.dumps(path.as_posix(), ensure_ascii=False)}"]
+    source_block = _GIT_SOURCES_BEGIN + b"\n"
+    if include_lines:
+        source_block += ("\n".join(include_lines) + "\n").encode("utf-8")
+    source_block += _GIT_SOURCES_END + b"\n"
+    lines = ['[credential "https://github.com"]', "\tuseHttpPath = true", "\thelper =",
+             f"\thelper = {json.dumps(helper_command(script), ensure_ascii=False)}"]
+    for url in CLEARED_HELPERS:
+        lines += [f'[credential "{url}"]', "\thelper ="]
+    policy_block = _GIT_POLICY_BEGIN + b"\n" + ("\n".join(lines) + "\n").encode("utf-8") + _GIT_POLICY_END + b"\n"
+    outside = b""
+    if _agent_git_config().is_file():
+        blocks = _git_config_blocks(_agent_git_config().read_bytes())
+        middle = blocks.group("middle")
+        if sources:
+            middle = _git_config_context(middle, b"[include]")
+        suffix = _git_config_context(blocks.group("suffix"), f'[credential "{CLEARED_HELPERS[-1]}"]'.encode())
+        outside = blocks.group("prefix") + middle + suffix
+        if outside and not outside.endswith(b"\n"):
+            outside += b"\n"
+    return source_block + outside + policy_block
+
+
+def _verify_git_config(script: Path) -> None:
+    path = _agent_git_config()
+    if not path.is_file() or is_reparse(path):
+        raise IdentityError("the agent Git configuration is stale; run setup")
+    content = path.read_bytes()
+    _git_config_query(content, ["--list"])
+    current = _git_config_blocks(content)
+    expected = _git_config_blocks(_git_config_content(script))
+    if any(current.group(name) != expected.group(name) for name in ("sources", "policy")):
+        raise IdentityError("the agent Git configuration is stale; run setup")
+    suffix = f'[credential "{CLEARED_HELPERS[-1]}"]\n'.encode() + current.group("suffix")
+    later_policy = _git_config_query(suffix, ["--name-only", "--get-regexp", r"^(credential|include|includeif)\."])
+    if later_policy.returncode == 0:
+        raise IdentityError("the agent Git credential policy must follow other credentials and includes; run setup")
 
 
 def agent_path(path: str) -> str:
@@ -819,13 +1051,13 @@ def agent_path(path: str) -> str:
     return os.pathsep.join(entries)
 
 
-def agent_environment(script: Path, path: str) -> dict[str, str]:
+def agent_environment(path: str) -> dict[str, str]:
     entries = [("credential.https://github.com.useHttpPath", "true"),
                ("credential.https://github.com.helper", ""),
-               ("credential.https://github.com.helper", helper_command(script)),
+               ("credential.https://github.com.helper", helper_command(installed_script())),
                *((f"credential.{url}.helper", "") for url in CLEARED_HELPERS)]
     environment = {AGENT_FLAG: "1", "GH_TOKEN": UNAUTHENTICATED, "GH_CONFIG_DIR": str(gh_config_directory()),
-                   "GIT_CONFIG_COUNT": str(len(entries))}
+                   "GIT_CONFIG_GLOBAL": str(_agent_git_config()), "GIT_CONFIG_COUNT": str(len(entries))}
     for index, (key, value) in enumerate(entries):
         environment[f"GIT_CONFIG_KEY_{index}"] = key
         environment[f"GIT_CONFIG_VALUE_{index}"] = value
@@ -885,7 +1117,7 @@ def script_launcher() -> bytes:
     wheels = sorted((Path(ensurepip.__file__).parent / "_bundled").glob("pip-*.whl"))
     if not wheels:
         raise IdentityError("this Python has no bundled pip wheel, whose script launcher becomes gh.exe")
-    name = "t64-arm.exe" if platform.machine().lower() in ("arm64", "aarch64") else "t64.exe"
+    name = "t64-arm.exe" if sysconfig.get_platform() == "win-arm64" else "t64.exe"
     with zipfile.ZipFile(wheels[-1]) as wheel:
         return wheel.read(f"pip/_vendor/distlib/{name}")
 
@@ -1037,7 +1269,8 @@ def verify_host_setup() -> None:
                            (approve, expected_approve)):
         if not path.is_file() or is_reparse(path) or path.read_bytes() != expected:
             raise IdentityError(f"`tj approve` is not installed at {path}; run setup")
-    environment = agent_environment(script, os.environ.get("PATH", ""))
+    _verify_git_config(script)
+    environment = agent_environment(os.environ.get("PATH", ""))
     claude = claude_user_settings()
     codex = codex_user_config()
     try:
@@ -1149,10 +1382,12 @@ def setup(check: bool = False, onboard_key: bool = False) -> None:
         verify_host_setup()
         print("bot_identity: ready")
         return
-    script = install_shims(Path(__file__).resolve())
+    git_config = _git_config_content(installed_script())
+    install_shims(Path(__file__).resolve())
     launcher = install_approve()
     gh_config_directory().mkdir(parents=True, exist_ok=True)
-    environment = agent_environment(script, os.environ.get("PATH", ""))
+    write_changed(_agent_git_config(), git_config)
+    environment = agent_environment(os.environ.get("PATH", ""))
     update_claude(claude_user_settings(), environment)
     update_codex(codex_user_config(), environment)
     if remove_user_path(shim_directory()):
