@@ -81,6 +81,7 @@ COMMAND_PAYLOAD_FLAGS = {
     ("issue", "view"): ("-q", "-t"),
     ("issue", "list"): ("-a", "-A", "-l", "-L", "-S", "-s", "-m", "-q", "-t"),
     ("repo", "create"): ("-d", "-g", "-h", "-l", "-r", "-s", "-t", "-p", "--remote"),
+    ("repo", "list"): ("-l", "-L", "--language", "--topic", "--visibility"),
     ("repo", "clone"): ("-u", "--upstream-remote-name"),
     ("repo", "fork"): ("--remote-name", "--org", "--fork-name"),
     ("repo", "edit"): ("-d", "-h"),
@@ -615,7 +616,8 @@ def normalized_arguments(arguments: list[str]) -> list[str]:
 
 def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
     arguments = normalized_arguments(arguments)
-    owners, positional = [], []
+    owners: list[str] = []
+    positional: list[str] = []
     hostname = None
     command = tuple(arguments[:1] if arguments[:1] == ["api"] else arguments[:2])
     payload_flags = (*PAYLOAD_FLAGS, *COMMAND_PAYLOAD_FLAGS.get(command, ()))
@@ -625,7 +627,7 @@ def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
         if flag == "--hostname":
             hostname = inline if equals else next(remaining, "")
             continue
-        elif flag in OWNER_FLAGS:
+        elif flag in OWNER_FLAGS or (arguments[:1] in (["secret"], ["variable"], ["ruleset"], ["rs"]) and flag in ("-o", "--org")):
             value = inline if equals else next(remaining, "")
         elif argument.startswith("-R") and len(argument) > 2:
             value = argument[2:]
@@ -639,7 +641,7 @@ def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
             continue
         if value:
             match = GITHUB_URL.search(value)
-            owners.append(match.group(1) if match else value.split("/")[0])
+            owners.extend([match.group(1)] if match else [owner.split("/")[0] for owner in value.split(",")])
     if arguments[:1] == ["api"]:
         targets = positional[1:2]
         owners += [match.group(1) for argument in targets for match in API_PATH.finditer(argument)]
@@ -652,6 +654,8 @@ def argument_context(arguments: list[str]) -> tuple[list[str], str | None]:
     owners += [match.group(1) for argument in targets for match in GITHUB_URL.finditer(argument)]
     if arguments[:1] == ["repo"]:
         owners += [argument.split("/")[0] for argument in targets if REPOSITORY.fullmatch(argument)]
+        if arguments[1:2] == ["list"]:
+            owners += [argument for argument in targets if re.fullmatch(r"[A-Za-z0-9-]+", argument)]
     return owners, hostname
 
 
@@ -697,7 +701,9 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
         raise IdentityError("one GitHub command must target a single account")
     environment = dict(os.environ)
     if not owners:
-        return environment
+        if arguments[:1] == ["auth"] or not arguments or any(arg in ("--help", "-h", "--version") for arg in arguments):
+            return environment
+        raise IdentityError("cannot determine the GitHub account; specify --repo OWNER/REPO or an owner for this command")
     protected = [owner for owner in owners if owner.lower() in required_owners()]
     if not protected:
         if arguments[:1] == ["auth"]:
