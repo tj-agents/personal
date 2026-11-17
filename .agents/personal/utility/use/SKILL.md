@@ -1,6 +1,6 @@
 ---
 name: use
-description: Use when explicitly adopting or checking personal policy in a repository, including its native instructions and merge declaration.
+description: Use when explicitly adopting or checking personal policy in a repository, including its native instructions.
 kind: utility
 domain: personal
 profile: core
@@ -29,10 +29,9 @@ refuses retained compatibility declarations and broken block markers. The policy
 generated native blocks are checked, never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
-Ask Tommy once whether agents may merge without his approval once checks pass, and add
-`--agents-may-merge true|false`. Adoption writes `.github/merge-policy.json`, which
-the GitHub Actions merge-policy utility enforces, or changes only that flag; without the answer it leaves the
-policy undeclared and says so.
+Adoption does not write `.github/merge-policy.json`. The owner's default in its `<owner>/.github` repository
+applies; a repository that needs a different policy commits its own file, as the GitHub Actions
+merge-policy utility describes.
 
 
 ```powershell

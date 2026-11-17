@@ -8,8 +8,6 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SKILLS = {
     "use",
     "address-work-item",
-    "approve",
-    "bot-identity",
     "create-work-item",
     "revision",
     "rules",
@@ -23,7 +21,6 @@ EXTERNAL_SKILLS = {
         "feature",
     },
     "agent": {"plugins"},
-    "cli": {"clip"},
     "workflow": {"run"},
     "docs": {"layout"},
 }
@@ -64,7 +61,7 @@ class PersonalPackagingTests(unittest.TestCase):
         self,
     ) -> None:
         for path in (ROOT / "plugins/personal").rglob("*"):
-            if path.is_file() and "bot-identity" not in path.parts:
+            if path.is_file():
                 self.assertNotIn("credential", path.parts, str(path))
                 self.assertNotEqual("credential", path.stem.casefold(), str(path))
                 text = path.read_text(encoding="utf-8").casefold()

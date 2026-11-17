@@ -1,6 +1,6 @@
 ---
 name: use
-description: Use when explicitly adopting or checking personal policy in a repository, including its native instructions and merge declaration.
+description: Use when explicitly adopting or checking personal policy in a repository, including its native instructions.
 kind: utility
 domain: personal
 profile: core
