@@ -1,8 +1,8 @@
 # personal
 
-Personal means personal projects only. A specific profile's source repository and every worktree of it
+Personal means personal projects only. An organization plugin's source repository and every worktree of it
 are work scope: never select or inject this profile there. See
-[Generic and specific profiles](https://github.com/tj-agents/docs/blob/main/PLUGINS.md#generic-and-specific-profiles).
+[Plugin kinds](https://github.com/tj-agents/docs/blob/main/PLUGINS.md#plugin-kinds).
 GitHub ownership, a publisher account or a checkout location does not establish personal scope; read the
 target project's README.md and AGENTS.md before adoption.
 
@@ -14,8 +14,7 @@ Published as plugin `tj-agents/personal` from the `tj-agents` marketplace.
 
 - Policies: `personal:rules`.
 - Conventions: `personal:revision`.
-- Utilities: `personal:use`, `personal:work-item`, `personal:create-work-item`, `personal:bot-identity`,
-  `personal:approve`.
+- Utilities: `personal:use`, `personal:work-item`, `personal:create-work-item`.
 - Workflow: `personal:address-work-item`.
 
 ## Adopt a personal project
@@ -56,32 +55,26 @@ existing item after reconciling its identity and repair owner; Workflow owns the
 mapped Engineering operation owns bounded software delivery. The address helper records factual updates and
 closure evidence. A missing or different provider blocks the operation without adopting another queue.
 
-## Agent GitHub identity
+## GitHub App access
 
-`personal:bot-identity` configures a machine for the user's own GitHub App and human reviewer. Its
-onboarding page supports creating a new App or enrolling an existing App on another computer. The
-plugin contains no preset personal App or account roster. Accepted configuration and keys are retained
-through partial setup, and repeat setup reuses valid enrollment. The plugin declares this setup step
-for Agent's installer and refresh. See the
-[enrollment procedure](.agents/personal/utility/bot-identity/SKILL.md) for commands, credential handling,
-required permissions and recovery.
+A personal project may let its agents act as a GitHub App bot. The bot is optional, and Personal ships
+no GitHub access or approval tooling of its own: the [GitHub](https://github.com/tj-agents/github)
+plugin's access gate supplies `app` access, and its `tj approve` is how the human approves the bot's
+pull requests.
 
-The current integration writes machine-specific identity settings to the user's Claude and Codex
-configuration. It is not checkout-local; agent sessions using those settings share that environment.
-Repository adoption remains the source of Personal scope, and the wrapper only authorizes configured
-GitHub accounts. Human terminals retain their native login.
+The bot is switched on per GitHub owner by committing this file as `.agents/github-access.json` in the
+owner's `.github` repository:
 
-## Approving the bot's pull requests
+```json
+{"schema_version": 1, "method": "app", "app": "<github-app-slug>"}
+```
 
-[personal:approve](.agents/personal/utility/approve/SKILL.md) (`! tj approve`) is the user's human
-approval command. It uses the configured reviewer's native login, verifies that identity, and approves
-only the configured bot's eligible PRs in the current session's linked work. It never performs an
-account-wide approval sweep or runs as the bot. An agent gives the user the command and PR links;
-the user executes it.
+A repository overrides its owner's choice by committing the same file itself. For example,
+`{"schema_version": 1, "method": "human"}` keeps one repository on the human's own GitHub login. With
+neither file, agents use the human's login. Work and other non-personal owners never declare the bot.
 
-When the human shell does not inherit the conversation's session variables, the agent supplies
-`tj approve --session <host:id>` using its registered session and verified linked work. This needs
-no machine-specific helper or session environment setup.
+Machine setup, App key enrolment and `tj approve` are documented in the
+[GitHub README](https://github.com/tj-agents/github#github-access-gate).
 
 ## Authoring and verification
 
@@ -91,15 +84,3 @@ pwsh .agents/sync-generated.ps1 -Check
 ```
 
 The layout, the vendored generator and CI come from [Template](https://github.com/tj-agents/template).
-
-Run the onboarding browser acceptance check with an installed Chromium executable:
-
-```sh
-uv run python .agents/tests/onboarding_browser.py --browser /usr/bin/chromium --artifacts /var/tmp/personal-onboarding
-```
-
-Use `--headed` to observe the browser in the desktop session. The runner exercises the real local page
-with synthetic GitHub responses and blocks external requests. Each rendered transition has a bounded
-wait; a failure saves a screenshot, rendered state, expected step and browser errors in the artifact
-directory. This fixture check complements live enrollment; it does not prove GitHub authentication or
-installation readiness. Playwright is a development dependency; the setup runtime uses the standard library.
