@@ -1,7 +1,7 @@
 ---
 name: use
 description: Make a repository one of Tommy's personal projects - select personal@tj-agents, generate its native policy instructions and declare who may merge - or check that it still conforms. Use when scaffolding or setting up a personal project, or when Tommy says to use personal in a repository.
-kind: utility
+kind: operation
 domain: personal
 profile: core
 applicability: explicitly adopted personal projects
@@ -37,7 +37,7 @@ policy undeclared and says so.
 
 ```powershell
 # Windows, from a checkout of tj-agents/personal, for an explicitly personal repository:
-python -B .agents/personal/utility/use/scripts/use.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/agent/.agents/agent/utility/plugins/scripts/adopt_plugins.py
+python -B .agents/personal/skills/use/scripts/use.py --root C:/repos/my-app --mode preview --selection-tool C:/repos/agent/.agents/agent/skills/plugins/scripts/adopt_plugins.py
 # Review the preview, then use --mode write; CI uses --mode check.
 # Linux/macOS use python3 and their checkout paths with the same arguments.
 ```

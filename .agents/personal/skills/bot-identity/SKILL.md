@@ -1,7 +1,7 @@
 ---
 name: bot-identity
 description: Make agents push, open PRs and call GitHub as Tommy's GitHub App in his personal accounts, so only Tommy can approve and merge. Use when giving Tommy PRs to approve, setting up a machine for agents, when a push or gh call from an agent fails to authenticate, or when changing which accounts the App covers.
-kind: utility
+kind: operation
 domain: personal
 profile: core
 applicability: Tommy's machines; GitHub accounts where the App is installed
@@ -14,7 +14,7 @@ provenance: house
 Agents act on the pinned existing `tomjseery-bot` GitHub App (ID `5397553`) recorded in
 `~/.agents-state/github-app/tomjseery-bot.json`, with its private key beside it, in tomjseery, tj-agents and
 Concertable. GitHub never lets
-an author approve its own PR. [github-actions:merge-policy](https://github.com/tj-agents/github-actions/blob/main/.agents/github-actions/utility/merge-policy/SKILL.md)
+an author approve its own PR. [github-actions:merge-policy](https://github.com/tj-agents/github-actions/blob/main/.agents/github-actions/skills/merge-policy/SKILL.md)
 
 Tommy runs setup once per machine because it edits his host settings. A machine without a valid enrollment fails
 closed with an exact onboarding action; normal setup and checks never open a browser. With Tommy present, use the
