@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run agent GitHub access as the configured GitHub App in personal repositories (Python 3.12+, needs openssl).
 
+Accounts the App covers use only the App; every other account uses the human's own native Git and gh login.
 `token --owner X` prints an installation token, `credential get` is a git credential helper, `gh ...` wraps
 the real gh and `setup` installs the wrapper, the agent-only settings for Claude and Codex and the human's `tj approve`.
 `converge` replaces stale wrapper and `tj approve` script copies with this plugin's.
@@ -675,6 +676,27 @@ def real_gh() -> str:
     return found
 
 
+def human_environment(environment: dict[str, str]) -> dict[str, str]:
+    environment = {key: value for key, value in environment.items()
+                   if not key.startswith("GIT_CONFIG_") and key not in AGENT_ONLY}
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    return environment
+
+
+def human_credential(fields: dict[str, str], out, run=subprocess.run) -> None:
+    request = "".join(f"{key}={value}
+" for key, value in fields.items()) + "
+"
+    try:
+        result = run(["git", "credential", "fill"], input=request, capture_output=True, text=True,
+                     env=human_environment(dict(os.environ)), timeout=TIMEOUT_SECONDS * 4, check=False,
+                     creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if result.returncode == 0:
+        out.write(result.stdout)
+
+
 def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> dict[str, str]:
     if arguments[:1] == ["auth"] and arguments[1:2] != ["status"]:
         raise IdentityError("agents may run only `gh auth status`")
@@ -689,9 +711,7 @@ def agent_gh_environment(arguments: list[str], checkout_owner: str | None) -> di
         return environment
     protected = [owner for owner in owners if owner.lower() in required_owners()]
     if not protected:
-        if arguments[:1] == ["auth"]:
-            return environment
-        raise IdentityError(f"{owners[0]} is not an account the GitHub App covers; agent sessions never use the human's credentials")
+        return environment if arguments[:1] == ["auth"] else human_environment(environment)
     hostname = hostname if hostname is not None else os.environ.get("GH_HOST") or "github.com"
     if hostname.lower() != "github.com":
         raise IdentityError("the Personal GitHub App is authorized only for github.com")
@@ -769,7 +789,7 @@ def run_gh(arguments: list[str], run=subprocess.run, checkout=owner_from_checkou
     return result.returncode
 
 
-def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
+def credential(operation: str, stream=sys.stdin, out=sys.stdout, run=subprocess.run) -> int:
     if operation != "get":
         return 0
     fields = {}
@@ -784,8 +804,7 @@ def credential(operation: str, stream=sys.stdin, out=sys.stdout) -> int:
         return 0
     try:
         if owner.lower() not in required_owners():
-            print(f"bot_identity: {owner} is not an account the GitHub App covers; agent sessions never use the human's "
-                  "credentials", file=sys.stderr)
+            human_credential(fields, out, run)
             return 0
         record = app_record()
         if not installed([owner], record):
