@@ -62,16 +62,16 @@ no GitHub access or approval tooling of its own: the [GitHub](https://github.com
 plugin's access gate supplies `app` access, and its `tj approve` is how the human approves the bot's
 pull requests.
 
-The bot is switched on per GitHub owner by committing this file as `.agents/github-access.json` in the
-owner's `.github` repository:
+The bot is switched on per GitHub owner by committing an `access` section in `.agents/repository.json` in
+the owner's `.github` repository:
 
 ```json
-{"schema_version": 1, "method": "app", "app": "<github-app-slug>"}
+{"schema_version": 1, "access": {"method": "app", "app": "<github-app-slug>"}}
 ```
 
-A repository overrides its owner's choice by committing the same file itself. For example,
-`{"schema_version": 1, "method": "human"}` keeps one repository on the human's own GitHub login. With
-neither file, agents use the human's login. Work and other non-personal owners never declare the bot.
+A repository overrides its owner's choice by committing its own `access` section in the same file. For
+example, `"access": {"method": "human"}` keeps one repository on the human's own GitHub login. With
+neither section, agents use the human's login. Work and other non-personal owners never declare the bot.
 
 Machine setup, App key enrolment and `tj approve` are documented in the
 [GitHub README](https://github.com/tj-agents/github#github-access-gate).

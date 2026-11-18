@@ -173,7 +173,7 @@ class UseTests(unittest.TestCase):
 
     def test_adoption_leaves_the_merge_policy_to_the_owner_default(self):
         self.assertEqual(0, use.run(self.root, "write", None))
-        self.assertFalse((self.root / ".github/merge-policy.json").exists())
+        self.assertFalse((self.root / ".agents/repository.json").exists())
 
     def test_this_repository_adopts_the_same_policy_it_ships(self):
         self.assertEqual(0, use.run(ROOT, "check", None))
