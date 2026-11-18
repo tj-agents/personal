@@ -29,9 +29,9 @@ refuses retained compatibility declarations and broken block markers. The policy
 generated native blocks are checked, never edited by hand.
 This is native instruction delivery, not a claim of plugin hook execution or trust.
 
-Adoption does not write `.github/merge-policy.json`. The owner's default in its `<owner>/.github` repository
-applies; a repository that needs a different policy commits its own file, as the GitHub Actions
-merge-policy utility describes.
+Adoption does not write `.agents/repository.json`. The owner's default in its `<owner>/.github` repository
+applies; a repository that needs a different merge policy commits its own `merge` section, as the GitHub
+Actions merge-policy utility describes.
 
 
 ```powershell
