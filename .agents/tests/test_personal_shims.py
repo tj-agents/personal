@@ -144,7 +144,7 @@ def test_windows_launcher_loads_the_actual_shipped_sibling_module(
         [str(executable)] if os.name == "nt" else [sys.executable, str(executable)]
     )
     result = subprocess.run(
-        [*command, "auth", "login"],
+        [*command, "pr", "create"],
         env=environment,
         capture_output=True,
         text=True,
@@ -152,5 +152,5 @@ def test_windows_launcher_loads_the_actual_shipped_sibling_module(
         check=False,
     )
     assert result.returncode == 2
-    assert "agents may run only `gh auth status`" in result.stderr
+    assert "GitHub identity configuration is missing" in result.stderr
     assert "ModuleNotFoundError" not in result.stderr
